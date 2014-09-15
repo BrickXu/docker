@@ -1,10 +1,14 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
 	"os"
 	"os/exec"
 	"path"
@@ -12,7 +16,249 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
+
+// Daemon represents a Docker daemon for the testing framework.
+type Daemon struct {
+	t              *testing.T
+	logFile        *os.File
+	folder         string
+	stdin          io.WriteCloser
+	stdout, stderr io.ReadCloser
+	cmd            *exec.Cmd
+	storageDriver  string
+	execDriver     string
+	wait           chan error
+}
+
+// NewDaemon returns a Daemon instance to be used for testing.
+// This will create a directory such as daemon123456789 in the folder specified by $DEST.
+// The daemon will not automatically start.
+func NewDaemon(t *testing.T) *Daemon {
+	dest := os.Getenv("DEST")
+	if dest == "" {
+		t.Fatal("Please set the DEST environment variable")
+	}
+
+	dir := filepath.Join(dest, fmt.Sprintf("daemon%d", time.Now().Unix()))
+	daemonFolder, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatal("Could not make '%s' an absolute path: %v", dir, err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(daemonFolder, "graph"), 0600); err != nil {
+		t.Fatal("Could not create %s/graph directory", daemonFolder)
+	}
+
+	return &Daemon{
+		t:             t,
+		folder:        daemonFolder,
+		storageDriver: os.Getenv("DOCKER_GRAPHDRIVER"),
+		execDriver:    os.Getenv("DOCKER_EXECDRIVER"),
+	}
+}
+
+// Start will start the daemon and return once it is ready to receive requests.
+// You can specify additional daemon flags.
+func (d *Daemon) Start(arg ...string) error {
+	dockerBinary, err := exec.LookPath(dockerBinary)
+	if err != nil {
+		d.t.Fatalf("could not find docker binary in $PATH: %v", err)
+	}
+
+	args := []string{
+		"--host", d.sock(),
+		"--daemon", "--debug",
+		"--graph", fmt.Sprintf("%s/graph", d.folder),
+		"--pidfile", fmt.Sprintf("%s/docker.pid", d.folder),
+	}
+	if d.storageDriver != "" {
+		args = append(args, "--storage-driver", d.storageDriver)
+	}
+	if d.execDriver != "" {
+		args = append(args, "--exec-driver", d.execDriver)
+	}
+
+	args = append(args, arg...)
+	d.cmd = exec.Command(dockerBinary, args...)
+
+	d.logFile, err = os.OpenFile(filepath.Join(d.folder, "docker.log"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+	if err != nil {
+		d.t.Fatalf("Could not create %s/docker.log: %v", d.folder, err)
+	}
+
+	d.cmd.Stdout = d.logFile
+	d.cmd.Stderr = d.logFile
+
+	if err := d.cmd.Start(); err != nil {
+		return fmt.Errorf("Could not start daemon container: %v", err)
+	}
+
+	wait := make(chan error)
+
+	go func() {
+		wait <- d.cmd.Wait()
+		d.t.Log("exiting daemon")
+		close(wait)
+	}()
+
+	d.wait = wait
+
+	tick := time.Tick(500 * time.Millisecond)
+	// make sure daemon is ready to receive requests
+	for {
+		d.t.Log("waiting for daemon to start")
+		select {
+		case <-time.After(2 * time.Second):
+			return errors.New("timeout: daemon does not respond")
+		case <-tick:
+			c, err := net.Dial("unix", filepath.Join(d.folder, "docker.sock"))
+			if err != nil {
+				continue
+			}
+
+			client := httputil.NewClientConn(c, nil)
+			defer client.Close()
+
+			req, err := http.NewRequest("GET", "/_ping", nil)
+			if err != nil {
+				d.t.Fatalf("could not create new request: %v", err)
+			}
+
+			resp, err := client.Do(req)
+			if err != nil {
+				continue
+			}
+			if resp.StatusCode != http.StatusOK {
+				d.t.Logf("received status != 200 OK: %s", resp.Status)
+			}
+
+			d.t.Log("daemon started")
+			return nil
+		}
+	}
+}
+
+// StartWithBusybox will first start the daemon with Daemon.Start()
+// then save the busybox image from the main daemon and load it into this Daemon instance.
+func (d *Daemon) StartWithBusybox(arg ...string) error {
+	if err := d.Start(arg...); err != nil {
+		return err
+	}
+	bb := filepath.Join(d.folder, "busybox.tar")
+	if _, err := os.Stat(bb); err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("unexpected error on busybox.tar stat: %v", err)
+		}
+		// saving busybox image from main daemon
+		if err := exec.Command(dockerBinary, "save", "--output", bb, "busybox:latest").Run(); err != nil {
+			return fmt.Errorf("could not save busybox image: %v", err)
+		}
+	}
+	// loading busybox image to this daemon
+	if _, err := d.Cmd("load", "--input", bb); err != nil {
+		return fmt.Errorf("could not load busybox image: %v", err)
+	}
+	if err := os.Remove(bb); err != nil {
+		d.t.Logf("Could not remove %s: %v", bb, err)
+	}
+	return nil
+}
+
+// Stop will send a SIGINT every second and wait for the daemon to stop.
+// If it timeouts, a SIGKILL is sent.
+// Stop will not delete the daemon directory. If a purged daemon is needed,
+// instantiate a new one with NewDaemon.
+func (d *Daemon) Stop() error {
+	if d.cmd == nil || d.wait == nil {
+		return errors.New("Daemon not started")
+	}
+
+	defer func() {
+		d.logFile.Close()
+		d.cmd = nil
+	}()
+
+	i := 1
+	tick := time.Tick(time.Second)
+
+	if err := d.cmd.Process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("Could not send signal: %v", err)
+	}
+out:
+	for {
+		select {
+		case err := <-d.wait:
+			return err
+		case <-time.After(20 * time.Second):
+			d.t.Log("timeout")
+			break out
+		case <-tick:
+			d.t.Logf("Attempt #%d: daemon is still running with pid %d", i+1, d.cmd.Process.Pid)
+			if err := d.cmd.Process.Signal(os.Interrupt); err != nil {
+				return fmt.Errorf("Could not send signal: %v", err)
+			}
+			i++
+		}
+	}
+
+	if err := d.cmd.Process.Kill(); err != nil {
+		d.t.Logf("Could not kill daemon: %v", err)
+		return err
+	}
+
+	return nil
+}
+
+// Restart will restart the daemon by first stopping it and then starting it.
+func (d *Daemon) Restart(arg ...string) error {
+	d.Stop()
+	return d.Start(arg...)
+}
+
+func (d *Daemon) sock() string {
+	return fmt.Sprintf("unix://%s/docker.sock", d.folder)
+}
+
+// Cmd will execute a docker CLI command against this Daemon.
+// Example: d.Cmd("version") will run docker -H unix://path/to/unix.sock version
+func (d *Daemon) Cmd(name string, arg ...string) (string, error) {
+	args := []string{"--host", d.sock(), name}
+	args = append(args, arg...)
+	c := exec.Command(dockerBinary, args...)
+	b, err := c.CombinedOutput()
+	return string(b), err
+}
+
+func sockRequest(method, endpoint string) ([]byte, error) {
+	// FIX: the path to sock should not be hardcoded
+	sock := filepath.Join("/", "var", "run", "docker.sock")
+	c, err := net.DialTimeout("unix", sock, time.Duration(10*time.Second))
+	if err != nil {
+		return nil, fmt.Errorf("could not dial docker sock at %s: %v", sock, err)
+	}
+
+	client := httputil.NewClientConn(c, nil)
+	defer client.Close()
+
+	req, err := http.NewRequest(method, endpoint, nil)
+	req.Header.Set("Content-Type", "application/json")
+	if err != nil {
+		return nil, fmt.Errorf("could not create new request: %v", err)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("could not perform request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("received status != 200 OK: %s", resp.Status)
+	}
+
+	return ioutil.ReadAll(resp.Body)
+}
 
 func deleteContainer(container string) error {
 	container = strings.Replace(container, "\n", " ", -1)
@@ -367,4 +613,37 @@ func fakeGIT(name string, files map[string]string) (*FakeGIT, error) {
 		Root:    root,
 		RepoURL: fmt.Sprintf("%s/%s.git", server.URL, name),
 	}, nil
+}
+
+// Write `content` to the file at path `dst`, creating it if necessary,
+// as well as any missing directories.
+// The file is truncated if it already exists.
+// Call t.Fatal() at the first error.
+func writeFile(dst, content string, t *testing.T) {
+	// Create subdirectories if necessary
+	if err := os.MkdirAll(path.Dir(dst), 0700); err != nil && !os.IsExist(err) {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Write content (truncate if it exists)
+	if _, err := io.Copy(f, strings.NewReader(content)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Return the contents of file at path `src`.
+// Call t.Fatal() at the first error (including if the file doesn't exist)
+func readFile(src string, t *testing.T) (content string) {
+	f, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

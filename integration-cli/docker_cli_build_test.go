@@ -685,10 +685,11 @@ func TestBuildRelativeWorkdir(t *testing.T) {
 
 func TestBuildEnv(t *testing.T) {
 	name := "testbuildenv"
-	expected := "[PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin PORT=2375]"
+	expected := "[PATH=/test:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin PORT=2375]"
 	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
+		ENV PATH /test:$PATH
         ENV PORT 2375
 		RUN [ $(env | grep PORT) = 'PORT=2375' ]`,
 		true)
@@ -703,6 +704,31 @@ func TestBuildEnv(t *testing.T) {
 		t.Fatalf("Env %s, expected %s", res, expected)
 	}
 	logDone("build - env")
+}
+
+func TestBuildContextCleanup(t *testing.T) {
+	name := "testbuildcontextcleanup"
+	defer deleteImages(name)
+	entries, err := ioutil.ReadDir("/var/lib/docker/tmp")
+	if err != nil {
+		t.Fatalf("failed to list contents of tmp dir: %s", err)
+	}
+	_, err = buildImage(name,
+		`FROM scratch
+        ENTRYPOINT ["/bin/echo"]`,
+		true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entriesFinal, err := ioutil.ReadDir("/var/lib/docker/tmp")
+	if err != nil {
+		t.Fatalf("failed to list contents of tmp dir: %s", err)
+	}
+	if err = compareDirectoryEntries(entries, entriesFinal); err != nil {
+		t.Fatalf("context should have been deleted, but wasn't")
+	}
+
+	logDone("build - verify context cleanup works properly")
 }
 
 func TestBuildCmd(t *testing.T) {
@@ -747,6 +773,29 @@ func TestBuildExpose(t *testing.T) {
 	logDone("build - expose")
 }
 
+func TestBuildEmptyEntrypoint(t *testing.T) {
+	name := "testbuildentrypoint"
+	defer deleteImages(name)
+	expected := "[]"
+
+	_, err := buildImage(name,
+		`FROM busybox
+        ENTRYPOINT []`,
+		true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := inspectField(name, "Config.Entrypoint")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != expected {
+		t.Fatalf("Entrypoint %s, expected %s", res, expected)
+	}
+
+	logDone("build - empty entrypoint")
+}
+
 func TestBuildEntrypoint(t *testing.T) {
 	name := "testbuildentrypoint"
 	expected := "[/bin/echo]"
@@ -765,6 +814,7 @@ func TestBuildEntrypoint(t *testing.T) {
 	if res != expected {
 		t.Fatalf("Entrypoint %s, expected %s", res, expected)
 	}
+
 	logDone("build - entrypoint")
 }
 
@@ -1158,7 +1208,7 @@ func TestContextTarNoCompression(t *testing.T) {
 	testContextTar(t, archive.Uncompressed)
 }
 
-func TestNoContext(t *testing.T) {
+func TestBuildNoContext(t *testing.T) {
 	buildCmd := exec.Command(dockerBinary, "build", "-t", "nocontext", "-")
 	buildCmd.Stdin = strings.NewReader("FROM busybox\nCMD echo ok\n")
 
@@ -1708,6 +1758,9 @@ func TestBuildEnvUsage(t *testing.T) {
 	name := "testbuildenvusage"
 	defer deleteImages(name)
 	dockerfile := `FROM busybox
+ENV    PATH $HOME/bin:$PATH
+ENV    PATH /tmp:$PATH
+RUN    [ "$PATH" = "/tmp:$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" ]
 ENV    FOO /foo/baz
 ENV    BAR /bar
 ENV    BAZ $BAR
@@ -1717,7 +1770,8 @@ RUN    [ "$FOOPATH" = "$PATH:/foo/baz" ]
 ENV	   FROM hello/docker/world
 ENV    TO /docker/world/hello
 ADD    $FROM $TO
-RUN    [ "$(cat $TO)" = "hello" ]`
+RUN    [ "$(cat $TO)" = "hello" ]
+`
 	ctx, err := fakeContext(dockerfile, map[string]string{
 		"hello/docker/world": "hello",
 	})
@@ -1868,4 +1922,25 @@ func TestBuildCleanupCmdOnEntrypoint(t *testing.T) {
 		t.Fatalf("Entrypoint %s, expected %s", res, expected)
 	}
 	logDone("build - cleanup cmd on ENTRYPOINT")
+}
+
+func TestBuildClearCmd(t *testing.T) {
+	name := "testbuildclearcmd"
+	defer deleteImages(name)
+	_, err := buildImage(name,
+		`From scratch
+   ENTRYPOINT ["/bin/bash"]
+   CMD []`,
+		true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := inspectFieldJSON(name, "Config.Cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res != "[]" {
+		t.Fatalf("Cmd %s, expected %s", res, "[]")
+	}
+	logDone("build - clearcmd")
 }

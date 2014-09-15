@@ -42,6 +42,12 @@ will add the libraries here.
       <td><a class="reference external" href="https://github.com/swipely/docker-api">https://github.com/swipely/docker-api</a></td>
       <td>Active</td>
     </tr>
+    <tr class="row-even">
+      <td>C#</td>
+      <td>Docker.DotNet</td>
+      <td><a class="reference external" href="https://github.com/ahmetalpbalkan/Docker.DotNet">https://github.com/ahmetalpbalkan/Docker.DotNet</a></td>
+      <td>Active</td>
+    </tr>
     <tr class="row-odd">
       <td>JavaScript (NodeJS)</td>
       <td>dockerode</td>
@@ -150,6 +156,12 @@ will add the libraries here.
       <td>Java</td>
       <td>jclouds-docker</td>
       <td><a class="reference external" href="https://github.com/jclouds/jclouds-labs/tree/master/docker">https://github.com/jclouds/jclouds-labs/tree/master/docker</a></td>
+      <td>Active</td>
+    </tr>
+    <tr class="row-odd">
+      <td>Rust</td>
+      <td>docker-rust</td>
+      <td><a class="reference external" href="https://github.com/abh1nav/docker-rust">https://github.com/abh1nav/docker-rust</a></td>
       <td>Active</td>
     </tr>
   </tbody>

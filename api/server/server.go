@@ -278,6 +278,8 @@ func getEvents(eng *engine.Engine, version version.Version, w http.ResponseWrite
 	}
 
 	var job = eng.Job("events")
+	// lineDelimited JSON events was added #7047
+	job.SetenvBool("lineDelim", version.GreaterThanOrEqualTo("1.15"))
 	streamJSON(job, w, true)
 	job.Setenv("since", r.Form.Get("since"))
 	job.Setenv("until", r.Form.Get("until"))
@@ -611,10 +613,18 @@ func getImagesGet(eng *engine.Engine, version version.Version, w http.ResponseWr
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
+	if err := parseForm(r); err != nil {
+		return err
+	}
 	if version.GreaterThan("1.0") {
 		w.Header().Set("Content-Type", "application/x-tar")
 	}
-	job := eng.Job("image_export", vars["name"])
+	var job *engine.Job
+	if name, ok := vars["name"]; ok {
+		job = eng.Job("image_export", name)
+	} else {
+		job = eng.Job("image_export", r.Form["names"]...)
+	}
 	job.Stdout.Add(w)
 	return job.Run()
 }
@@ -1105,6 +1115,7 @@ func createRouter(eng *engine.Engine, logging, enableCors bool, dockerVersion st
 			"/images/json":                    getImagesJSON,
 			"/images/viz":                     getImagesViz,
 			"/images/search":                  getImagesSearch,
+			"/images/get":                     getImagesGet,
 			"/images/{name:.*}/get":           getImagesGet,
 			"/images/{name:.*}/history":       getImagesHistory,
 			"/images/{name:.*}/json":          getImagesByName,
@@ -1209,7 +1220,7 @@ func ServeFd(addr string, handle http.Handler) error {
 		}()
 	}
 
-	for i := 0; i < len(ls); i += 1 {
+	for i := 0; i < len(ls); i++ {
 		err := <-chErrors
 		if err != nil {
 			return err
@@ -1357,7 +1368,7 @@ func ServeApi(job *engine.Job) engine.Status {
 		}()
 	}
 
-	for i := 0; i < len(protoAddrs); i += 1 {
+	for i := 0; i < len(protoAddrs); i++ {
 		err := <-chErrors
 		if err != nil {
 			return job.Error(err)

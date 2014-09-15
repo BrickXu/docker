@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/engine"
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonlog"
 	"github.com/docker/docker/pkg/log"
 	"github.com/docker/docker/utils"
@@ -103,11 +104,10 @@ func (daemon *Daemon) ContainerAttach(job *engine.Job) engine.Status {
 		}
 
 		<-daemon.Attach(container, cStdin, cStdinCloser, cStdout, cStderr)
-
 		// If we are in stdinonce mode, wait for the process to end
 		// otherwise, simply return
 		if container.Config.StdinOnce && !container.Config.Tty {
-			container.State.WaitStop(-1 * time.Second)
+			container.WaitStop(-1 * time.Second)
 		}
 	}
 	return engine.StatusOK
@@ -196,7 +196,7 @@ func (daemon *Daemon) Attach(container *Container, stdin io.ReadCloser, stdinClo
 			if cStdout, err := container.StdoutPipe(); err != nil {
 				log.Errorf("attach: stdout pipe: %s", err)
 			} else {
-				io.Copy(&utils.NopWriter{}, cStdout)
+				io.Copy(&ioutils.NopWriter{}, cStdout)
 			}
 		}()
 	}
@@ -235,7 +235,7 @@ func (daemon *Daemon) Attach(container *Container, stdin io.ReadCloser, stdinClo
 			if cStderr, err := container.StderrPipe(); err != nil {
 				log.Errorf("attach: stdout pipe: %s", err)
 			} else {
-				io.Copy(&utils.NopWriter{}, cStderr)
+				io.Copy(&ioutils.NopWriter{}, cStderr)
 			}
 		}()
 	}

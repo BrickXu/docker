@@ -1,7 +1,6 @@
 package archive
 
 import (
-	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -14,6 +13,7 @@ import (
 	"github.com/docker/docker/vendor/src/code.google.com/p/go/src/pkg/archive/tar"
 
 	"github.com/docker/docker/pkg/log"
+	"github.com/docker/docker/pkg/pools"
 	"github.com/docker/docker/pkg/system"
 )
 
@@ -136,6 +136,7 @@ type FileInfo struct {
 	stat       syscall.Stat_t
 	children   map[string]*FileInfo
 	capability []byte
+	added      bool
 }
 
 func (root *FileInfo) LookUp(path string) *FileInfo {
@@ -169,6 +170,9 @@ func (info *FileInfo) isDir() bool {
 }
 
 func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
+
+	sizeAtEntry := len(*changes)
+
 	if oldInfo == nil {
 		// add
 		change := Change{
@@ -176,6 +180,7 @@ func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
 			Kind: ChangeAdd,
 		}
 		*changes = append(*changes, change)
+		info.added = true
 	}
 
 	// We make a copy so we can modify it to detect additions
@@ -213,6 +218,7 @@ func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
 					Kind: ChangeModify,
 				}
 				*changes = append(*changes, change)
+				newChild.added = true
 			}
 
 			// Remove from copy so we can detect deletions
@@ -228,6 +234,19 @@ func (info *FileInfo) addChanges(oldInfo *FileInfo, changes *[]Change) {
 			Kind: ChangeDelete,
 		}
 		*changes = append(*changes, change)
+	}
+
+	// If there were changes inside this directory, we need to add it, even if the directory
+	// itself wasn't changed. This is needed to properly save and restore filesystem permissions.
+	if len(*changes) > sizeAtEntry && info.isDir() && !info.added && info.path() != "/" {
+		change := Change{
+			Path: info.path(),
+			Kind: ChangeModify,
+		}
+		// Let's insert the directory entry before the recently added entries located inside this dir
+		*changes = append(*changes, change) // just to resize the slice, will be overwritten
+		copy((*changes)[sizeAtEntry+1:], (*changes)[sizeAtEntry:])
+		(*changes)[sizeAtEntry] = change
 	}
 
 }
@@ -345,7 +364,8 @@ func ExportChanges(dir string, changes []Change) (Archive, error) {
 	tw := tar.NewWriter(writer)
 
 	go func() {
-		twBuf := bufio.NewWriterSize(nil, twBufSize)
+		twBuf := pools.BufioWriter32KPool.Get(nil)
+		defer pools.BufioWriter32KPool.Put(twBuf)
 		// In general we log errors here but ignore them because
 		// during e.g. a diff operation the container can continue
 		// mutating the filesystem and we can see transient errors

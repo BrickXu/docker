@@ -28,6 +28,7 @@ import (
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/broadcastwriter"
 	"github.com/docker/docker/pkg/graphdb"
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/log"
 	"github.com/docker/docker/pkg/namesgenerator"
 	"github.com/docker/docker/pkg/networkfs/resolvconf"
@@ -41,7 +42,7 @@ import (
 
 var (
 	DefaultDns                = []string{"8.8.8.8", "8.8.4.4"}
-	validContainerNameChars   = `[a-zA-Z0-9_.-]`
+	validContainerNameChars   = `[a-zA-Z0-9][a-zA-Z0-9_.-]`
 	validContainerNamePattern = regexp.MustCompile(`^/?` + validContainerNameChars + `+$`)
 )
 
@@ -101,7 +102,6 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 	// FIXME: remove ImageDelete's dependency on Daemon, then move to graph/
 	for name, method := range map[string]engine.Handler{
 		"attach":            daemon.ContainerAttach,
-		"build":             daemon.CmdBuild,
 		"commit":            daemon.ContainerCommit,
 		"container_changes": daemon.ContainerChanges,
 		"container_copy":    daemon.ContainerCopy,
@@ -202,7 +202,7 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 	if container.Config.OpenStdin {
 		container.stdin, container.stdinPipe = io.Pipe()
 	} else {
-		container.stdinPipe = utils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
+		container.stdinPipe = ioutils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
 	}
 	// done
 	daemon.containers.Add(container.ID, container)
@@ -214,11 +214,11 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 	// FIXME: if the container is supposed to be running but is not, auto restart it?
 	//        if so, then we need to restart monitor and init a new lock
 	// If the container is supposed to be running, make sure of it
-	if container.State.IsRunning() {
+	if container.IsRunning() {
 		log.Debugf("killing old running container %s", container.ID)
 
-		existingPid := container.State.Pid
-		container.State.SetStopped(0)
+		existingPid := container.Pid
+		container.SetStopped(0)
 
 		// We only have to handle this for lxc because the other drivers will ensure that
 		// no processes are left when docker dies
@@ -230,7 +230,7 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 				ID: container.ID,
 			}
 			var err error
-			cmd.Process, err = os.FindProcess(existingPid)
+			cmd.ProcessConfig.Process, err = os.FindProcess(existingPid)
 			if err != nil {
 				log.Debugf("cannot find existing process for %d", existingPid)
 			}
@@ -250,7 +250,7 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 
 			log.Debugf("Marking as stopped")
 
-			container.State.SetStopped(-127)
+			container.SetStopped(-127)
 			if err := container.ToDisk(); err != nil {
 				return err
 			}
@@ -364,7 +364,7 @@ func (daemon *Daemon) restore() error {
 
 		for _, container := range registeredContainers {
 			if container.hostConfig.RestartPolicy.Name == "always" ||
-				(container.hostConfig.RestartPolicy.Name == "on-failure" && container.State.ExitCode != 0) {
+				(container.hostConfig.RestartPolicy.Name == "on-failure" && container.ExitCode != 0) {
 				log.Debugf("Starting container %s", container.ID)
 
 				if err := container.Start(); err != nil {
@@ -621,6 +621,15 @@ func (daemon *Daemon) Children(name string) (map[string]*Container, error) {
 	return children, nil
 }
 
+func (daemon *Daemon) Parents(name string) ([]string, error) {
+	name, err := GetFullContainerName(name)
+	if err != nil {
+		return nil, err
+	}
+
+	return daemon.containerGraph.Parents(name)
+}
+
 func (daemon *Daemon) RegisterLink(parent, child *Container, alias string) error {
 	fullName := path.Join(parent.Name, alias)
 	if !daemon.containerGraph.Exists(fullName) {
@@ -782,7 +791,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, err
 	}
 	log.Debugf("Creating repository list")
-	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g)
+	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g, config.Mirrors)
 	if err != nil {
 		return nil, fmt.Errorf("Couldn't create Tag store: %s", err)
 	}
@@ -883,7 +892,7 @@ func (daemon *Daemon) shutdown() error {
 	log.Debugf("starting clean shutdown of all containers...")
 	for _, container := range daemon.List() {
 		c := container
-		if c.State.IsRunning() {
+		if c.IsRunning() {
 			log.Debugf("stopping %s", c.ID)
 			group.Add(1)
 
@@ -892,7 +901,7 @@ func (daemon *Daemon) shutdown() error {
 				if err := c.KillSig(15); err != nil {
 					log.Debugf("kill 15 error for %s - %s", c.ID, err)
 				}
-				c.State.WaitStop(-1 * time.Second)
+				c.WaitStop(-1 * time.Second)
 				log.Debugf("container stopped %s", c.ID)
 			}()
 		}
@@ -957,7 +966,7 @@ func (daemon *Daemon) Diff(container *Container) (archive.Archive, error) {
 	if err != nil {
 		return nil, err
 	}
-	return utils.NewReadCloserWrapper(archive, func() error {
+	return ioutils.NewReadCloserWrapper(archive, func() error {
 		err := archive.Close()
 		daemon.driver.Put(container.ID)
 		return err
@@ -972,7 +981,7 @@ func (daemon *Daemon) Pause(c *Container) error {
 	if err := daemon.execDriver.Pause(c.command); err != nil {
 		return err
 	}
-	c.State.SetPaused()
+	c.SetPaused()
 	return nil
 }
 
@@ -980,7 +989,7 @@ func (daemon *Daemon) Unpause(c *Container) error {
 	if err := daemon.execDriver.Unpause(c.command); err != nil {
 		return err
 	}
-	c.State.SetUnpaused()
+	c.SetUnpaused()
 	return nil
 }
 

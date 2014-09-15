@@ -305,6 +305,10 @@ ol li {
   white-space: pre;
 }
 
+.content-body strong {
+  font-weight: bold;
+}
+
 #leftnav .nav.nav-tabs li a {
   line-height: 20px !important;
   padding-top: 15px !important;
@@ -322,3 +326,16 @@ ol li {
 .navbar #usernav .nav li {
   padding-top: 0px !important;
 }
+table.table tr td img {
+    width:100%;
+}
+#versionnav ul {
+    list-style: none outside none;
+}
+#versionnav ul ul {
+    padding: 0;
+}
+
+/* over-ride the prettyPrint colouring */
+
+.str, .atv { color: #48484C; }

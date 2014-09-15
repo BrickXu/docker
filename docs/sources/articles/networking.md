@@ -150,7 +150,10 @@ Four different options affect container domain name services.
     `CONTAINER_NAME`.  This lets processes inside the new container
     connect to the hostname `ALIAS` without having to know its IP.  The
     `--link=` option is discussed in more detail below, in the section
-    [Communication between containers](#between-containers).
+    [Communication between containers](#between-containers). Because
+    Docker may assign a different IP address to the linked containers
+    on restart, Docker updates the `ALIAS` entry in the `/etc/hosts` file
+    of the recipient containers.
 
  *  `--dns=IP_ADDRESS...` — sets the IP addresses added as `server`
     lines to the container's `/etc/resolv.conf` file.  Processes in the
@@ -307,13 +310,13 @@ page.  There are two approaches.
 First, you can supply `-P` or `--publish-all=true|false` to `docker run`
 which is a blanket operation that identifies every port with an `EXPOSE`
 line in the image's `Dockerfile` and maps it to a host port somewhere in
-the range 49000–49900.  This tends to be a bit inconvenient, since you
+the range 49153–65535.  This tends to be a bit inconvenient, since you
 then have to run other `docker` sub-commands to learn which external
 port a given service was mapped to.
 
 More convenient is the `-p SPEC` or `--publish=SPEC` option which lets
 you be explicit about exactly which external port on the Docker server —
-which can be any port at all, not just those in the 49000–49900 block —
+which can be any port at all, not just those in the 49153-65535 block —
 you want mapped to which port in the container.
 
 Either way, you should be able to peek at what Docker has accomplished

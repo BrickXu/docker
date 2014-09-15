@@ -10,6 +10,11 @@ import (
 
 type NetworkMode string
 
+// IsPrivate indicates whether container use it's private network stack
+func (n NetworkMode) IsPrivate() bool {
+	return !(n.IsHost() || n.IsContainer() || n.IsNone())
+}
+
 func (n NetworkMode) IsHost() bool {
 	return n == "host"
 }
@@ -17,6 +22,10 @@ func (n NetworkMode) IsHost() bool {
 func (n NetworkMode) IsContainer() bool {
 	parts := strings.SplitN(string(n), ":", 2)
 	return len(parts) > 1 && parts[0] == "container"
+}
+
+func (n NetworkMode) IsNone() bool {
+	return n == "none"
 }
 
 type DeviceMapping struct {

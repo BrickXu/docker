@@ -114,8 +114,8 @@ We've specified an image: `training/webapp`. This image is a
 pre-built image we've created that contains a simple Python Flask web
 application.
 
-Lastly, we've specified a command for our container to run: `python
-app.py`. This launches our web application.
+Lastly, we've specified a command for our container to run: `python app.py`. 
+This launches our web application.
 
 > **Note:** 
 > You can see more detail on the `docker run` command in the [command
@@ -157,7 +157,7 @@ port) on port 49155.
 
 Network port bindings are very configurable in Docker. In our last
 example the `-P` flag is a shortcut for `-p 5000` that maps port 5000
-inside the container to a high port (from the range 49000 to 49900) on
+inside the container to a high port (from the range 49153 to 65535) on
 the local Docker host. We can also bind Docker containers to specific
 ports using the `-p` flag, for example:
 

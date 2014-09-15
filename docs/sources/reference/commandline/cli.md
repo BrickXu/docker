@@ -71,6 +71,7 @@ expect an integer, and they can only be specified once.
       --mtu=0                                    Set the containers network MTU
                                                    if no value is provided: default to the default route MTU or 1500 if no default route is available
       -p, --pidfile="/var/run/docker.pid"        Path to use for daemon PID file
+      --registry-mirror=[]                       Specify a preferred Docker registry mirror
       -s, --storage-driver=""                    Force the Docker runtime to use a specific storage driver
       --selinux-enabled=false                    Enable selinux support. SELinux does not presently support the BTRFS storage driver
       --storage-opt=[]                           Set storage driver options
@@ -207,8 +208,8 @@ When a single Dockerfile is given as `URL` or is piped through `STDIN`
 (`docker build - < Dockerfile`), then no context is set.
 
 When a Git repository is set as `URL`, then the repository is used as
-the context. The Git repository is cloned with its submodules (`git
-clone -recursive`). A fresh `git clone` occurs in a temporary directory
+the context. The Git repository is cloned with its submodules
+(`git clone -recursive`). A fresh `git clone` occurs in a temporary directory
 on your local host, and then this is sent to the Docker daemon as the
 context.  This way, your local user credentials and VPN's etc can be
 used to access private repositories.
@@ -625,7 +626,7 @@ ensure we know how your setup is configured.
 
 ## inspect
 
-    Usage: docker inspect CONTAINER|IMAGE [CONTAINER|IMAGE...]
+    Usage: docker inspect [OPTIONS] CONTAINER|IMAGE [CONTAINER|IMAGE...]
 
     Return low-level information on a container or image
 
@@ -690,7 +691,7 @@ signal specified with option `--signal`.
 
 ## load
 
-    Usage: docker load
+    Usage: docker load [OPTIONS]
 
     Load an image from a tar archive on STDIN
 
@@ -742,7 +743,7 @@ For example:
 
 ## logs
 
-    Usage: docker logs CONTAINER
+    Usage: docker logs [OPTIONS] CONTAINER
 
     Fetch the logs of a container
 
@@ -764,9 +765,25 @@ log entry.
 
 ## port
 
-    Usage: docker port CONTAINER PRIVATE_PORT
+    Usage: docker port CONTAINER [PRIVATE_PORT[/PROTO]]
 
-    Lookup the public-facing port that is NAT-ed to PRIVATE_PORT
+    List port mappings for the CONTAINER, or lookup the public-facing port that is NAT-ed to the PRIVATE_PORT
+
+You can find out all the ports mapped by not specifying a `PRIVATE_PORT`, or
+just a specific mapping:
+
+    $ docker ps test
+    CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS              PORTS                                            NAMES
+    b650456536c7        busybox:latest      top                 54 minutes ago      Up 54 minutes       0.0.0.0:1234->9876/tcp, 0.0.0.0:4321->7890/tcp   test
+    $ docker port test
+    7890/tcp -> 0.0.0.0:4321
+    9876/tcp -> 0.0.0.0:1234
+    $ docker port test 7890/tcp
+    0.0.0.0:4321
+    $ docker port test 7890/udp
+    2014/06/24 11:53:36 Error: No public port '7890/udp' published for test
+    $ docker port test 7890
+    0.0.0.0:4321
 
 ## pause
 
@@ -832,9 +849,11 @@ This shows all the containers that have exited with status of '0'
 
 ## pull
 
-    Usage: docker pull NAME[:TAG]
+    Usage: docker pull [OPTIONS] NAME[:TAG]
 
     Pull an image or a repository from the registry
+
+      -a, --all-tags=false    Download all tagged images in the repository
 
 Most of your images will be created on top of a base image from the
 [Docker Hub](https://hub.docker.com) registry.
@@ -851,11 +870,13 @@ To download a particular image, or set of images (i.e., a repository),
 use `docker pull`:
 
     $ docker pull debian
-    # will pull all the images in the debian repository
+    # will pull only the debian:latest image and its intermediate layers 
     $ docker pull debian:testing
     # will pull only the image named debian:testing and any intermediate layers
-    # it is based on. (Typically the empty `scratch` image, a MAINTAINERs layer,
+    # it is based on. (Typically the empty `scratch` image, a MAINTAINER layer,
     # and the un-tarred base).
+    $ docker pull --all-tags centos
+    # will pull all the images from the centos repository
     $ docker pull registry.hub.docker.com/debian
     # manually specifies the path to the default Docker registry. This could
     # be replaced with the path to a local registry to pull from another source.
@@ -922,7 +943,7 @@ delete them. Any running containers will not be deleted.
 
 ## rmi
 
-    Usage: docker rmi IMAGE [IMAGE...]
+    Usage: docker rmi [OPTIONS] IMAGE [IMAGE...]
 
     Remove one or more images
 
@@ -990,7 +1011,7 @@ removed before the image is removed.
                                    'host': use the host network stack inside the container.  Note: the host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.
       -P, --publish-all=false    Publish all exposed ports to the host interfaces
       -p, --publish=[]           Publish a container's port to the host
-                                   format: ip:hostPort:containerPort | ip::containerPort | hostPort:containerPort
+                                   format: ip:hostPort:containerPort | ip::containerPort | hostPort:containerPort | containerPort
                                    (use 'docker port' to see the actual mapping)
       --privileged=false         Give extended privileges to this container
       --restart=""               Restart policy to apply when a container exits (no, on-failure[:max-retry], always)
@@ -1249,17 +1270,17 @@ Providing a maximum restart limit is only valid for the ** on-failure ** policy.
 
 ## save
 
-    Usage: docker save IMAGE
+    Usage: docker save [OPTIONS] IMAGE [IMAGE...]
 
-    Save an image to a tar archive (streamed to STDOUT by default)
+    Save an image(s) to a tar archive (streamed to STDOUT by default)
 
       -o, --output=""    Write to an file, instead of STDOUT
 
-Produces a tarred repository to the standard output stream. Contains all
-parent layers, and all tags + versions, or specified repo:tag.
+Produces a tarred repository to the standard output stream.
+Contains all parent layers, and all tags + versions, or specified repo:tag, for
+each argument provided.
 
-It is used to create a backup that can then be used with
-`docker load`
+It is used to create a backup that can then be used with ``docker load``
 
     $ sudo docker save busybox > busybox.tar
     $ ls -sh busybox.tar
@@ -1270,11 +1291,16 @@ It is used to create a backup that can then be used with
     $ sudo docker save -o fedora-all.tar fedora
     $ sudo docker save -o fedora-latest.tar fedora:latest
 
+It is even useful to cherry-pick particular tags of an image repository
+
+   $ sudo docker save -o ubuntu.tar ubuntu:lucid ubuntu:saucy
+
+
 ## search
 
 Search [Docker Hub](https://hub.docker.com) for images
 
-    Usage: docker search TERM
+    Usage: docker search [OPTIONS] TERM
 
     Search the Docker Hub for images
 
@@ -1288,7 +1314,7 @@ more details on finding shared images from the command line.
 
 ## start
 
-    Usage: docker start CONTAINER [CONTAINER...]
+    Usage: docker start [OPTIONS] CONTAINER [CONTAINER...]
 
     Restart a stopped container
 
