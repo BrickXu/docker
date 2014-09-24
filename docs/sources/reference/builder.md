@@ -11,6 +11,11 @@ Docker image. By calling `docker build` from your terminal, you can have
 Docker build your image step by step, executing the instructions
 successively.
 
+This page discusses the specifics of all the instructions you can use in your
+`Dockerfile`. To further help you write a clear, readable, maintainable
+`Dockerfile`, we've also written a [`Dockerfile` Best Practices guide](/articles/dockerfile_best-practices).
+
+
 ## Usage
 
 To [*build*](../commandline/cli/#cli-build) an image from a source repository,
@@ -57,7 +62,7 @@ instructions.
 Whenever possible, Docker will re-use the intermediate images,
 accelerating `docker build` significantly (indicated by `Using cache`):
 
-    $ docker build -t SvenDowideit/ambassador .
+    $ sudo docker build -t SvenDowideit/ambassador .
     Uploading context 10.24 kB
     Uploading context
     Step 1 : FROM docker-ut
@@ -109,7 +114,7 @@ The following example shows the use of the `.dockerignore` file to exclude the
 `.git` directory from the context. Its effect can be seen in the changed size of
 the uploaded context.
 
-    $ docker build .
+    $ sudo docker build .
     Uploading context 18.829 MB
     Uploading context
     Step 0 : FROM busybox
@@ -119,7 +124,7 @@ the uploaded context.
      ---> 99cc1ad10469
     Successfully built 99cc1ad10469
     $ echo ".git" > .dockerignore
-    $ docker build .
+    $ sudo docker build .
     Uploading context  6.76 MB
     Uploading context
     Step 0 : FROM busybox
@@ -284,13 +289,15 @@ change them using `docker run --env <key>=<value>`.
 
 ## ADD
 
-    ADD <src> <dest>
+    ADD <src>... <dest>
 
-The `ADD` instruction will copy new files from `<src>` and add them to the
-container's filesystem at path `<dest>`.
+The `ADD` instruction copies new files,directories or remote file URLs to 
+the filesystem of the container  from `<src>` and add them to the at 
+path `<dest>`.  
 
-`<src>` must be the path to a file or directory relative to the source directory
-being built (also called the *context* of the build) or a remote file URL.
+Multiple <src> resource may be specified but if they are files or 
+directories then they must be relative to the source directory that is 
+being built (the context of the build).
 
 `<dest>` is the absolute path to which the source will be copied inside the
 destination container.
@@ -353,6 +360,9 @@ The copy obeys the following rules:
   will be considered a directory and the contents of `<src>` will be written
   at `<dest>/base(<src>)`.
 
+- If multiple `<src>` resources are specified then `<dest>` must be a
+  directory, and it must end with a slash `/`.
+
 - If `<dest>` does not end with a trailing slash, it will be considered a
   regular file and the contents of `<src>` will be written at `<dest>`.
 
@@ -361,13 +371,15 @@ The copy obeys the following rules:
 
 ## COPY
 
-    COPY <src> <dest>
+    COPY <src>... <dest>
 
-The `COPY` instruction will copy new files from `<src>` and add them to the
-container's filesystem at path `<dest>`.
+The `COPY` instruction copies new files,directories or remote file URLs to 
+the filesystem of the container  from `<src>` and add them to the at 
+path `<dest>`. 
 
-`<src>` must be the path to a file or directory relative to the source directory
-being built (also called the *context* of the build).
+Multiple <src> resource may be specified but if they are files or 
+directories then they must be relative to the source directory that is being 
+built (the context of the build).
 
 `<dest>` is the absolute path to which the source will be copied inside the
 destination container.
@@ -392,6 +404,9 @@ The copy obeys the following rules:
   its metadata. In this case, if `<dest>` ends with a trailing slash `/`, it
   will be considered a directory and the contents of `<src>` will be written
   at `<dest>/base(<src>)`.
+
+- If multiple `<src>` resources are specified then `<dest>` must be a
+  directory, and it must end with a slash `/`.
 
 - If `<dest>` does not end with a trailing slash, it will be considered a
   regular file and the contents of `<src>` will be written at `<dest>`.

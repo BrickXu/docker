@@ -9,11 +9,13 @@ package builder
 
 import (
 	"fmt"
+	"io/ioutil"
 	"path/filepath"
 	"strings"
 
 	"github.com/docker/docker/nat"
 	"github.com/docker/docker/pkg/log"
+	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/runconfig"
 )
 
@@ -63,8 +65,8 @@ func maintainer(b *Builder, args []string, attributes map[string]bool) error {
 // exist here. If you do not wish to have this automatic handling, use COPY.
 //
 func add(b *Builder, args []string, attributes map[string]bool) error {
-	if len(args) != 2 {
-		return fmt.Errorf("ADD requires two arguments")
+	if len(args) < 2 {
+		return fmt.Errorf("ADD requires at least two arguments")
 	}
 
 	return b.runContextCommand(args, true, true, "ADD")
@@ -75,8 +77,8 @@ func add(b *Builder, args []string, attributes map[string]bool) error {
 // Same as 'ADD' but without the tar and remote url handling.
 //
 func dispatchCopy(b *Builder, args []string, attributes map[string]bool) error {
-	if len(args) != 2 {
-		return fmt.Errorf("COPY requires two arguments")
+	if len(args) < 2 {
+		return fmt.Errorf("COPY requires at least two arguments")
 	}
 
 	return b.runContextCommand(args, false, false, "COPY")
@@ -176,9 +178,11 @@ func run(b *Builder, args []string, attributes map[string]bool) error {
 		args = append([]string{"/bin/sh", "-c"}, args[0])
 	}
 
-	args = append([]string{b.image}, args...)
+	runCmd := flag.NewFlagSet("run", flag.ContinueOnError)
+	runCmd.SetOutput(ioutil.Discard)
+	runCmd.Usage = nil
 
-	config, _, _, err := runconfig.Parse(args, nil)
+	config, _, _, err := runconfig.Parse(runCmd, append([]string{b.image}, args...), nil)
 	if err != nil {
 		return err
 	}

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"reflect"
@@ -26,9 +28,7 @@ func getExitCode(err error) (int, error) {
 	return exitCode, fmt.Errorf("failed to get exit code")
 }
 
-func runCommandWithOutput(cmd *exec.Cmd) (output string, exitCode int, err error) {
-	exitCode = 0
-	out, err := cmd.CombinedOutput()
+func processExitCode(err error) (exitCode int) {
 	if err != nil {
 		var exiterr error
 		if exitCode, exiterr = getExitCode(err); exiterr != nil {
@@ -37,58 +37,68 @@ func runCommandWithOutput(cmd *exec.Cmd) (output string, exitCode int, err error
 			exitCode = 127
 		}
 	}
+	return
+}
+
+func runCommandWithOutput(cmd *exec.Cmd) (output string, exitCode int, err error) {
+	exitCode = 0
+	out, err := cmd.CombinedOutput()
+	exitCode = processExitCode(err)
 	output = string(out)
 	return
 }
 
 func runCommandWithStdoutStderr(cmd *exec.Cmd) (stdout string, stderr string, exitCode int, err error) {
+	var (
+		stderrBuffer, stdoutBuffer bytes.Buffer
+	)
 	exitCode = 0
-	var stderrBuffer bytes.Buffer
-	stderrPipe, err := cmd.StderrPipe()
-	if err != nil {
-		return "", "", -1, err
-	}
-	go io.Copy(&stderrBuffer, stderrPipe)
-	out, err := cmd.Output()
+	cmd.Stderr = &stderrBuffer
+	cmd.Stdout = &stdoutBuffer
+	err = cmd.Run()
+	exitCode = processExitCode(err)
 
-	if err != nil {
-		var exiterr error
-		if exitCode, exiterr = getExitCode(err); exiterr != nil {
-			// TODO: Fix this so we check the error's text.
-			// we've failed to retrieve exit code, so we set it to 127
-			exitCode = 127
+	stdout = stdoutBuffer.String()
+	stderr = stderrBuffer.String()
+	return
+}
+
+var ErrCmdTimeout = fmt.Errorf("command timed out")
+
+func runCommandWithOutputAndTimeout(cmd *exec.Cmd, timeout time.Duration) (output string, exitCode int, err error) {
+	done := make(chan error)
+	go func() {
+		output, exitCode, err = runCommandWithOutput(cmd)
+		if err != nil || exitCode != 0 {
+			done <- fmt.Errorf("failed to run command: %s", err)
+			return
 		}
+		done <- nil
+	}()
+	select {
+	case <-time.After(timeout):
+		killFailed := cmd.Process.Kill()
+		if killFailed == nil {
+			fmt.Printf("failed to kill (pid=%d): %v\n", cmd.Process.Pid, err)
+		}
+		err = ErrCmdTimeout
+	case <-done:
+		break
 	}
-	stdout = string(out)
-	stderr = string(stderrBuffer.Bytes())
 	return
 }
 
 func runCommand(cmd *exec.Cmd) (exitCode int, err error) {
 	exitCode = 0
 	err = cmd.Run()
-	if err != nil {
-		var exiterr error
-		if exitCode, exiterr = getExitCode(err); exiterr != nil {
-			// TODO: Fix this so we check the error's text.
-			// we've failed to retrieve exit code, so we set it to 127
-			exitCode = 127
-		}
-	}
+	exitCode = processExitCode(err)
 	return
 }
 
 func startCommand(cmd *exec.Cmd) (exitCode int, err error) {
 	exitCode = 0
 	err = cmd.Start()
-	if err != nil {
-		var exiterr error
-		if exitCode, exiterr = getExitCode(err); exiterr != nil {
-			// TODO: Fix this so we check the error's text.
-			// we've failed to retrieve exit code, so we set it to 127
-			exitCode = 127
-		}
-	}
+	exitCode = processExitCode(err)
 	return
 }
 
@@ -211,4 +221,37 @@ func ListTar(f io.Reader) ([]string, error) {
 		}
 		entries = append(entries, th.Name)
 	}
+}
+
+type FileServer struct {
+	*httptest.Server
+}
+
+func fileServer(files map[string]string) (*FileServer, error) {
+	var handler http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
+		if filePath, found := files[r.URL.Path]; found {
+			http.ServeFile(w, r, filePath)
+		} else {
+			http.Error(w, http.StatusText(404), 404)
+		}
+	}
+
+	for _, file := range files {
+		if _, err := os.Stat(file); err != nil {
+			return nil, err
+		}
+	}
+	server := httptest.NewServer(handler)
+	return &FileServer{
+		Server: server,
+	}, nil
+}
+
+func copyWithCP(source, target string) error {
+	copyCmd := exec.Command("cp", "-rp", source, target)
+	out, exitCode, err := runCommandWithOutput(copyCmd)
+	if err != nil || exitCode != 0 {
+		return fmt.Errorf("failed to copy: error: %q ,output: %q", err, out)
+	}
+	return nil
 }

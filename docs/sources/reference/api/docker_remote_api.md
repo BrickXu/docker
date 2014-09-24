@@ -15,8 +15,11 @@ page_keywords: API, Docker, rcli, REST, documentation
  - Since API version 1.2, the auth configuration is now handled client
    side, so the client has to send the `authConfig` as a `POST` in `/images/(name)/push`.
  - authConfig, set as the `X-Registry-Auth` header, is currently a Base64
-   encoded (JSON) string with credentials:
-   `{'username': string, 'password': string, 'email': string, 'serveraddress' : string}`
+   encoded (JSON) string with the following structure:
+   `{"username": "string", "password": "string", "email": "string",
+   "serveraddress" : "string", "auth": ""}`. Notice that `auth` is to be left
+   empty, `serveraddress` is a domain/ip without protocol, and that double
+   quotes (instead of single ones) are required.
 
 The current version of the API is v1.15
 
@@ -33,6 +36,12 @@ You can still call an old version of the API using
 [*Docker Remote API v1.15*](/reference/api/docker_remote_api_v1.15/)
 
 ### What's new
+
+`POST /build`
+`GET /events`
+
+**New!**
+Now has header: `Content-Type: application/x-json-stream`.
 
 ## v1.14
 
@@ -74,7 +83,7 @@ the `tag` parameter at the same time will return an error.
 The `HostConfig.Links` field is now filled correctly
 
 **New!**
-`Sockets` parameter added to the `/info` endpoint listing all the sockets the 
+`Sockets` parameter added to the `/info` endpoint listing all the sockets the
 daemon is configured to listen on.
 
 `POST /containers/(name)/start`
@@ -402,7 +411,7 @@ Builder (/build):
    intermediary buffers
  - Simpler, less memory usage, less disk usage and faster
 
-> **Warning**: 
+> **Warning**:
 > The /build improvements are not reverse-compatible. Pre 1.3 clients will
 > break on /build.
 

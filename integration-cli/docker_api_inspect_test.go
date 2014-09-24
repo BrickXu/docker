@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestInspectContainerResponse(t *testing.T) {
+func TestInspectApiContainerResponse(t *testing.T) {
 	runCmd := exec.Command(dockerBinary, "run", "-d", "busybox", "true")
 	out, _, err := runCommandWithOutput(runCmd)
 	errorOut(err, t, fmt.Sprintf("failed to create a container: %v %v", out, err))
@@ -45,6 +45,10 @@ func TestInspectContainerResponse(t *testing.T) {
 			if _, ok := inspect_json[key]; !ok {
 				t.Fatalf("%s does not exist in reponse for %s version", key, testVersion)
 			}
+		}
+		//Issue #6830: type not properly converted to JSON/back
+		if _, ok := inspect_json["Path"].(bool); ok {
+			t.Fatalf("Path of `true` should not be converted to boolean `true` via JSON marshalling")
 		}
 	}
 

@@ -58,6 +58,8 @@ func sameFsTimeSpec(a, b syscall.Timespec) bool {
 		(a.Nsec == b.Nsec || a.Nsec == 0 || b.Nsec == 0)
 }
 
+// Changes walks the path rw and determines changes for the files in the path,
+// with respect to the parent layers
 func Changes(layers []string, rw string) ([]Change, error) {
 	var changes []Change
 	err := filepath.Walk(rw, func(path string, f os.FileInfo, err error) error {
@@ -313,7 +315,8 @@ func collectFileInfo(sourceDir string) (*FileInfo, error) {
 	return root, nil
 }
 
-// Compare two directories and generate an array of Change objects describing the changes
+// ChangesDirs compares two directories and generates an array of Change objects describing the changes.
+// If oldDir is "", then all files in newDir will be Add-Changes.
 func ChangesDirs(newDir, oldDir string) ([]Change, error) {
 	var (
 		oldRoot, newRoot *FileInfo
@@ -321,7 +324,9 @@ func ChangesDirs(newDir, oldDir string) ([]Change, error) {
 		errs             = make(chan error, 2)
 	)
 	go func() {
-		oldRoot, err1 = collectFileInfo(oldDir)
+		if oldDir != "" {
+			oldRoot, err1 = collectFileInfo(oldDir)
+		}
 		errs <- err1
 	}()
 	go func() {
@@ -337,6 +342,7 @@ func ChangesDirs(newDir, oldDir string) ([]Change, error) {
 	return newRoot.Changes(oldRoot), nil
 }
 
+// ChangesSize calculates the size in bytes of the provided changes, based on newDir.
 func ChangesSize(newDir string, changes []Change) int64 {
 	var size int64
 	for _, change := range changes {
@@ -359,6 +365,7 @@ func minor(device uint64) uint64 {
 	return (device & 0xff) | ((device >> 12) & 0xfff00)
 }
 
+// ExportChanges produces an Archive from the provided changes, relative to dir.
 func ExportChanges(dir string, changes []Change) (Archive, error) {
 	reader, writer := io.Pipe()
 	tw := tar.NewWriter(writer)

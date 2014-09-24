@@ -42,6 +42,8 @@ type TtyTerminal interface {
 
 type Driver interface {
 	Run(c *Command, pipes *Pipes, startCallback StartCallback) (int, error) // Run executes the process and blocks until the process exits and returns the exit code
+	// Exec executes the process in an existing container, blocks until the process exits and returns the exit code
+	Exec(c *Command, processConfig *ProcessConfig, pipes *Pipes, startCallback StartCallback) (int, error)
 	Kill(c *Command, sig int) error
 	Pause(c *Command) error
 	Unpause(c *Command) error
@@ -49,6 +51,7 @@ type Driver interface {
 	Info(id string) Info                          // "temporary" hack (until we move state from core to plugins)
 	GetPidsForContainer(id string) ([]int, error) // Returns a list of pids for the given container.
 	Terminate(c *Command) error                   // kill it with fire
+	Clean(id string) error                        // clean all traces of container exec
 }
 
 // Network settings of the container
@@ -78,6 +81,7 @@ type Mount struct {
 	Destination string `json:"destination"`
 	Writable    bool   `json:"writable"`
 	Private     bool   `json:"private"`
+	Slave       bool   `json:"slave"`
 }
 
 // Describes a process that will be run inside a container.

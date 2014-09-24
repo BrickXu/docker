@@ -81,8 +81,10 @@ func InitDriver(job *engine.Job) engine.Status {
 		network        *net.IPNet
 		enableIPTables = job.GetenvBool("EnableIptables")
 		icc            = job.GetenvBool("InterContainerCommunication")
+		ipMasq         = job.GetenvBool("EnableIpMasq")
 		ipForward      = job.GetenvBool("EnableIpForward")
 		bridgeIP       = job.Getenv("BridgeIP")
+		fixedCIDR      = job.Getenv("FixedCIDR")
 	)
 
 	if defaultIP := job.Getenv("DefaultBindingIP"); defaultIP != "" {
@@ -100,16 +102,13 @@ func InitDriver(job *engine.Job) engine.Status {
 	if err != nil {
 		// If we're not using the default bridge, fail without trying to create it
 		if !usingDefaultBridge {
-			job.Logf("bridge not found: %s", bridgeIface)
 			return job.Error(err)
 		}
 		// If the iface is not found, try to create it
-		job.Logf("creating new bridge for %s", bridgeIface)
 		if err := createBridge(bridgeIP); err != nil {
 			return job.Error(err)
 		}
 
-		job.Logf("getting iface addr")
 		addr, err = networkdriver.GetIfaceAddr(bridgeIface)
 		if err != nil {
 			return job.Error(err)
@@ -131,7 +130,7 @@ func InitDriver(job *engine.Job) engine.Status {
 
 	// Configure iptables for link support
 	if enableIPTables {
-		if err := setupIPTables(addr, icc); err != nil {
+		if err := setupIPTables(addr, icc, ipMasq); err != nil {
 			return job.Error(err)
 		}
 	}
@@ -157,6 +156,16 @@ func InitDriver(job *engine.Job) engine.Status {
 	}
 
 	bridgeNetwork = network
+	if fixedCIDR != "" {
+		_, subnet, err := net.ParseCIDR(fixedCIDR)
+		if err != nil {
+			return job.Error(err)
+		}
+		log.Debugf("Subnet: %v", subnet)
+		if err := ipallocator.RegisterSubnet(bridgeNetwork, subnet); err != nil {
+			return job.Error(err)
+		}
+	}
 
 	// https://github.com/docker/docker/issues/2768
 	job.Eng.Hack_SetGlobalVar("httpapi.bridgeIP", bridgeNetwork.IP)
@@ -174,15 +183,18 @@ func InitDriver(job *engine.Job) engine.Status {
 	return engine.StatusOK
 }
 
-func setupIPTables(addr net.Addr, icc bool) error {
+func setupIPTables(addr net.Addr, icc, ipmasq bool) error {
 	// Enable NAT
-	natArgs := []string{"POSTROUTING", "-t", "nat", "-s", addr.String(), "!", "-o", bridgeIface, "-j", "MASQUERADE"}
 
-	if !iptables.Exists(natArgs...) {
-		if output, err := iptables.Raw(append([]string{"-I"}, natArgs...)...); err != nil {
-			return fmt.Errorf("Unable to enable network bridge NAT: %s", err)
-		} else if len(output) != 0 {
-			return fmt.Errorf("Error iptables postrouting: %s", output)
+	if ipmasq {
+		natArgs := []string{"POSTROUTING", "-t", "nat", "-s", addr.String(), "!", "-o", bridgeIface, "-j", "MASQUERADE"}
+
+		if !iptables.Exists(natArgs...) {
+			if output, err := iptables.Raw(append([]string{"-I"}, natArgs...)...); err != nil {
+				return fmt.Errorf("Unable to enable network bridge NAT: %s", err)
+			} else if len(output) != 0 {
+				return fmt.Errorf("Error iptables postrouting: %s", output)
+			}
 		}
 	}
 
@@ -317,14 +329,14 @@ func createBridgeIface(name string) error {
 // Allocate a network interface
 func Allocate(job *engine.Job) engine.Status {
 	var (
-		ip          *net.IP
+		ip          net.IP
 		err         error
 		id          = job.Args[0]
 		requestedIP = net.ParseIP(job.Getenv("RequestedIP"))
 	)
 
 	if requestedIP != nil {
-		ip, err = ipallocator.RequestIP(bridgeNetwork, &requestedIP)
+		ip, err = ipallocator.RequestIP(bridgeNetwork, requestedIP)
 	} else {
 		ip, err = ipallocator.RequestIP(bridgeNetwork, nil)
 	}
@@ -342,7 +354,7 @@ func Allocate(job *engine.Job) engine.Status {
 	out.SetInt("IPPrefixLen", size)
 
 	currentInterfaces.Set(id, &networkInterface{
-		IP: *ip,
+		IP: ip,
 	})
 
 	out.WriteTo(job.Stdout)
@@ -367,7 +379,7 @@ func Release(job *engine.Job) engine.Status {
 		}
 	}
 
-	if err := ipallocator.ReleaseIP(bridgeNetwork, &containerInterface.IP); err != nil {
+	if err := ipallocator.ReleaseIP(bridgeNetwork, containerInterface.IP); err != nil {
 		log.Infof("Unable to release ip %s", err)
 	}
 	return engine.StatusOK
@@ -389,6 +401,9 @@ func AllocatePort(job *engine.Job) engine.Status {
 
 	if hostIP != "" {
 		ip = net.ParseIP(hostIP)
+		if ip == nil {
+			return job.Errorf("Bad parameter: invalid host ip %s", hostIP)
+		}
 	}
 
 	// host ip, proto, and host port

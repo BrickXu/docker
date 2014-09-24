@@ -18,7 +18,6 @@ import (
 
 	"github.com/docker/docker/archive"
 	"github.com/docker/docker/daemon/execdriver"
-	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/links"
@@ -80,14 +79,18 @@ type Container struct {
 	MountLabel, ProcessLabel string
 	RestartCount             int
 
+	// Maps container paths to volume paths.  The key in this is the path to which
+	// the volume is being mounted inside the container.  Value is the path of the
+	// volume on disk
 	Volumes map[string]string
 	// Store rw/ro in a separate structure to preserve reverse-compatibility on-disk.
 	// Easier than migrating older container configs :)
 	VolumesRW  map[string]bool
 	hostConfig *runconfig.HostConfig
 
-	activeLinks map[string]*links.Link
-	monitor     *containerMonitor
+	activeLinks  map[string]*links.Link
+	monitor      *containerMonitor
+	execCommands *execStore
 }
 
 func (container *Container) FromDisk() error {
@@ -309,7 +312,7 @@ func (container *Container) Start() (err error) {
 		return err
 	}
 	container.verifyDaemonSettings()
-	if err := prepareVolumesForContainer(container); err != nil {
+	if err := container.prepareVolumes(); err != nil {
 		return err
 	}
 	linkedEnv, err := container.setupLinkedContainers()
@@ -323,7 +326,7 @@ func (container *Container) Start() (err error) {
 	if err := populateCommand(container, env); err != nil {
 		return err
 	}
-	if err := setupMountsForContainer(container); err != nil {
+	if err := container.setupMounts(); err != nil {
 		return err
 	}
 
@@ -419,6 +422,11 @@ func (container *Container) buildHostsFiles(IP string) error {
 	for linkAlias, child := range children {
 		_, alias := path.Split(linkAlias)
 		extraContent[alias] = child.NetworkSettings.IPAddress
+	}
+
+	for _, extraHost := range container.hostConfig.ExtraHosts {
+		parts := strings.Split(extraHost, ":")
+		extraContent[parts[0]] = parts[1]
 	}
 
 	return etchosts.Build(container.HostsPath, IP, container.Config.Hostname, container.Config.Domainname, &extraContent)
@@ -686,10 +694,14 @@ func (container *Container) Mount() error {
 	return container.daemon.Mount(container)
 }
 
+func (container *Container) changes() ([]archive.Change, error) {
+	return container.daemon.Changes(container)
+}
+
 func (container *Container) Changes() ([]archive.Change, error) {
 	container.Lock()
 	defer container.Unlock()
-	return container.daemon.Changes(container)
+	return container.changes()
 }
 
 func (container *Container) GetImage() (*image.Image, error) {
@@ -750,21 +762,13 @@ func (container *Container) GetSize() (int64, int64) {
 	}
 	defer container.Unmount()
 
-	if differ, ok := container.daemon.driver.(graphdriver.Differ); ok {
-		sizeRw, err = differ.DiffSize(container.ID)
-		if err != nil {
-			log.Errorf("Warning: driver %s couldn't return diff size of container %s: %s", driver, container.ID, err)
-			// FIXME: GetSize should return an error. Not changing it now in case
-			// there is a side-effect.
-			sizeRw = -1
-		}
-	} else {
-		changes, _ := container.Changes()
-		if changes != nil {
-			sizeRw = archive.ChangesSize(container.basefs, changes)
-		} else {
-			sizeRw = -1
-		}
+	initID := fmt.Sprintf("%s-init", container.ID)
+	sizeRw, err = driver.DiffSize(container.ID, initID)
+	if err != nil {
+		log.Errorf("Warning: driver %s couldn't return diff size of container %s: %s", driver, container.ID, err)
+		// FIXME: GetSize should return an error. Not changing it now in case
+		// there is a side-effect.
+		sizeRw = -1
 	}
 
 	if _, err = os.Stat(container.basefs); err != nil {
@@ -1181,48 +1185,4 @@ func (container *Container) getNetworkedContainer() (*Container, error) {
 	default:
 		return nil, fmt.Errorf("network mode not set to container")
 	}
-}
-
-func (container *Container) GetVolumes() (map[string]*Volume, error) {
-	// Get all the bind-mounts
-	volumes, err := container.getBindMap()
-	if err != nil {
-		return nil, err
-	}
-
-	// Get all the normal volumes
-	for volPath, hostPath := range container.Volumes {
-		if _, exists := volumes[volPath]; exists {
-			continue
-		}
-		volumes[volPath] = &Volume{VolPath: volPath, HostPath: hostPath, isReadWrite: container.VolumesRW[volPath]}
-	}
-
-	return volumes, nil
-}
-
-func (container *Container) getBindMap() (map[string]*Volume, error) {
-	var (
-		// Create the requested bind mounts
-		volumes = map[string]*Volume{}
-		// Define illegal container destinations
-		illegalDsts = []string{"/", "."}
-	)
-
-	for _, bind := range container.hostConfig.Binds {
-		vol, err := parseBindVolumeSpec(bind)
-		if err != nil {
-			return nil, err
-		}
-		vol.isBindMount = true
-		// Bail if trying to mount to an illegal destination
-		for _, illegal := range illegalDsts {
-			if vol.VolPath == illegal {
-				return nil, fmt.Errorf("Illegal bind destination: %s", vol.VolPath)
-			}
-		}
-
-		volumes[filepath.Clean(vol.VolPath)] = &vol
-	}
-	return volumes, nil
 }

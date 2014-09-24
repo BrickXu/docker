@@ -119,6 +119,12 @@ func (b *Builder) Run(context io.Reader) (string, error) {
 		return "", err
 	}
 
+	defer func() {
+		if err := os.RemoveAll(b.contextPath); err != nil {
+			log.Debugf("[BUILDER] failed to remove temporary context: %s", err)
+		}
+	}()
+
 	filename := path.Join(b.contextPath, "Dockerfile")
 
 	fi, err := os.Stat(filename)
@@ -144,7 +150,7 @@ func (b *Builder) Run(context io.Reader) (string, error) {
 	b.dockerfile = ast
 
 	// some initializations that would not have been supplied by the caller.
-	b.Config = &runconfig.Config{Entrypoint: []string{}, Cmd: []string{"/bin/sh", "-c"}}
+	b.Config = &runconfig.Config{Entrypoint: []string{}, Cmd: nil}
 	b.TmpContainers = map[string]struct{}{}
 
 	for i, n := range b.dockerfile.Children {
@@ -162,10 +168,6 @@ func (b *Builder) Run(context io.Reader) (string, error) {
 
 	if b.image == "" {
 		return "", fmt.Errorf("No image was generated. Is your Dockerfile empty?\n")
-	}
-
-	if err := os.RemoveAll(b.contextPath); err != nil {
-		log.Debugf("[BUILDER] failed to remove temporary context: %s", err)
 	}
 
 	fmt.Fprintf(b.OutStream, "Successfully built %s\n", utils.TruncateID(b.image))

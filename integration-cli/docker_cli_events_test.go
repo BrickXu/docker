@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-func TestCLIGetEventsUntag(t *testing.T) {
+func TestEventsUntag(t *testing.T) {
 	out, _, _ := cmd(t, "images", "-q")
 	image := strings.Split(out, "\n")[0]
 	cmd(t, "tag", image, "utest:tag1")
@@ -31,7 +31,7 @@ func TestCLIGetEventsUntag(t *testing.T) {
 	logDone("events - untags are logged")
 }
 
-func TestCLIGetEventsPause(t *testing.T) {
+func TestEventsPause(t *testing.T) {
 	out, _, _ := cmd(t, "images", "-q")
 	image := strings.Split(out, "\n")[0]
 	cmd(t, "run", "-d", "--name", "testeventpause", image, "sleep", "2")
@@ -57,7 +57,36 @@ func TestCLIGetEventsPause(t *testing.T) {
 	logDone("events - pause/unpause is logged")
 }
 
-func TestCLILimitEvents(t *testing.T) {
+func TestEventsContainerFailStartDie(t *testing.T) {
+	out, _, _ := cmd(t, "images", "-q")
+	image := strings.Split(out, "\n")[0]
+	eventsCmd := exec.Command(dockerBinary, "run", "-d", "--name", "testeventdie", image, "blerg")
+	_, _, err := runCommandWithOutput(eventsCmd)
+	if err == nil {
+		t.Fatalf("Container run with command blerg should have failed, but it did not")
+	}
+
+	eventsCmd = exec.Command(dockerBinary, "events", "--since=0", fmt.Sprintf("--until=%d", time.Now().Unix()))
+	out, _, _ = runCommandWithOutput(eventsCmd)
+	events := strings.Split(out, "\n")
+	if len(events) <= 1 {
+		t.Fatalf("Missing expected event")
+	}
+
+	startEvent := strings.Fields(events[len(events)-3])
+	dieEvent := strings.Fields(events[len(events)-2])
+
+	if startEvent[len(startEvent)-1] != "start" {
+		t.Fatalf("event should be start, not %#v", startEvent)
+	}
+	if dieEvent[len(dieEvent)-1] != "die" {
+		t.Fatalf("event should be die, not %#v", dieEvent)
+	}
+
+	logDone("events - container failed to start logs die")
+}
+
+func TestEventsLimit(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		cmd(t, "run", "busybox", "echo", strconv.Itoa(i))
 	}
@@ -71,7 +100,7 @@ func TestCLILimitEvents(t *testing.T) {
 	logDone("events - limited to 64 entries")
 }
 
-func TestCLIGetEventsContainerEvents(t *testing.T) {
+func TestEventsContainerEvents(t *testing.T) {
 	cmd(t, "run", "--rm", "busybox", "true")
 	eventsCmd := exec.Command(dockerBinary, "events", "--since=0", fmt.Sprintf("--until=%d", time.Now().Unix()))
 	out, exitCode, err := runCommandWithOutput(eventsCmd)
@@ -103,7 +132,7 @@ func TestCLIGetEventsContainerEvents(t *testing.T) {
 	logDone("events - container create, start, die, destroy is logged")
 }
 
-func TestCLIGetEventsImageUntagDelete(t *testing.T) {
+func TestEventsImageUntagDelete(t *testing.T) {
 	name := "testimageevents"
 	defer deleteImages(name)
 	_, err := buildImage(name,

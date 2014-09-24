@@ -38,6 +38,7 @@ import (
 	"github.com/docker/docker/pkg/truncindex"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
+	"github.com/docker/docker/volumes"
 )
 
 var (
@@ -85,11 +86,12 @@ type Daemon struct {
 	repository     string
 	sysInitPath    string
 	containers     *contStore
+	execCommands   *execStore
 	graph          *graph.Graph
 	repositories   *graph.TagStore
 	idIndex        *truncindex.TruncIndex
 	sysInfo        *sysinfo.SysInfo
-	volumes        *graph.Graph
+	volumes        *volumes.Repository
 	eng            *engine.Engine
 	config         *Config
 	containerGraph *graphdb.Database
@@ -122,6 +124,9 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 		"unpause":           daemon.ContainerUnpause,
 		"wait":              daemon.ContainerWait,
 		"image_delete":      daemon.ImageDelete, // FIXME: see above
+		"execCreate":        daemon.ContainerExecCreate,
+		"execStart":         daemon.ContainerExecStart,
+		"execResize":        daemon.ContainerExecResize,
 	} {
 		if err := eng.Register(name, method); err != nil {
 			return err
@@ -161,7 +166,11 @@ func (daemon *Daemon) containerRoot(id string) string {
 // Load reads the contents of a container from disk
 // This is typically done at startup.
 func (daemon *Daemon) load(id string) (*Container, error) {
-	container := &Container{root: daemon.containerRoot(id), State: NewState()}
+	container := &Container{
+		root:         daemon.containerRoot(id),
+		State:        NewState(),
+		execCommands: newExecStore(),
+	}
 	if err := container.FromDisk(); err != nil {
 		return nil, err
 	}
@@ -374,6 +383,12 @@ func (daemon *Daemon) restore() error {
 		}
 	}
 
+	for _, c := range registeredContainers {
+		for _, mnt := range c.VolumeMounts() {
+			daemon.volumes.Add(mnt.volume)
+		}
+	}
+
 	if !debug {
 		log.Infof(": done.")
 	}
@@ -496,17 +511,17 @@ func (daemon *Daemon) generateHostname(id string, config *runconfig.Config) {
 	}
 }
 
-func (daemon *Daemon) getEntrypointAndArgs(config *runconfig.Config) (string, []string) {
+func (daemon *Daemon) getEntrypointAndArgs(configEntrypoint, configCmd []string) (string, []string) {
 	var (
 		entrypoint string
 		args       []string
 	)
-	if len(config.Entrypoint) != 0 {
-		entrypoint = config.Entrypoint[0]
-		args = append(config.Entrypoint[1:], config.Cmd...)
+	if len(configEntrypoint) != 0 {
+		entrypoint = configEntrypoint[0]
+		args = append(configEntrypoint[1:], configCmd...)
 	} else {
-		entrypoint = config.Cmd[0]
-		args = config.Cmd[1:]
+		entrypoint = configCmd[0]
+		args = configCmd[1:]
 	}
 	return entrypoint, args
 }
@@ -522,7 +537,7 @@ func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *i
 	}
 
 	daemon.generateHostname(id, config)
-	entrypoint, args := daemon.getEntrypointAndArgs(config)
+	entrypoint, args := daemon.getEntrypointAndArgs(config.Entrypoint, config.Cmd)
 
 	container := &Container{
 		// FIXME: we should generate the ID here instead of receiving it as an argument
@@ -538,6 +553,7 @@ func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *i
 		Driver:          daemon.driver.String(),
 		ExecDriver:      daemon.execDriver.Name(),
 		State:           NewState(),
+		execCommands:    newExecStore(),
 	}
 	container.root = daemon.containerRoot(container.ID)
 
@@ -690,8 +706,10 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	if !config.EnableIptables && !config.InterContainerCommunication {
 		return nil, fmt.Errorf("You specified --iptables=false with --icc=false. ICC uses iptables to function. Please set --icc or --iptables to true.")
 	}
-	// FIXME: DisableNetworkBidge doesn't need to be public anymore
-	config.DisableNetwork = config.BridgeIface == DisableNetworkBridge
+	if !config.EnableIptables && config.EnableIpMasq {
+		return nil, fmt.Errorf("You specified --iptables=false with --ipmasq=true. IP masquerading uses iptables to function. Please set --ipmasq to false or --iptables to true.")
+	}
+	config.DisableNetwork = config.BridgeIface == disableNetworkBridge
 
 	// Claim the pidfile first, to avoid any and all unexpected race conditions.
 	// Some of the init doesn't need a pidfile lock - but let's not try to be smart.
@@ -706,25 +724,24 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	}
 
 	// Check that the system is supported and we have sufficient privileges
-	// FIXME: return errors instead of calling Fatal
 	if runtime.GOOS != "linux" {
-		log.Fatalf("The Docker daemon is only supported on linux")
+		return nil, fmt.Errorf("The Docker daemon is only supported on linux")
 	}
 	if os.Geteuid() != 0 {
-		log.Fatalf("The Docker daemon needs to be run as root")
+		return nil, fmt.Errorf("The Docker daemon needs to be run as root")
 	}
 	if err := checkKernelAndArch(); err != nil {
-		log.Fatalf(err.Error())
+		return nil, err
 	}
 
 	// set up the TempDir to use a canonical path
 	tmp, err := utils.TempDir(config.Root)
 	if err != nil {
-		log.Fatalf("Unable to get the TempDir under %s: %s", config.Root, err)
+		return nil, fmt.Errorf("Unable to get the TempDir under %s: %s", config.Root, err)
 	}
 	realTmp, err := utils.ReadSymlinkedDirectory(tmp)
 	if err != nil {
-		log.Fatalf("Unable to get the full path to the TempDir (%s): %s", tmp, err)
+		return nil, fmt.Errorf("Unable to get the full path to the TempDir (%s): %s", tmp, err)
 	}
 	os.Setenv("TMPDIR", realTmp)
 	if !config.EnableSelinuxSupport {
@@ -738,7 +755,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	} else {
 		realRoot, err = utils.ReadSymlinkedDirectory(config.Root)
 		if err != nil {
-			log.Fatalf("Unable to get the full path to root (%s): %s", config.Root, err)
+			return nil, fmt.Errorf("Unable to get the full path to root (%s): %s", config.Root, err)
 		}
 	}
 	config.Root = realRoot
@@ -758,7 +775,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	log.Debugf("Using graph driver %s", driver)
 
 	// As Docker on btrfs and SELinux are incompatible at present, error on both being enabled
-	if config.EnableSelinuxSupport && driver.String() == "btrfs" {
+	if selinuxEnabled() && config.EnableSelinuxSupport && driver.String() == "btrfs" {
 		return nil, fmt.Errorf("SELinux is not supported with the BTRFS graph driver!")
 	}
 
@@ -779,17 +796,16 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, err
 	}
 
-	// We don't want to use a complex driver like aufs or devmapper
-	// for volumes, just a plain filesystem
 	volumesDriver, err := graphdriver.GetDriver("vfs", config.Root, config.GraphOptions)
 	if err != nil {
 		return nil, err
 	}
-	log.Debugf("Creating volumes graph")
-	volumes, err := graph.NewGraph(path.Join(config.Root, "volumes"), volumesDriver)
+
+	volumes, err := volumes.NewRepository(path.Join(config.Root, "volumes"), volumesDriver)
 	if err != nil {
 		return nil, err
 	}
+
 	log.Debugf("Creating repository list")
 	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g, config.Mirrors)
 	if err != nil {
@@ -802,8 +818,10 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		job.SetenvBool("EnableIptables", config.EnableIptables)
 		job.SetenvBool("InterContainerCommunication", config.InterContainerCommunication)
 		job.SetenvBool("EnableIpForward", config.EnableIpForward)
+		job.SetenvBool("EnableIpMasq", config.EnableIpMasq)
 		job.Setenv("BridgeIface", config.BridgeIface)
 		job.Setenv("BridgeIP", config.BridgeIP)
+		job.Setenv("FixedCIDR", config.FixedCIDR)
 		job.Setenv("DefaultBindingIP", config.DefaultIp.String())
 
 		if err := job.Run(); err != nil {
@@ -846,6 +864,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	daemon := &Daemon{
 		repository:     daemonRepo,
 		containers:     &contStore{s: make(map[string]*Container)},
+		execCommands:   newExecStore(),
 		graph:          g,
 		repositories:   repositories,
 		idIndex:        truncindex.NewTruncIndex([]string{}),
@@ -931,46 +950,13 @@ func (daemon *Daemon) Unmount(container *Container) error {
 }
 
 func (daemon *Daemon) Changes(container *Container) ([]archive.Change, error) {
-	if differ, ok := daemon.driver.(graphdriver.Differ); ok {
-		return differ.Changes(container.ID)
-	}
-	cDir, err := daemon.driver.Get(container.ID, "")
-	if err != nil {
-		return nil, fmt.Errorf("Error getting container rootfs %s from driver %s: %s", container.ID, container.daemon.driver, err)
-	}
-	defer daemon.driver.Put(container.ID)
-	initDir, err := daemon.driver.Get(container.ID+"-init", "")
-	if err != nil {
-		return nil, fmt.Errorf("Error getting container init rootfs %s from driver %s: %s", container.ID, container.daemon.driver, err)
-	}
-	defer daemon.driver.Put(container.ID + "-init")
-	return archive.ChangesDirs(cDir, initDir)
+	initID := fmt.Sprintf("%s-init", container.ID)
+	return daemon.driver.Changes(container.ID, initID)
 }
 
 func (daemon *Daemon) Diff(container *Container) (archive.Archive, error) {
-	if differ, ok := daemon.driver.(graphdriver.Differ); ok {
-		return differ.Diff(container.ID)
-	}
-
-	changes, err := daemon.Changes(container)
-	if err != nil {
-		return nil, err
-	}
-
-	cDir, err := daemon.driver.Get(container.ID, "")
-	if err != nil {
-		return nil, fmt.Errorf("Error getting container rootfs %s from driver %s: %s", container.ID, container.daemon.driver, err)
-	}
-
-	archive, err := archive.ExportChanges(cDir, changes)
-	if err != nil {
-		return nil, err
-	}
-	return ioutils.NewReadCloserWrapper(archive, func() error {
-		err := archive.Close()
-		daemon.driver.Put(container.ID)
-		return err
-	}), nil
+	initID := fmt.Sprintf("%s-init", container.ID)
+	return daemon.driver.Diff(container.ID, initID)
 }
 
 func (daemon *Daemon) Run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {
@@ -1047,10 +1033,6 @@ func (daemon *Daemon) GraphDriver() graphdriver.Driver {
 
 func (daemon *Daemon) ExecutionDriver() execdriver.Driver {
 	return daemon.execDriver
-}
-
-func (daemon *Daemon) Volumes() *graph.Graph {
-	return daemon.volumes
 }
 
 func (daemon *Daemon) ContainerGraph() *graphdb.Database {

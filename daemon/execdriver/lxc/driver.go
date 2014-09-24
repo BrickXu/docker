@@ -457,6 +457,11 @@ func (d *driver) generateEnvConfig(c *execdriver.Command) error {
 	return ioutil.WriteFile(p, data, 0600)
 }
 
+// Clean not implemented for lxc
+func (d *driver) Clean(id string) error {
+	return nil
+}
+
 type TtyConsole struct {
 	MasterPty *os.File
 	SlavePty  *os.File
@@ -526,4 +531,8 @@ func (t *TtyConsole) AttachPipes(command *exec.Cmd, pipes *execdriver.Pipes) err
 func (t *TtyConsole) Close() error {
 	t.SlavePty.Close()
 	return t.MasterPty.Close()
+}
+
+func (d *driver) Exec(c *execdriver.Command, processConfig *execdriver.ProcessConfig, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (int, error) {
+	return -1, fmt.Errorf("Unsupported: Exec is not supported by the lxc driver")
 }
