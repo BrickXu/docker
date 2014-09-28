@@ -15,8 +15,8 @@ func (daemon *Daemon) ContainerCreate(job *engine.Job) engine.Status {
 		return job.Errorf("Usage: %s", job.Name)
 	}
 	config := runconfig.ContainerConfigFromJob(job)
-	if config.Memory != 0 && config.Memory < 524288 {
-		return job.Errorf("Minimum memory limit allowed is 512k")
+	if config.Memory != 0 && config.Memory < 4194304 {
+		return job.Errorf("Minimum memory limit allowed is 4MB")
 	}
 	if config.Memory > 0 && !daemon.SystemConfig().MemoryLimit {
 		job.Errorf("Your kernel does not support memory limit capabilities. Limitation discarded.\n")
@@ -26,7 +26,16 @@ func (daemon *Daemon) ContainerCreate(job *engine.Job) engine.Status {
 		job.Errorf("Your kernel does not support swap limit capabilities. Limitation discarded.\n")
 		config.MemorySwap = -1
 	}
-	container, buildWarnings, err := daemon.Create(config, name)
+
+	var hostConfig *runconfig.HostConfig
+	if job.EnvExists("HostConfig") {
+		hostConfig = runconfig.ContainerHostConfigFromJob(job)
+	} else {
+		// Older versions of the API don't provide a HostConfig.
+		hostConfig = nil
+	}
+
+	container, buildWarnings, err := daemon.Create(config, hostConfig, name)
 	if err != nil {
 		if daemon.Graph().IsNotExist(err) {
 			_, tag := parsers.ParseRepositoryTag(config.Image)
@@ -51,18 +60,11 @@ func (daemon *Daemon) ContainerCreate(job *engine.Job) engine.Status {
 		job.Errorf("%s\n", warning)
 	}
 
-	if job.EnvExists("HostConfig") {
-		hostConfig := runconfig.ContainerHostConfigFromJob(job)
-		if err := daemon.setHostConfig(container, hostConfig); err != nil {
-			return job.Error(err)
-		}
-	}
-
 	return engine.StatusOK
 }
 
 // Create creates a new container from the given configuration with a given name.
-func (daemon *Daemon) Create(config *runconfig.Config, name string) (*Container, []string, error) {
+func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.HostConfig, name string) (*Container, []string, error) {
 	var (
 		container *Container
 		warnings  []string
@@ -83,6 +85,11 @@ func (daemon *Daemon) Create(config *runconfig.Config, name string) (*Container,
 	}
 	if err := daemon.createRootfs(container, img); err != nil {
 		return nil, nil, err
+	}
+	if hostConfig != nil {
+		if err := daemon.setHostConfig(container, hostConfig); err != nil {
+			return nil, nil, err
+		}
 	}
 	if err := container.ToDisk(); err != nil {
 		return nil, nil, err

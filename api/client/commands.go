@@ -277,14 +277,14 @@ func (cli *DockerCli) CmdLogin(args ...string) error {
 	// the password or email from the config file, so prompt them
 	if username != authconfig.Username {
 		if password == "" {
-			oldState, _ := term.SaveState(cli.terminalFd)
+			oldState, _ := term.SaveState(cli.inFd)
 			fmt.Fprintf(cli.out, "Password: ")
-			term.DisableEcho(cli.terminalFd, oldState)
+			term.DisableEcho(cli.inFd, oldState)
 
 			password = readInput(cli.in, cli.out)
 			fmt.Fprint(cli.out, "\n")
 
-			term.RestoreTerminal(cli.terminalFd, oldState)
+			term.RestoreTerminal(cli.inFd, oldState)
 			if password == "" {
 				return fmt.Errorf("Error : Password Required")
 			}
@@ -664,13 +664,12 @@ func (cli *DockerCli) CmdStart(args ...string) error {
 	if encounteredError != nil {
 		if *openStdin || *attach {
 			cli.in.Close()
-			<-cErr
 		}
 		return encounteredError
 	}
 
 	if *openStdin || *attach {
-		if tty && cli.isTerminal {
+		if tty && cli.isTerminalOut {
 			if err := cli.monitorTtySize(cmd.Arg(0), false); err != nil {
 				log.Errorf("Error monitoring TTY size: %s", err)
 			}
@@ -1822,7 +1821,7 @@ func (cli *DockerCli) CmdAttach(args ...string) error {
 		tty    = config.GetBool("Tty")
 	)
 
-	if tty && cli.isTerminal {
+	if tty && cli.isTerminalOut {
 		if err := cli.monitorTtySize(cmd.Arg(0), false); err != nil {
 			log.Debugf("Error monitoring TTY size: %s", err)
 		}
@@ -2027,12 +2026,7 @@ func (cli *DockerCli) createContainer(config *runconfig.Config, hostConfig *runc
 		containerValues.Set("name", name)
 	}
 
-	var data interface{}
-	if hostConfig != nil {
-		data = runconfig.MergeConfigs(config, hostConfig)
-	} else {
-		data = config
-	}
+	mergedConfig := runconfig.MergeConfigs(config, hostConfig)
 
 	var containerIDFile *cidFile
 	if cidfile != "" {
@@ -2044,7 +2038,7 @@ func (cli *DockerCli) createContainer(config *runconfig.Config, hostConfig *runc
 	}
 
 	//create the container
-	stream, statusCode, err := cli.call("POST", "/containers/create?"+containerValues.Encode(), data, false)
+	stream, statusCode, err := cli.call("POST", "/containers/create?"+containerValues.Encode(), mergedConfig, false)
 	//if image not found try to pull it
 	if statusCode == 404 {
 		fmt.Fprintf(cli.err, "Unable to find image '%s' locally\n", config.Image)
@@ -2053,7 +2047,7 @@ func (cli *DockerCli) createContainer(config *runconfig.Config, hostConfig *runc
 			return nil, err
 		}
 		// Retry
-		if stream, _, err = cli.call("POST", "/containers/create?"+containerValues.Encode(), data, false); err != nil {
+		if stream, _, err = cli.call("POST", "/containers/create?"+containerValues.Encode(), mergedConfig, false); err != nil {
 			return nil, err
 		}
 	} else if err != nil {
@@ -2155,7 +2149,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		sigProxy = false
 	}
 
-	runResult, err := cli.createContainer(config, nil, hostConfig.ContainerIDFile, *flName)
+	runResult, err := cli.createContainer(config, hostConfig, hostConfig.ContainerIDFile, *flName)
 	if err != nil {
 		return err
 	}
@@ -2247,7 +2241,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		return err
 	}
 
-	if (config.AttachStdin || config.AttachStdout || config.AttachStderr) && config.Tty && cli.isTerminal {
+	if (config.AttachStdin || config.AttachStdout || config.AttachStderr) && config.Tty && cli.isTerminalOut {
 		if err := cli.monitorTtySize(runResult.Get("Id"), false); err != nil {
 			log.Errorf("Error monitoring TTY size: %s", err)
 		}
@@ -2496,7 +2490,7 @@ func (cli *DockerCli) CmdExec(args ...string) error {
 		}
 	}
 
-	if execConfig.Tty && cli.isTerminal {
+	if execConfig.Tty && cli.isTerminalIn {
 		if err := cli.monitorTtySize(execID, true); err != nil {
 			log.Errorf("Error monitoring TTY size: %s", err)
 		}

@@ -49,27 +49,30 @@ expect an integer, and they can only be specified once.
 
 ## daemon
 
-    Usage of docker:
+    Usage: docker [OPTIONS] COMMAND [arg...]
+
+    A self-sufficient runtime for linux containers.
+
+    Options:
       --api-enable-cors=false                    Enable CORS headers in the remote API
       -b, --bridge=""                            Attach containers to a pre-existing network bridge
                                                    use 'none' to disable container networking
       --bip=""                                   Use this CIDR notation address for the network bridge's IP, not compatible with -b
-      --fixed-cidr=""                            IPv4 subnet for fixed IPs (ex: 10.20.0.0/16)
-                                                   this subnet must be nested in the bridge subnet (which is defined by -b or --bip)
       -D, --debug=false                          Enable debug mode
       -d, --daemon=false                         Enable daemon mode
       --dns=[]                                   Force Docker to use specific DNS servers
       --dns-search=[]                            Force Docker to use specific DNS search domains
       -e, --exec-driver="native"                 Force the Docker runtime to use a specific exec driver
+      --fixed-cidr=""                            IPv4 subnet for fixed IPs (ex: 10.20.0.0/16)
+                                                   this subnet must be nested in the bridge subnet (which is defined by -b or --bip)
       -G, --group="docker"                       Group to assign the unix socket specified by -H when running in daemon mode
                                                    use '' (the empty string) to disable setting of a group
       -g, --graph="/var/lib/docker"              Path to use as the root of the Docker runtime
-      -H, --host=[]                              The socket(s) to bind to in daemon mode
-                                                   specified using one or more tcp://host:port, unix:///path/to/socket, fd://* or fd://socketfd.
+      -H, --host=[]                              The socket(s) to bind to in daemon mode or connect to in client mode, specified using one or more tcp://host:port, unix:///path/to/socket, fd://* or fd://socketfd.
       --icc=true                                 Enable inter-container communication
       --ip=0.0.0.0                               Default IP address to use when binding container ports
       --ip-forward=true                          Enable net.ipv4.ip_forward
-      --ip-masq=true                             Enable IP masquerading for bridge's IP range.
+      --ip-masq=true                             Enable IP masquerading for bridge's IP range
       --iptables=true                            Enable Docker's addition of iptables rules
       --mtu=0                                    Set the containers network MTU
                                                    if no value is provided: default to the default route MTU or 1500 if no default route is available
@@ -84,6 +87,7 @@ expect an integer, and they can only be specified once.
       --tlskey="/home/sven/.docker/key.pem"      Path to TLS key file
       --tlsverify=false                          Use TLS and verify the remote (daemon: verify client, client: verify daemon)
       -v, --version=false                        Print version information and quit
+
 
 Options with [] may be specified multiple times.
 
@@ -152,7 +156,7 @@ progress of your daemonized process.
 You can detach from the container again (and leave it running) with
 `CTRL-p CTRL-q` (for a quiet exit), or `CTRL-c`  which will send a
 SIGKILL to the container, or `CTRL-\` to get a stacktrace of the
-Docker client when it quits. When you detach from the container's 
+Docker client when it quits. When you detach from the container's
 process the exit code will be returned to the client.
 
 To stop a container, use `docker stop`.
@@ -226,6 +230,26 @@ is interpreted as a newline-separated list of exclusion patterns.
 Exclusion patterns match files or directories relative to `PATH` that
 will be excluded from the context. Globbing is done using Go's
 [filepath.Match](http://golang.org/pkg/path/filepath#Match) rules.
+
+Please note that `.dockerignore` files in other subdirectories are considered as 
+normal files. Filepaths in .dockerignore are absolute with the current directory
+as the root. Wildcards are allowed but the search is not recursive.
+
+### Example .dockerignore file 
+    */temp*
+    */*/temp*
+    temp?
+
+The first line above `*/temp*`, would ignore all files with names starting with
+`temp` from any subdirectory below the root directory, for example file named 
+`/somedir/temporary.txt` will be ignored. The second line `*/*/temp*`, will  
+ignore files starting with name `temp` from any subdirectory that is two levels
+below the root directory, for example a file `/somedir/subdir/temporary.txt` is 
+ignored in this case. The last line in the above example `temp?`, will ignore 
+the files that match the pattern from the root directory, for example files 
+`tempa`, `tempb` are ignored from the root directory. Currently  there is no
+support for regular expressions, formats like `[^temp*]` are ignored.
+
 
 See also:
 
@@ -377,45 +401,50 @@ path.  Paths are relative to the root of the filesystem.
 
     Copy files/folders from the PATH to the HOSTPATH
 
-
 ## create
 
 Creates a new container.
 
-    Usage: docker create [OPTIONS] IMAGE[:TAG] [COMMAND] [ARG...]
+    Usage: docker create [OPTIONS] IMAGE [COMMAND] [ARG...]
 
+    Create a new container
 
-    -a, --attach=[]            Attach to STDIN, STDOUT, STDERR.
-    -c, --cpu-shares=0         CPU shares (relative weight)
-    --cidfile=""               Write the container ID to the file
-    --dns=[]                   Set custom DNS servers
-    --dns-search=[]            Set custom DNS search domains
-    -e, --env=[]               Set environment variables
-    --entrypoint=""            Overwrite the default entrypoint of the image
-    --env-file=[]              Read in a line delimited file of environment variables
-    --expose=[]                Expose a port from the container without publishing it to your host
-    -h, --hostname=""          Container host name
-    -i, --interactive=false    Keep `STDIN` open even if not attached
-    --link=[]                  Add link to another container (name:alias)
-    --lxc-conf=[]              (lxc exec-driver only) Add custom lxc options --lxc-conf="lxc.cgroup.cpuset.cpus = 0,1"
-    -m, --memory=""            Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
-    --name=""                  Assign a name to the container
-    --net="bridge"             Set the Network mode for the container
-                                 'bridge': creates a new network stack for the container on the docker bridge
-                                 'none': no networking for this container
-                                 'container:<name|id>': reuses another container network stack
-                                 'host': use the host network stack inside the container
-    -p, --publish=[]           Publish a container's port to the host
-                                 format: ip:hostPort:containerPort | ip::containerPort | hostPort:containerPort
-                                 (use 'docker port' to see the actual mapping)
-    -P, --publish-all=false    Publish all exposed ports to the host interfaces
-    --privileged=false         Give extended privileges to this container
-    -t, --tty=false            Allocate a pseudo-TTY
-    -u, --user=""              Username or UID
-    -v, --volume=[]            Bind mount a volume (e.g. from the host: -v /host:/container, from docker: -v /container)
-    --volumes-from=[]          Mount volumes from the specified container(s)
-    -w, --workdir=""           Working directory inside the container
-
+      -a, --attach=[]            Attach to STDIN, STDOUT or STDERR.
+      --add-host=[]              Add a custom host-to-IP mapping (host:ip)
+      -c, --cpu-shares=0         CPU shares (relative weight)
+      --cap-add=[]               Add Linux capabilities
+      --cap-drop=[]              Drop Linux capabilities
+      --cidfile=""               Write the container ID to the file
+      --cpuset=""                CPUs in which to allow execution (0-3, 0,1)
+      --device=[]                Add a host device to the container (e.g. --device=/dev/sdc:/dev/xvdc)
+      --dns=[]                   Set custom DNS servers
+      --dns-search=[]            Set custom DNS search domains
+      -e, --env=[]               Set environment variables
+      --entrypoint=""            Overwrite the default ENTRYPOINT of the image
+      --env-file=[]              Read in a line delimited file of environment variables
+      --expose=[]                Expose a port from the container without publishing it to your host
+      -h, --hostname=""          Container host name
+      -i, --interactive=false    Keep STDIN open even if not attached
+      --link=[]                  Add link to another container in the form of name:alias
+      --lxc-conf=[]              (lxc exec-driver only) Add custom lxc options --lxc-conf="lxc.cgroup.cpuset.cpus = 0,1"
+      -m, --memory=""            Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
+      --name=""                  Assign a name to the container
+      --net="bridge"             Set the Network mode for the container
+                                   'bridge': creates a new network stack for the container on the docker bridge
+                                   'none': no networking for this container
+                                   'container:<name|id>': reuses another container network stack
+                                   'host': use the host network stack inside the container.  Note: the host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.
+      -P, --publish-all=false    Publish all exposed ports to the host interfaces
+      -p, --publish=[]           Publish a container's port to the host
+                                   format: ip:hostPort:containerPort | ip::containerPort | hostPort:containerPort | containerPort
+                                   (use 'docker port' to see the actual mapping)
+      --privileged=false         Give extended privileges to this container
+      --restart=""               Restart policy to apply when a container exits (no, on-failure[:max-retry], always)
+      -t, --tty=false            Allocate a pseudo-TTY
+      -u, --user=""              Username or UID
+      -v, --volume=[]            Bind mount a volume (e.g., from the host: -v /host:/container, from Docker: -v /container)
+      --volumes-from=[]          Mount volumes from the specified container(s)
+      -w, --workdir=""           Working directory inside the container
 
 The `docker create` command creates a writeable container layer over
 the specified image and prepares it for running the specified command.
@@ -509,11 +538,11 @@ You'll need two shells for this example.
 
 ## exec
 
-    Usage: docker exec CONTAINER COMMAND [ARG...]
+    Usage: docker exec [OPTIONS] CONTAINER COMMAND [ARG...]
 
     Run a command in an existing container
 
-      -d, --detach=false         Detached mode: run the process in the background and exit
+      -d, --detach=false         Detached mode: run command in the background
       -i, --interactive=false    Keep STDIN open even if not attached
       -t, --tty=false            Allocate a pseudo-TTY
 
@@ -965,10 +994,13 @@ To download a particular image, or set of images (i.e., a repository),
 use `docker pull`:
 
     $ sudo docker pull debian
-    # will pull only the debian:latest image and its intermediate layers 
+    # will pull the debian:latest image, its intermediate layers
+    # and any aliases of the same id
     $ sudo docker pull debian:testing
-    # will pull only the image named debian:testing and any intermediate layers
-    # it is based on. (Typically the empty `scratch` image, a MAINTAINER layer,
+    # will pull the image named ubuntu:trusty, ubuntu:14.04
+    # which is an alias of the same image
+    # and any intermediate layers it is based on.
+    # (Typically the empty `scratch` image, a MAINTAINER layer,
     # and the un-tarred base).
     $ sudo docker pull --all-tags centos
     # will pull all the images from the centos repository
@@ -1086,7 +1118,7 @@ removed before the image is removed.
       --cap-drop=[]              Drop Linux capabilities
       --cidfile=""               Write the container ID to the file
       --cpuset=""                CPUs in which to allow execution (0-3, 0,1)
-      -d, --detach=false         Detached mode: run container in the background and print new container ID
+      -d, --detach=false         Detached mode: run the container in the background and print the new container ID
       --device=[]                Add a host device to the container (e.g. --device=/dev/sdc:/dev/xvdc)
       --dns=[]                   Set custom DNS servers
       --dns-search=[]            Set custom DNS search domains
@@ -1191,8 +1223,8 @@ folder before starting your container.
     $ sudo docker run -t -i -v /var/run/docker.sock:/var/run/docker.sock -v ./static-docker:/usr/bin/docker busybox sh
 
 By bind-mounting the docker unix socket and statically linked docker
-binary (such as that provided by [https://get.docker.io](
-https://get.docker.io)), you give the container the full access to create and
+binary (such as that provided by [https://get.docker.com](
+https://get.docker.com)), you give the container the full access to create and
 manipulate the host's docker daemon.
 
     $ sudo docker run -p 127.0.0.1:80:8080 ubuntu bash

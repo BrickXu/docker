@@ -19,6 +19,7 @@ import (
 
 	"github.com/docker/docker/pkg/mount"
 	"github.com/docker/docker/pkg/networkfs/resolvconf"
+	"github.com/kr/pty"
 )
 
 // "test123" should be printed by docker run
@@ -40,7 +41,7 @@ func TestRunEchoStdout(t *testing.T) {
 
 // "test" should be printed
 func TestRunEchoStdoutWithMemoryLimit(t *testing.T) {
-	runCmd := exec.Command(dockerBinary, "run", "-m", "2786432", "busybox", "echo", "test")
+	runCmd := exec.Command(dockerBinary, "run", "-m", "4m", "busybox", "echo", "test")
 	out, _, _, err := runCommandWithStdoutStderr(runCmd)
 	if err != nil {
 		t.Fatalf("failed to run container: %v, output: %q", err, out)
@@ -77,7 +78,7 @@ func TestRunEchoStdoutWitCPULimit(t *testing.T) {
 
 // "test" should be printed
 func TestRunEchoStdoutWithCPUAndMemoryLimit(t *testing.T) {
-	runCmd := exec.Command(dockerBinary, "run", "-c", "1000", "-m", "2786432", "busybox", "echo", "test")
+	runCmd := exec.Command(dockerBinary, "run", "-c", "1000", "-m", "4m", "busybox", "echo", "test")
 	out, _, _, err := runCommandWithStdoutStderr(runCmd)
 	if err != nil {
 		t.Fatalf("failed to run container: %v, output: %q", err, out)
@@ -819,6 +820,26 @@ func TestRunLoopbackOnlyExistsWhenNetworkingDisabled(t *testing.T) {
 	deleteAllContainers()
 
 	logDone("run - test loopback only exists when networking disabled")
+}
+
+// #7851 hostname outside container shows FQDN, inside only shortname
+// For testing purposes it is not required to set host's hostname directly
+// and use "--net=host" (as the original issue submitter did), as the same
+// codepath is executed with "docker run -h <hostname>".  Both were manually
+// tested, but this testcase takes the simpler path of using "run -h .."
+func TestRunFullHostnameSet(t *testing.T) {
+	cmd := exec.Command(dockerBinary, "run", "-h", "foo.bar.baz", "busybox", "hostname")
+	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		t.Fatal(err, out)
+	}
+
+	if actual := strings.Trim(out, "\r\n"); actual != "foo.bar.baz" {
+		t.Fatalf("expected hostname 'foo.bar.baz', received %s", actual)
+	}
+	deleteAllContainers()
+
+	logDone("run - test fully qualified hostname set with -h")
 }
 
 func TestRunPrivilegedCanMknod(t *testing.T) {
@@ -2161,4 +2182,73 @@ func TestRunExecDir(t *testing.T) {
 	}
 
 	logDone("run - check execdriver dir behavior")
+}
+
+// #6509
+func TestRunRedirectStdout(t *testing.T) {
+
+	defer deleteAllContainers()
+
+	checkRedirect := func(command string) {
+		_, tty, err := pty.Open()
+		if err != nil {
+			t.Fatalf("Could not open pty: %v", err)
+		}
+		cmd := exec.Command("sh", "-c", command)
+		cmd.Stdin = tty
+		cmd.Stdout = tty
+		cmd.Stderr = tty
+		ch := make(chan struct{})
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("start err: %v", err)
+		}
+		go func() {
+			if err := cmd.Wait(); err != nil {
+				t.Fatalf("wait err=%v", err)
+			}
+			close(ch)
+		}()
+
+		select {
+		case <-time.After(time.Second):
+			t.Fatal("command timeout")
+		case <-ch:
+		}
+	}
+
+	checkRedirect(dockerBinary + " run -i busybox cat /etc/passwd | grep -q root")
+	checkRedirect(dockerBinary + " run busybox cat /etc/passwd | grep -q root")
+
+	logDone("run - redirect stdout")
+}
+
+// Regression test for https://github.com/docker/docker/issues/8259
+func TestRunReuseBindVolumeThatIsSymlink(t *testing.T) {
+	tmpDir, err := ioutil.TempDir(os.TempDir(), "testlink")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	linkPath := os.TempDir() + "/testlink2"
+	if err := os.Symlink(tmpDir, linkPath); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(linkPath)
+
+	// Create first container
+	cmd := exec.Command(dockerBinary, "run", "-v", fmt.Sprintf("%s:/tmp/test", linkPath), "busybox", "ls", "-lh", "/tmp/test")
+	if _, err := runCommand(cmd); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create second container with same symlinked path
+	// This will fail if the referenced issue is hit with a "Volume exists" error
+	cmd = exec.Command(dockerBinary, "run", "-v", fmt.Sprintf("%s:/tmp/test", linkPath), "busybox", "ls", "-lh", "/tmp/test")
+	if out, _, err := runCommandWithOutput(cmd); err != nil {
+		t.Fatal(err, out)
+	}
+
+	deleteAllContainers()
+	logDone("run - can remount old bindmount volume")
 }
