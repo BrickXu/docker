@@ -13,8 +13,8 @@ successively.
 
 This page discusses the specifics of all the instructions you can use in your
 `Dockerfile`. To further help you write a clear, readable, maintainable
-`Dockerfile`, we've also written a [`Dockerfile` Best Practices guide](/articles/dockerfile_best-practices).
-
+`Dockerfile`, we've also written a [`Dockerfile` Best Practices
+guide](/articles/dockerfile_best-practices).
 
 ## Usage
 
@@ -60,7 +60,9 @@ to be created - so `RUN cd /tmp` will not have any effect on the next
 instructions.
 
 Whenever possible, Docker will re-use the intermediate images,
-accelerating `docker build` significantly (indicated by `Using cache`):
+accelerating `docker build` significantly (indicated by `Using cache` -
+see the [`Dockerfile` Best Practices
+guide](/articles/dockerfile_best-practices/#build-cache) for more information):
 
     $ sudo docker build -t SvenDowideit/ambassador .
     Uploading context 10.24 kB
@@ -192,10 +194,13 @@ commands using a base image that does not contain `/bin/sh`.
 > you must use double-quotes (") around words not single-quotes (').
 
 The cache for `RUN` instructions isn't invalidated automatically during
-the next build. The cache for an instruction like `RUN apt-get
-dist-upgrade -y` will be reused during the next build.  The cache for
-`RUN` instructions can be invalidated by using the `--no-cache` flag,
-for example `docker build --no-cache`.
+the next build. The cache for an instruction like 
+`RUN apt-get dist-upgrade -y` will be reused during the next build.  The 
+cache for `RUN` instructions can be invalidated by using the `--no-cache` 
+flag, for example `docker build --no-cache`.
+
+See the [`Dockerfile` Best Practices
+guide](/articles/dockerfile_best-practices/#build-cache) for more information.
 
 The cache for `RUN` instructions can be invalidated by `ADD` instructions. See
 [below](#add) for details.
@@ -268,7 +273,10 @@ default specified in `CMD`.
 The `EXPOSE` instructions informs Docker that the container will listen on the
 specified network ports at runtime. Docker uses this information to interconnect
 containers using links (see the [Docker User
-Guide](/userguide/dockerlinks)).
+Guide](/userguide/dockerlinks)). Note that `EXPOSE` only works for
+inter-container links. It doesn't make ports accessible from the host. To
+expose ports to the host, at runtime, 
+[use the `-p` flag](/userguide/dockerlinks).
 
 ## ENV
 
@@ -295,11 +303,18 @@ The `ADD` instruction copies new files,directories or remote file URLs to
 the filesystem of the container  from `<src>` and add them to the at 
 path `<dest>`.  
 
-Multiple <src> resource may be specified but if they are files or 
+Multiple `<src>` resource may be specified but if they are files or 
 directories then they must be relative to the source directory that is 
 being built (the context of the build).
 
-`<dest>` is the absolute path to which the source will be copied inside the
+Each `<src>` may contain wildcards and matching will be done using Go's
+[filepath.Match](http://golang.org/pkg/path/filepath#Match) rules.
+For most command line uses this should act as expected, for example:
+
+    ADD hom* /mydir/        # adds all files starting with "hom"
+    ADD hom?.txt /mydir/    # ? is replaced with any single character
+
+The `<dest>` is the absolute path to which the source will be copied inside the
 destination container.
 
 All new files and directories are created with a UID and GID of 0.
@@ -325,6 +340,9 @@ have permissions of 600.
 > The first encountered `ADD` instruction will invalidate the cache for all
 > following instructions from the Dockerfile if the contents of `<src>` have
 > changed. This includes invalidating the cache for `RUN` instructions.
+> See the [`Dockerfile` Best Practices
+guide](/articles/dockerfile_best-practices/#build-cache) for more information.
+
 
 The copy obeys the following rules:
 
@@ -360,8 +378,9 @@ The copy obeys the following rules:
   will be considered a directory and the contents of `<src>` will be written
   at `<dest>/base(<src>)`.
 
-- If multiple `<src>` resources are specified then `<dest>` must be a
-  directory, and it must end with a slash `/`.
+- If multiple `<src>` resources are specified, either directly or due to the
+  use of a wildcard, then `<dest>` must be a directory, and it must end with 
+  a slash `/`.
 
 - If `<dest>` does not end with a trailing slash, it will be considered a
   regular file and the contents of `<src>` will be written at `<dest>`.
@@ -377,11 +396,18 @@ The `COPY` instruction copies new files,directories or remote file URLs to
 the filesystem of the container  from `<src>` and add them to the at 
 path `<dest>`. 
 
-Multiple <src> resource may be specified but if they are files or 
+Multiple `<src>` resource may be specified but if they are files or 
 directories then they must be relative to the source directory that is being 
 built (the context of the build).
 
-`<dest>` is the absolute path to which the source will be copied inside the
+Each `<src>` may contain wildcards and matching will be done using Go's
+[filepath.Match](http://golang.org/pkg/path/filepath#Match) rules.
+For most command line uses this should act as expected, for example:
+
+    COPY hom* /mydir/        # adds all files starting with "hom"
+    COPY hom?.txt /mydir/    # ? is replaced with any single character
+
+The `<dest>` is the absolute path to which the source will be copied inside the
 destination container.
 
 All new files and directories are created with a UID and GID of 0.
@@ -405,8 +431,9 @@ The copy obeys the following rules:
   will be considered a directory and the contents of `<src>` will be written
   at `<dest>/base(<src>)`.
 
-- If multiple `<src>` resources are specified then `<dest>` must be a
-  directory, and it must end with a slash `/`.
+- If multiple `<src>` resources are specified, either directly or due to the
+  use of a wildcard, then `<dest>` must be a directory, and it must end with 
+  a slash `/`.
 
 - If `<dest>` does not end with a trailing slash, it will be considered a
   regular file and the contents of `<src>` will be written at `<dest>`.
