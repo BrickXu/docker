@@ -10,6 +10,7 @@ import (
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonlog"
 	"github.com/docker/docker/pkg/log"
+	"github.com/docker/docker/pkg/promise"
 	"github.com/docker/docker/utils"
 )
 
@@ -114,7 +115,7 @@ func (daemon *Daemon) ContainerAttach(job *engine.Job) engine.Status {
 
 // FIXME: this should be private, and every outside subsystem
 // should go through the "container_attach" job. But that would require
-// that job to be properly documented, as well as the relationship betweem
+// that job to be properly documented, as well as the relationship between
 // Attach and ContainerAttach.
 //
 // This method is in use by builder/builder.go.
@@ -246,7 +247,7 @@ func (daemon *Daemon) Attach(streamConfig *StreamConfig, openStdin, stdinOnce, t
 		}()
 	}
 
-	return utils.Go(func() error {
+	return promise.Go(func() error {
 		defer func() {
 			if cStdout != nil {
 				cStdout.Close()

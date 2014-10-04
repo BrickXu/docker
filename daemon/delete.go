@@ -20,7 +20,7 @@ func (daemon *Daemon) ContainerRm(job *engine.Job) engine.Status {
 	container := daemon.Get(name)
 
 	if container == nil {
-		job.Errorf("No such container: %s", name)
+		return job.Errorf("No such container: %s", name)
 	}
 
 	if removeLink {
@@ -93,6 +93,8 @@ func (daemon *Daemon) Destroy(container *Container) error {
 	if err := container.Stop(3); err != nil {
 		return err
 	}
+
+	container.ReleaseNetwork()
 
 	// Deregister the container before removing its directory, to avoid race conditions
 	daemon.idIndex.Delete(container.ID)

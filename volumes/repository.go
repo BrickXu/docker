@@ -38,7 +38,7 @@ func NewRepository(configPath string, driver graphdriver.Driver) (*Repository, e
 	return repo, repo.restore()
 }
 
-func (r *Repository) NewVolume(path string, writable bool) (*Volume, error) {
+func (r *Repository) newVolume(path string, writable bool) (*Volume, error) {
 	var (
 		isBindMount bool
 		err         error
@@ -65,7 +65,7 @@ func (r *Repository) NewVolume(path string, writable bool) (*Volume, error) {
 		Path:        path,
 		repository:  r,
 		Writable:    writable,
-		Containers:  make(map[string]struct{}),
+		containers:  make(map[string]struct{}),
 		configPath:  r.configPath + "/" + id,
 		IsBindMount: isBindMount,
 	}
@@ -73,10 +73,8 @@ func (r *Repository) NewVolume(path string, writable bool) (*Volume, error) {
 	if err := v.initialize(); err != nil {
 		return nil, err
 	}
-	if err := r.Add(v); err != nil {
-		return nil, err
-	}
-	return v, nil
+
+	return v, r.add(v)
 }
 
 func (r *Repository) restore() error {
@@ -113,6 +111,10 @@ func (r *Repository) get(path string) *Volume {
 func (r *Repository) Add(volume *Volume) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
+	return r.add(volume)
+}
+
+func (r *Repository) add(volume *Volume) error {
 	if vol := r.get(volume.Path); vol != nil {
 		return fmt.Errorf("Volume exists: %s", volume.ID)
 	}
@@ -145,8 +147,9 @@ func (r *Repository) Delete(path string) error {
 	if volume.IsBindMount {
 		return fmt.Errorf("Volume %s is a bind-mount and cannot be removed", volume.Path)
 	}
-	if len(volume.Containers) > 0 {
-		return fmt.Errorf("Volume %s is being used and cannot be removed: used by containers %s", volume.Path, volume.Containers)
+	containers := volume.Containers()
+	if len(containers) > 0 {
+		return fmt.Errorf("Volume %s is being used and cannot be removed: used by containers %s", volume.Path, containers)
 	}
 
 	if err := os.RemoveAll(volume.configPath); err != nil {
@@ -174,4 +177,19 @@ func (r *Repository) createNewVolumePath(id string) (string, error) {
 	}
 
 	return path, nil
+}
+
+func (r *Repository) FindOrCreateVolume(path string, writable bool) (*Volume, error) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	if path == "" {
+		return r.newVolume(path, writable)
+	}
+
+	if v := r.get(path); v != nil {
+		return v, nil
+	}
+
+	return r.newVolume(path, writable)
 }

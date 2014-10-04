@@ -760,8 +760,13 @@ func postContainersStart(eng *engine.Engine, version version.Version, w http.Res
 		job  = eng.Job("start", name)
 	)
 
+	// If contentLength is -1, we can assumed chunked encoding
+	// or more technically that the length is unknown
+	// http://golang.org/src/pkg/net/http/request.go#L139
+	// net/http otherwise seems to swallow any headers related to chunked encoding
+	// including r.TransferEncoding
 	// allow a nil body for backwards compatibility
-	if r.Body != nil && r.ContentLength > 0 {
+	if r.Body != nil && (r.ContentLength > 0 || r.ContentLength == -1) {
 		if err := checkForJson(r); err != nil {
 			return err
 		}
@@ -1088,6 +1093,7 @@ func postContainerExecCreate(eng *engine.Engine, version version.Version, w http
 	return writeJSON(w, http.StatusCreated, out)
 }
 
+// TODO(vishh): Refactor the code to avoid having to specify stream config as part of both create and start.
 func postContainerExecStart(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return nil
@@ -1144,6 +1150,7 @@ func postContainerExecStart(eng *engine.Engine, version version.Version, w http.
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
+
 	return nil
 }
 

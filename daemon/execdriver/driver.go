@@ -65,8 +65,9 @@ type Network struct {
 type NetworkInterface struct {
 	Gateway     string `json:"gateway"`
 	IPAddress   string `json:"ip"`
-	Bridge      string `json:"bridge"`
 	IPPrefixLen int    `json:"ip_prefix_len"`
+	MacAddress  string `json:"mac_address"`
+	Bridge      string `json:"bridge"`
 }
 
 type Resources struct {
@@ -116,4 +117,5 @@ type Command struct {
 	ProcessLabel       string            `json:"process_label"`
 	MountLabel         string            `json:"mount_label"`
 	LxcConfig          []string          `json:"lxc_config"`
+	AppArmorProfile    string            `json:"apparmor_profile"`
 }

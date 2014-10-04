@@ -15,7 +15,6 @@ import (
 
 	"github.com/docker/libcontainer/label"
 
-	"github.com/docker/docker/archive"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/execdriver/execdrivers"
 	"github.com/docker/docker/daemon/execdriver/lxc"
@@ -27,6 +26,7 @@ import (
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
 	"github.com/docker/docker/pkg/graphdb"
 	"github.com/docker/docker/pkg/ioutils"
@@ -38,6 +38,7 @@ import (
 	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/docker/docker/pkg/truncindex"
 	"github.com/docker/docker/runconfig"
+	"github.com/docker/docker/trust"
 	"github.com/docker/docker/utils"
 	"github.com/docker/docker/volumes"
 )
@@ -98,6 +99,7 @@ type Daemon struct {
 	containerGraph *graphdb.Database
 	driver         graphdriver.Driver
 	execDriver     execdriver.Driver
+	trustStore     *trust.TrustStore
 }
 
 // Install installs daemon capabilities to eng.
@@ -134,6 +136,9 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 		}
 	}
 	if err := daemon.Repositories().Install(eng); err != nil {
+		return err
+	}
+	if err := daemon.trustStore.Install(eng); err != nil {
 		return err
 	}
 	// FIXME: this hack is necessary for legacy integration tests to access
@@ -367,6 +372,16 @@ func (daemon *Daemon) restore() error {
 		registeredContainers = append(registeredContainers, container)
 	}
 
+	// Restore networking of registered containers.
+	// This must be performed prior to any IP allocation, otherwise we might
+	// end up giving away an already allocated address.
+	for _, container := range registeredContainers {
+		if err := container.RestoreNetwork(); err != nil {
+			log.Errorf("Failed to restore network for %v: %v", container.Name, err)
+			continue
+		}
+	}
+
 	// check the restart policy on the containers and restart any container with
 	// the restart policy of "always"
 	if daemon.config.AutoRestart {
@@ -527,6 +542,31 @@ func (daemon *Daemon) getEntrypointAndArgs(configEntrypoint, configCmd []string)
 	return entrypoint, args
 }
 
+func parseSecurityOpt(container *Container, config *runconfig.Config) error {
+	var (
+		label_opts []string
+		err        error
+	)
+
+	for _, opt := range config.SecurityOpt {
+		con := strings.SplitN(opt, ":", 2)
+		if len(con) == 1 {
+			return fmt.Errorf("Invalid --security-opt: %q", opt)
+		}
+		switch con[0] {
+		case "label":
+			label_opts = append(label_opts, con[1])
+		case "apparmor":
+			container.AppArmorProfile = con[1]
+		default:
+			return fmt.Errorf("Invalid --security-opt: %q", opt)
+		}
+	}
+
+	container.ProcessLabel, container.MountLabel, err = label.InitLabels(label_opts)
+	return err
+}
+
 func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *image.Image) (*Container, error) {
 	var (
 		id  string
@@ -557,11 +597,8 @@ func (daemon *Daemon) newContainer(name string, config *runconfig.Config, img *i
 		execCommands:    newExecStore(),
 	}
 	container.root = daemon.containerRoot(container.ID)
-
-	if container.ProcessLabel, container.MountLabel, err = label.GenLabels(""); err != nil {
-		return nil, err
-	}
-	return container, nil
+	err = parseSecurityOpt(container, config)
+	return container, err
 }
 
 func (daemon *Daemon) createRootfs(container *Container, img *image.Image) error {
@@ -813,6 +850,15 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, fmt.Errorf("Couldn't create Tag store: %s", err)
 	}
 
+	trustDir := path.Join(config.Root, "trust")
+	if err := os.MkdirAll(trustDir, 0700); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+	t, err := trust.NewTrustStore(trustDir)
+	if err != nil {
+		return nil, fmt.Errorf("could not create trust store: %s", err)
+	}
+
 	if !config.DisableNetwork {
 		job := eng.Job("init_networkdriver")
 
@@ -877,6 +923,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		sysInitPath:    sysInitPath,
 		execDriver:     ed,
 		eng:            eng,
+		trustStore:     t,
 	}
 	if err := daemon.checkLocaldns(); err != nil {
 		return nil, err

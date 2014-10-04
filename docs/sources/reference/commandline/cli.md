@@ -241,14 +241,15 @@ as the root. Wildcards are allowed but the search is not recursive.
     temp?
 
 The first line above `*/temp*`, would ignore all files with names starting with
-`temp` from any subdirectory below the root directory, for example file named 
-`/somedir/temporary.txt` will be ignored. The second line `*/*/temp*`, will  
+`temp` from any subdirectory below the root directory. For example, a file named
+`/somedir/temporary.txt` would be ignored. The second line `*/*/temp*`, will
 ignore files starting with name `temp` from any subdirectory that is two levels
-below the root directory, for example a file `/somedir/subdir/temporary.txt` is 
-ignored in this case. The last line in the above example `temp?`, will ignore 
-the files that match the pattern from the root directory, for example files 
-`tempa`, `tempb` are ignored from the root directory. Currently  there is no
-support for regular expressions, formats like `[^temp*]` are ignored.
+below the root directory. For example, the file `/somedir/subdir/temporary.txt`
+would get ignored in this case. The last line in the above example `temp?`
+will ignore the files that match the pattern from the root directory.
+For example, the files `tempa`, `tempb` are ignored from the root directory.
+Currently there is no support for regular expressions. Formats
+like `[^temp*]` are ignored.
 
 
 See also:
@@ -554,25 +555,24 @@ You'll need two shells for this example.
       -i, --interactive=false    Keep STDIN open even if not attached
       -t, --tty=false            Allocate a pseudo-TTY
 
-The `docker exec` command runs a user specified command as a new process in an existing
-user specified container. The container needs to be active.
+The `docker exec` command runs a new command in a running container.
 
-The `docker exec` command will typically be used after `docker run`.
+The `docker exec` command will typically be used after `docker run` or `docker start`.
 
 ### Examples:
 
     $ sudo docker run --name ubuntu_bash --rm -i -t ubuntu bash
 
-This will create a container named 'ubuntu_bash' and start a bash session.
+This will create a container named `ubuntu_bash` and start a Bash session.
 
     $ sudo docker exec -d ubuntu_bash touch /tmp/execWorks
 
-This will create a new file '/tmp/execWorks' inside the existing and active container
-'ubuntu_bash', in the background.
+This will create a new file `/tmp/execWorks` inside the running container
+`ubuntu_bash`, in the background.
 
     $ sudo docker exec ubuntu_bash -it bash
 
-This will create a new bash session in the container 'ubuntu_bash'.
+This will create a new Bash session in the container `ubuntu_bash`.
 
 ## export
 
@@ -943,6 +943,7 @@ further details.
       --before=""           Show only container created before Id or Name, include non-running ones.
       -f, --filter=[]       Provide filter values. Valid filters:
                               exited=<int> - containers with exit code of <int>
+                              status=(restarting|running|paused|exited)
       -l, --latest=false    Show only the latest created container, include non-running ones.
       -n=-1                 Show n last created containers, include non-running ones.
       --no-trunc=false      Don't truncate output

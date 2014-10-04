@@ -9,8 +9,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/docker/docker/archive"
 	"github.com/docker/docker/daemon/execdriver"
+	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/log"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/volumes"
@@ -111,12 +111,9 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 			return nil, err
 		}
 		// Check if a volume already exists for this and use it
-		vol := container.daemon.volumes.Get(path)
-		if vol == nil {
-			vol, err = container.daemon.volumes.NewVolume(path, writable)
-			if err != nil {
-				return nil, err
-			}
+		vol, err := container.daemon.volumes.FindOrCreateVolume(path, writable)
+		if err != nil {
+			return nil, err
 		}
 		mounts[mountToPath] = &Mount{container: container, volume: vol, MountToPath: mountToPath, Writable: writable}
 	}
@@ -128,7 +125,7 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 			continue
 		}
 
-		vol, err := container.daemon.volumes.NewVolume("", true)
+		vol, err := container.daemon.volumes.FindOrCreateVolume("", true)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +235,7 @@ func parseVolumesFromSpec(daemon *Daemon, spec string) (map[string]*Mount, error
 
 	if len(specParts) == 2 {
 		mode := specParts[1]
-		if validMountMode(mode) {
+		if !validMountMode(mode) {
 			return nil, fmt.Errorf("Invalid mode for volumes-from: %s", mode)
 		}
 
