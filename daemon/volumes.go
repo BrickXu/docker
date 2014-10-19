@@ -92,6 +92,12 @@ func (container *Container) VolumePaths() map[string]struct{} {
 	return paths
 }
 
+func (container *Container) registerVolumes() {
+	for _, mnt := range container.VolumeMounts() {
+		mnt.volume.AddContainer(container.ID)
+	}
+}
+
 func (container *Container) derefVolumes() {
 	for path := range container.VolumePaths() {
 		vol := container.daemon.volumes.Get(path)
@@ -128,6 +134,11 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 	for path := range container.Config.Volumes {
 		// Check if this is already added as a bind-mount
 		if _, exists := mounts[path]; exists {
+			continue
+		}
+
+		// Check if this has already been created
+		if _, exists := container.Volumes[path]; exists {
 			continue
 		}
 

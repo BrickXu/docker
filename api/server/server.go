@@ -120,10 +120,6 @@ func writeJSON(w http.ResponseWriter, code int, v engine.Env) error {
 
 func streamJSON(job *engine.Job, w http.ResponseWriter, flush bool) {
 	w.Header().Set("Content-Type", "application/json")
-	if job.GetenvBool("lineDelim") {
-		w.Header().Set("Content-Type", "application/x-json-stream")
-	}
-
 	if flush {
 		job.Stdout.Add(utils.NewWriteFlusher(w))
 	} else {
@@ -301,8 +297,6 @@ func getEvents(eng *engine.Engine, version version.Version, w http.ResponseWrite
 	}
 
 	var job = eng.Job("events")
-	// lineDelimited JSON events was added #7047
-	job.SetenvBool("lineDelim", version.GreaterThanOrEqualTo("1.15"))
 	streamJSON(job, w, true)
 	job.Setenv("since", r.Form.Get("since"))
 	job.Setenv("until", r.Form.Get("until"))
@@ -993,9 +987,6 @@ func postBuild(eng *engine.Engine, version version.Version, w http.ResponseWrite
 		}
 	}
 
-	// This needs to be set before calls to streamJSON
-	job.SetenvBool("lineDelim", version.GreaterThanOrEqualTo("1.15"))
-
 	if version.GreaterThanOrEqualTo("1.8") {
 		job.SetenvBool("json", true)
 		streamJSON(job, w, true)
@@ -1448,6 +1439,8 @@ func ListenAndServe(proto, addr string, job *engine.Job) error {
 		tlsConfig := &tls.Config{
 			NextProtos:   []string{"http/1.1"},
 			Certificates: []tls.Certificate{cert},
+			// Avoid fallback on insecure SSL protocols
+			MinVersion: tls.VersionTLS10,
 		}
 		if job.GetenvBool("TlsVerify") {
 			certPool := x509.NewCertPool()
