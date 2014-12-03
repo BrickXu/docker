@@ -65,6 +65,12 @@ unix://[/path/to/socket] to use.
 **--iptables**=*true*|*false*
   Disable Docker's addition of iptables rules. Default is true.
 
+**-l**, **--log-level**="*debug*|*info*|*error*|*fatal*""
+  Set the logging level. Default is `info`.
+
+**--label**="[]"
+  Set key=value labels to the daemon (displayed in `docker info`)
+
 **--mtu**=VALUE
   Set the containers network mtu. Default is `1500`.
 

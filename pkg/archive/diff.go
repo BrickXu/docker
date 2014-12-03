@@ -12,23 +12,23 @@ import (
 	"github.com/docker/docker/vendor/src/code.google.com/p/go/src/pkg/archive/tar"
 
 	"github.com/docker/docker/pkg/pools"
+	"github.com/docker/docker/pkg/system"
 )
-
-// Linux device nodes are a bit weird due to backwards compat with 16 bit device nodes.
-// They are, from low to high: the lower 8 bits of the minor, then 12 bits of the major,
-// then the top 12 bits of the minor
-func mkdev(major int64, minor int64) uint32 {
-	return uint32(((minor & 0xfff00) << 12) | ((major & 0xfff) << 8) | (minor & 0xff))
-}
 
 // ApplyLayer parses a diff in the standard layer format from `layer`, and
 // applies it to the directory `dest`.
 func ApplyLayer(dest string, layer ArchiveReader) error {
-	// We need to be able to set any perms
-	oldmask := syscall.Umask(0)
-	defer syscall.Umask(oldmask)
+	dest = filepath.Clean(dest)
 
-	layer, err := DecompressStream(layer)
+	// We need to be able to set any perms
+	oldmask, err := system.Umask(0)
+	if err != nil {
+		return err
+	}
+
+	defer system.Umask(oldmask) // ignore err, ErrNotSupportedPlatform
+
+	layer, err = DecompressStream(layer)
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,15 @@ func ApplyLayer(dest string, layer ArchiveReader) error {
 		}
 
 		path := filepath.Join(dest, hdr.Name)
+		rel, err := filepath.Rel(dest, path)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(rel, "..") {
+			return breakoutError(fmt.Errorf("%q is outside of %q", hdr.Name, dest))
+		}
 		base := filepath.Base(path)
+
 		if strings.HasPrefix(base, ".wh.") {
 			originalBase := base[len(".wh."):]
 			originalPath := filepath.Join(filepath.Dir(path), originalBase)

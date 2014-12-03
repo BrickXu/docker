@@ -8,12 +8,12 @@ import (
 	"os"
 	"strings"
 
+	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/client"
 	"github.com/docker/docker/dockerversion"
-	"github.com/docker/docker/pkg/log"
 	flag "github.com/docker/docker/pkg/mflag"
-	"github.com/docker/docker/reexec"
+	"github.com/docker/docker/pkg/reexec"
 	"github.com/docker/docker/utils"
 )
 
@@ -28,6 +28,7 @@ func main() {
 	if reexec.Init() {
 		return
 	}
+
 	flag.Parse()
 	// FIXME: validate daemon flags here
 
@@ -35,8 +36,22 @@ func main() {
 		showVersion()
 		return
 	}
+
+	if *flLogLevel != "" {
+		lvl, err := log.ParseLevel(*flLogLevel)
+		if err != nil {
+			log.Fatalf("Unable to parse logging level: %s", *flLogLevel)
+		}
+		initLogging(lvl)
+	} else {
+		initLogging(log.InfoLevel)
+	}
+
+	// -D, --debug, -l/--log-level=debug processing
+	// When/if -D is removed this block can be deleted
 	if *flDebug {
 		os.Setenv("DEBUG", "1")
+		initLogging(log.DebugLevel)
 	}
 
 	if len(flHosts) == 0 {
@@ -68,9 +83,14 @@ func main() {
 	)
 	tlsConfig.InsecureSkipVerify = true
 
+	// Regardless of whether the user sets it to true or false, if they
+	// specify --tlsverify at all then we need to turn on tls
+	if flag.IsSet("-tlsverify") {
+		*flTls = true
+	}
+
 	// If we should verify the server, we need to load a trusted ca
 	if *flTlsVerify {
-		*flTls = true
 		certPool := x509.NewCertPool()
 		file, err := ioutil.ReadFile(*flCa)
 		if err != nil {
@@ -106,7 +126,7 @@ func main() {
 	if err := cli.Cmd(flag.Args()...); err != nil {
 		if sterr, ok := err.(*utils.StatusError); ok {
 			if sterr.Status != "" {
-				log.Infof("%s", sterr.Status)
+				log.Println(sterr.Status)
 			}
 			os.Exit(sterr.StatusCode)
 		}
