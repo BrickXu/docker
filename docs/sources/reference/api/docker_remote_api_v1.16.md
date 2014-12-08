@@ -861,7 +861,8 @@ Create an image, either by pulling it from the registry or by importing it
 Query Parameters:
 
 -   **fromImage** – name of the image to pull
--   **fromSrc** – source to import, - means stdin
+-   **fromSrc** – source to import.  The value may be a URL from which the image
+        can be retrieved or `-` to read the image from the request body.
 -   **repo** – repository
 -   **tag** – tag
 -   **registry** – the registry to pull from
@@ -1158,7 +1159,7 @@ Query Parameters:
 -   **nocache** – do not use the cache when building the image
 -   **pull** - attempt to pull the image even if an older image exists locally
 -   **rm** - remove intermediate containers after a successful build (default behavior)
--   **forcerm - always remove intermediate containers (includes rm)
+-   **forcerm** - always remove intermediate containers (includes rm)
 
     Request Headers:
 
