@@ -180,7 +180,10 @@ share executable memory between devices. Use `docker -d -s btrfs -g /mnt/btrfs_p
 
 The `overlay` is a very fast union filesystem. It is now merged in the main
 Linux kernel as of [3.18.0](https://lkml.org/lkml/2014/10/26/137).
-Call `docker -d -s overlay` to use it.
+Call `docker -d -s overlay` to use it. 
+> **Note:** 
+> It is currently unsupported on `btrfs` or any Copy on Write filesystem
+> and should only be used over `ext4` partitions.
 
 #### Storage driver options
 
@@ -456,7 +459,7 @@ Use this command to build Docker images from a Dockerfile and a
 
 The files at `PATH` or `URL` are called the "context" of the build. The
 build process may refer to any of the files in the context, for example
-when using an [*ADD*](/reference/builder/#dockerfile-add) instruction.
+when using an [*ADD*](/reference/builder/#add) instruction.
 When a single Dockerfile is given as `URL` or is piped through `STDIN`
 (`docker build - < Dockerfile`), then no context is set.
 
@@ -536,7 +539,7 @@ machine and that no parsing of the Dockerfile
 happens at the client side (where you're running
 `docker build`). That means that *all* the files at
 `PATH` get sent, not just the ones listed to
-[*ADD*](/reference/builder/#dockerfile-add) in the Dockerfile.
+[*ADD*](/reference/builder/#add) in the Dockerfile.
 
 The transfer of context from the local machine to the Docker daemon is
 what the `docker` client means when you see the
@@ -705,6 +708,9 @@ container at any point.
 This is useful when you want to set up a container configuration ahead
 of time so that it is ready to start when you need it.
 
+Note that volumes set by `create` may be over-ridden by options set with
+`start`.
+
 Please see the [run command](#run) section for more details.
 
 #### Example
@@ -755,7 +761,7 @@ For example:
 
 Docker containers will report the following events:
 
-    create, destroy, die, export, kill, pause, restart, start, stop, unpause
+    create, destroy, die, export, kill, oom, pause, restart, start, stop, unpause
 
 and Docker images will report:
 
@@ -861,8 +867,17 @@ The `docker exec` command runs a new command in a running container.
 The command started using `docker exec` will only run while the container's primary
 process (`PID 1`) is running, and will not be restarted if the container is restarted.
 
-If the container is paused, then the `docker exec` command will wait until the
-container is unpaused, and then run.
+If the container is paused, then the `docker exec` command will fail with an error:
+
+    $ docker pause test
+    test
+    $ docker ps
+    CONTAINER ID        IMAGE               COMMAND             CREATED             STATUS                   PORTS               NAMES
+    1ae3b36715d2        ubuntu:latest       "bash"              17 seconds ago      Up 16 seconds (Paused)                       test
+    $ docker exec test ls
+    FATA[0000] Error response from daemon: Container test is paused, unpause the container before exec
+    $ echo $?
+    1
 
 #### Examples
 
@@ -1066,6 +1081,7 @@ For example:
     Goroutines: 9
     EventsListeners: 0
     Init Path: /usr/bin/docker
+    Docker Root Dir: /var/lib/docker
     Username: svendowideit
     Registry: [https://index.docker.io/v1/]
     Labels:
@@ -1810,7 +1826,7 @@ Search [Docker Hub](https://hub.docker.com) for images
       -s, --stars=0        Only displays with at least x stars
 
 See [*Find Public Images on Docker Hub*](
-/userguide/dockerrepos/#find-public-images-on-docker-hub) for
+/userguide/dockerrepos/#searching-for-images) for
 more details on finding shared images from the command line.
 
 ## start
@@ -1846,7 +1862,7 @@ grace period, `SIGKILL`.
 
 You can group your images together using names and tags, and then upload
 them to [*Share Images via Repositories*](
-/userguide/dockerrepos/#working-with-the-repository).
+/userguide/dockerrepos/#contributing-to-docker-hub).
 
 ## top
 

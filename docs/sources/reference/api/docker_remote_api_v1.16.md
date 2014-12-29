@@ -88,6 +88,9 @@ Query Parameters:
         non-running ones.
 -   **size** – 1/True/true or 0/False/false, Show the containers
         sizes
+-   **filters** - a json encoded value of the filters (a map[string][]string) to process on the containers list. Available filters:
+  -   exited=&lt;int&gt; -- containers with exit code of &lt;int&gt;
+  -   status=(restarting|running|paused|exited)
 
 Status Codes:
 
@@ -669,7 +672,7 @@ Status Codes:
 
     When using the TTY setting is enabled in
     [`POST /containers/create`
-    ](../docker_remote_api_v1.9/#post--containers-create "POST /containers/create"),
+    ](/reference/api/docker_remote_api_v1.9/#create-a-container "POST /containers/create"),
     the stream is the raw data from the process PTY and client's stdin.
     When the TTY is disabled, then the stream is multiplexed to separate
     stdout and stderr.
@@ -832,7 +835,8 @@ Status Codes:
 Query Parameters:
 
 -   **all** – 1/True/true or 0/False/false, default false
--   **filters** – a json encoded value of the filters (a map[string][]string) to process on the images list.
+-   **filters** – a json encoded value of the filters (a map[string][]string) to process on the images list. Available filters:
+  -   dangling=true
 
 ### Create an image
 
@@ -1389,7 +1393,10 @@ Query Parameters:
 
 -   **since** – timestamp used for polling
 -   **until** – timestamp used for polling
--   **filters** – a json encoded value of the filters (a map[string][]string) to process on the event list.
+-   **filters** – a json encoded value of the filters (a map[string][]string) to process on the event list. Available filters:
+  -   event=&lt;string&gt; -- event to filter
+  -   image=&lt;string&gt; -- image to filter
+  -   container=&lt;string&gt; -- container to filter
 
 Status Codes:
 

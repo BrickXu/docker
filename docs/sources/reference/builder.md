@@ -79,7 +79,7 @@ guide](/articles/dockerfile_best-practices/#build-cache) for more information):
     Successfully built 1a5ffc17324d
 
 When you're done with your build, you're ready to look into [*Pushing a
-repository to its registry*]( /userguide/dockerrepos/#image-push).
+repository to its registry*]( /userguide/dockerrepos/#contributing-to-docker-hub).
 
 ## Format
 
@@ -93,7 +93,7 @@ be UPPERCASE in order to distinguish them from arguments more easily.
 
 Docker runs the instructions in a `Dockerfile` in order. **The
 first instruction must be \`FROM\`** in order to specify the [*Base
-Image*](/terms/image/#base-image-def) from which you are building.
+Image*](/terms/image/#base-image) from which you are building.
 
 Docker will treat lines that *begin* with `#` as a
 comment. A `#` marker anywhere else in the line will
@@ -186,11 +186,11 @@ Or
 
     FROM <image>:<tag>
 
-The `FROM` instruction sets the [*Base Image*](/terms/image/#base-image-def)
+The `FROM` instruction sets the [*Base Image*](/terms/image/#base-image)
 for subsequent instructions. As such, a valid `Dockerfile` must have `FROM` as
 its first instruction. The image can be any valid image – it is especially easy
 to start by **pulling an image** from the [*Public Repositories*](
-/userguide/dockerrepos/#using-public-repositories).
+/userguide/dockerrepos).
 
 `FROM` must be the first non-comment instruction in the `Dockerfile`.
 
@@ -397,8 +397,10 @@ For most command line uses this should act as expected, for example:
     ADD hom* /mydir/        # adds all files starting with "hom"
     ADD hom?.txt /mydir/    # ? is replaced with any single character
 
-The `<dest>` is the absolute path to which the source will be copied inside the
-destination container.
+The `<dest>` is an absolute path, or a path relative to `WORKDIR`, into which
+the source will be copied inside the destination container.
+
+    ADD test aDir/          # adds "test" to `WORKDIR`/aDir/
 
 All new files and directories are created with a UID and GID of 0.
 
@@ -494,8 +496,10 @@ For most command line uses this should act as expected, for example:
     COPY hom* /mydir/        # adds all files starting with "hom"
     COPY hom?.txt /mydir/    # ? is replaced with any single character
 
-The `<dest>` is the absolute path to which the source will be copied inside the
-destination container.
+The `<dest>` is an absolute path, or a path relative to `WORKDIR`, into which
+the source will be copied inside the destination container.
+
+    COPY test aDir/          # adds "test" to `WORKDIR`/aDir/
 
 All new files and directories are created with a UID and GID of 0.
 
@@ -763,7 +767,7 @@ and mark it as holding externally mounted volumes from native host or other
 containers. The value can be a JSON array, `VOLUME ["/var/log/"]`, or a plain
 string with multiple arguments, such as `VOLUME /var/log` or `VOLUME /var/log
 /var/db`.  For more information/examples and mounting instructions via the
-Docker client, refer to [*Share Directories via Volumes*](/userguide/dockervolumes/#volume-def)
+Docker client, refer to [*Share Directories via Volumes*](/userguide/dockervolumes/#volume)
 documentation.
 
 > **Note**:

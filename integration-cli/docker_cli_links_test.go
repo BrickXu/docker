@@ -83,8 +83,8 @@ func TestLinksIpTablesRulesWhenLinkAndUnlink(t *testing.T) {
 	childIP := findContainerIP(t, "child")
 	parentIP := findContainerIP(t, "parent")
 
-	sourceRule := []string{"FORWARD", "-i", "docker0", "-o", "docker0", "-p", "tcp", "-s", childIP, "--sport", "80", "-d", parentIP, "-j", "ACCEPT"}
-	destinationRule := []string{"FORWARD", "-i", "docker0", "-o", "docker0", "-p", "tcp", "-s", parentIP, "--dport", "80", "-d", childIP, "-j", "ACCEPT"}
+	sourceRule := []string{"DOCKER", "-i", "docker0", "-o", "docker0", "-p", "tcp", "-s", childIP, "--sport", "80", "-d", parentIP, "-j", "ACCEPT"}
+	destinationRule := []string{"DOCKER", "-i", "docker0", "-o", "docker0", "-p", "tcp", "-s", parentIP, "--dport", "80", "-d", childIP, "-j", "ACCEPT"}
 	if !iptables.Exists(sourceRule...) || !iptables.Exists(destinationRule...) {
 		t.Fatal("Iptables rules not found")
 	}
@@ -214,4 +214,20 @@ func TestLinksHostsFilesInject(t *testing.T) {
 	}
 
 	logDone("link - ensure containers hosts files are updated with the link alias.")
+}
+
+func TestLinksNetworkHostContainer(t *testing.T) {
+	defer deleteAllContainers()
+
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "-d", "--net", "host", "--name", "host_container", "busybox", "top"))
+	if err != nil {
+		t.Fatal(err, out)
+	}
+
+	out, _, err = runCommandWithOutput(exec.Command(dockerBinary, "run", "--name", "should_fail", "--link", "host_container:tester", "busybox", "true"))
+	if err == nil || !strings.Contains(out, "--net=host can't be used with links. This would result in undefined behavior.") {
+		t.Fatalf("Running container linking to a container with --net host should have failed: %s", out)
+	}
+
+	logDone("link - error thrown when linking to container with --net host")
 }
