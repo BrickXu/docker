@@ -51,6 +51,31 @@ You can still call an old version of the API using
 **New!**
 Docker client now hints potential proxies about connection hijacking using HTTP Upgrade headers.
 
+`GET /containers/(id)/json`
+
+**New!**
+This endpoint now returns the list current execs associated with the container (`ExecIDs`).
+
+`POST /containers/(id)/rename`
+
+**New!**
+New endpoint to rename a container `id` to a new name.
+
+`POST /containers/create`
+`POST /containers/(id)/start`
+
+**New!**
+(`ReadonlyRootfs`) can be passed in the host config to mount the container's
+root filesystem as read only.
+
+`GET /containers/(id)/stats`
+
+**New!**
+This endpoint returns a live stream of a container's resource usage statistics.
+
+> **Note**: this functionality currently only works when using the *libcontainer* exec-driver.
+
+
 ## v1.16
 
 ### Full Documentation

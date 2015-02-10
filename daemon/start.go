@@ -14,12 +14,16 @@ func (daemon *Daemon) ContainerStart(job *engine.Job) engine.Status {
 		return job.Errorf("Usage: %s container_id", job.Name)
 	}
 	var (
-		name      = job.Args[0]
-		container = daemon.Get(name)
+		name = job.Args[0]
 	)
 
-	if container == nil {
-		return job.Errorf("No such container: %s", name)
+	container, err := daemon.Get(name)
+	if err != nil {
+		return job.Error(err)
+	}
+
+	if container.IsPaused() {
+		return job.Errorf("Cannot start a paused container, try unpause instead.")
 	}
 
 	if container.IsRunning() {
@@ -49,6 +53,8 @@ func (daemon *Daemon) setHostConfig(container *Container, hostConfig *runconfig.
 	if err := parseSecurityOpt(container, hostConfig); err != nil {
 		return err
 	}
+
+	// FIXME: this should be handled by the volume subsystem
 	// Validate the HostConfig binds. Make sure that:
 	// the source exists
 	for _, bind := range hostConfig.Binds {

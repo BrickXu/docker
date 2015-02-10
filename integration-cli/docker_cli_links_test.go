@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -74,6 +76,20 @@ func TestLinksPingLinkedContainers(t *testing.T) {
 	deleteAllContainers()
 
 	logDone("links - ping linked container")
+}
+
+func TestLinksPingLinkedContainersAfterRename(t *testing.T) {
+	out, _, _ := dockerCmd(t, "run", "-d", "--name", "container1", "busybox", "sleep", "10")
+	idA := stripTrailingCharacters(out)
+	out, _, _ = dockerCmd(t, "run", "-d", "--name", "container2", "busybox", "sleep", "10")
+	idB := stripTrailingCharacters(out)
+	dockerCmd(t, "rename", "container1", "container_new")
+	dockerCmd(t, "run", "--rm", "--link", "container_new:alias1", "--link", "container2:alias2", "busybox", "sh", "-c", "ping -c 1 alias1 -W 1 && ping -c 1 alias2 -W 1")
+	dockerCmd(t, "kill", idA)
+	dockerCmd(t, "kill", idB)
+	deleteAllContainers()
+
+	logDone("links - ping linked container after rename")
 }
 
 func TestLinksIpTablesRulesWhenLinkAndUnlink(t *testing.T) {
@@ -230,4 +246,58 @@ func TestLinksNetworkHostContainer(t *testing.T) {
 	}
 
 	logDone("link - error thrown when linking to container with --net host")
+}
+
+func TestLinksUpdateOnRestart(t *testing.T) {
+	defer deleteAllContainers()
+
+	if out, err := exec.Command(dockerBinary, "run", "-d", "--name", "one", "busybox", "top").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	out, err := exec.Command(dockerBinary, "run", "-d", "--name", "two", "--link", "one:onetwo", "--link", "one:one", "busybox", "top").CombinedOutput()
+	if err != nil {
+		t.Fatal(err, string(out))
+	}
+	id := strings.TrimSpace(string(out))
+
+	realIP, err := inspectField("one", "NetworkSettings.IPAddress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := readContainerFile(id, "hosts")
+	if err != nil {
+		t.Fatal(err, string(content))
+	}
+	getIP := func(hosts []byte, hostname string) string {
+		re := regexp.MustCompile(fmt.Sprintf(`(\S*)\t%s`, regexp.QuoteMeta(hostname)))
+		matches := re.FindSubmatch(hosts)
+		if matches == nil {
+			t.Fatalf("Hostname %s have no matches in hosts", hostname)
+		}
+		return string(matches[1])
+	}
+	if ip := getIP(content, "one"); ip != realIP {
+		t.Fatalf("For 'one' alias expected IP: %s, got: %s", realIP, ip)
+	}
+	if ip := getIP(content, "onetwo"); ip != realIP {
+		t.Fatalf("For 'onetwo' alias expected IP: %s, got: %s", realIP, ip)
+	}
+	if out, err := exec.Command(dockerBinary, "restart", "one").CombinedOutput(); err != nil {
+		t.Fatal(err, string(out))
+	}
+	realIP, err = inspectField("one", "NetworkSettings.IPAddress")
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err = readContainerFile(id, "hosts")
+	if err != nil {
+		t.Fatal(err, string(content))
+	}
+	if ip := getIP(content, "one"); ip != realIP {
+		t.Fatalf("For 'one' alias expected IP: %s, got: %s", realIP, ip)
+	}
+	if ip := getIP(content, "onetwo"); ip != realIP {
+		t.Fatalf("For 'onetwo' alias expected IP: %s, got: %s", realIP, ip)
+	}
+	logDone("link - ensure containers hosts files are updated on restart")
 }

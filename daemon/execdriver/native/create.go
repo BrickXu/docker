@@ -31,12 +31,17 @@ func (d *driver) createContainer(c *execdriver.Command) (*libcontainer.Config, e
 	container.Cgroups.AllowedDevices = c.AllowedDevices
 	container.MountConfig.DeviceNodes = c.AutoCreatedDevices
 	container.RootFs = c.Rootfs
+	container.MountConfig.ReadonlyFs = c.ReadonlyRootfs
 
 	// check to see if we are running in ramdisk to disable pivot root
 	container.MountConfig.NoPivotRoot = os.Getenv("DOCKER_RAMDISK") != ""
 	container.RestrictSys = true
 
 	if err := d.createIpc(container, c); err != nil {
+		return nil, err
+	}
+
+	if err := d.createPid(container, c); err != nil {
 		return nil, err
 	}
 
@@ -105,6 +110,10 @@ func (d *driver) createNetwork(container *libcontainer.Config, c *execdriver.Com
 			Bridge:     c.Network.Interface.Bridge,
 			VethPrefix: "veth",
 		}
+		if c.Network.Interface.GlobalIPv6Address != "" {
+			vethNetwork.IPv6Address = fmt.Sprintf("%s/%d", c.Network.Interface.GlobalIPv6Address, c.Network.Interface.GlobalIPv6PrefixLen)
+			vethNetwork.IPv6Gateway = c.Network.Interface.IPv6Gateway
+		}
 		container.Networks = append(container.Networks, &vethNetwork)
 	}
 
@@ -142,6 +151,15 @@ func (d *driver) createIpc(container *libcontainer.Config, c *execdriver.Command
 		cmd := active.cmd
 
 		container.Namespaces.Add(libcontainer.NEWIPC, filepath.Join("/proc", fmt.Sprint(cmd.Process.Pid), "ns", "ipc"))
+	}
+
+	return nil
+}
+
+func (d *driver) createPid(container *libcontainer.Config, c *execdriver.Command) error {
+	if c.Pid.HostPid {
+		container.Namespaces.Remove(libcontainer.NEWPID)
+		return nil
 	}
 
 	return nil

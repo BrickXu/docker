@@ -9,7 +9,9 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/docker/docker/api/stats"
 	"github.com/docker/docker/vendor/src/code.google.com/p/go/src/pkg/archive/tar"
 )
 
@@ -160,6 +162,43 @@ func TestContainerApiStartVolumeBinds(t *testing.T) {
 	logDone("container REST API - check volume binds on start")
 }
 
+// Test for GH#10618
+func TestContainerApiStartDupVolumeBinds(t *testing.T) {
+	defer deleteAllContainers()
+	name := "testdups"
+	config := map[string]interface{}{
+		"Image":   "busybox",
+		"Volumes": map[string]struct{}{"/tmp": {}},
+	}
+
+	if _, err := sockRequest("POST", "/containers/create?name="+name, config); err != nil && !strings.Contains(err.Error(), "201 Created") {
+		t.Fatal(err)
+	}
+
+	bindPath1, err := ioutil.TempDir("", "test1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(bindPath1)
+	bindPath2, err := ioutil.TempDir("", "test2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(bindPath2)
+
+	config = map[string]interface{}{
+		"Binds": []string{bindPath1 + ":/tmp", bindPath2 + ":/tmp"},
+	}
+	if body, err := sockRequest("POST", "/containers/"+name+"/start", config); err == nil {
+		t.Fatal("expected container start to fail when duplicate volume binds to same container path")
+	} else {
+		if !strings.Contains(string(body), "Duplicate volume") {
+			t.Fatalf("Expected failure due to duplicate bind mounts to same path, instead got: %q with error: %v", string(body), err)
+		}
+	}
+
+	logDone("container REST API - check for duplicate volume binds error on start")
+}
 func TestContainerApiStartVolumesFrom(t *testing.T) {
 	defer deleteAllContainers()
 	volName := "voltst"
@@ -250,4 +289,117 @@ func TestVolumesFromHasPriority(t *testing.T) {
 	}
 
 	logDone("container REST API - check VolumesFrom has priority")
+}
+
+func TestGetContainerStats(t *testing.T) {
+	defer deleteAllContainers()
+	var (
+		name   = "statscontainer"
+		runCmd = exec.Command(dockerBinary, "run", "-d", "--name", name, "busybox", "top")
+	)
+	out, _, err := runCommandWithOutput(runCmd)
+	if err != nil {
+		t.Fatalf("Error on container creation: %v, output: %q", err, out)
+	}
+	type b struct {
+		body []byte
+		err  error
+	}
+	bc := make(chan b, 1)
+	go func() {
+		body, err := sockRequest("GET", "/containers/"+name+"/stats", nil)
+		bc <- b{body, err}
+	}()
+
+	// allow some time to stream the stats from the container
+	time.Sleep(4 * time.Second)
+	if _, err := runCommand(exec.Command(dockerBinary, "rm", "-f", name)); err != nil {
+		t.Fatal(err)
+	}
+
+	// collect the results from the stats stream or timeout and fail
+	// if the stream was not disconnected.
+	select {
+	case <-time.After(2 * time.Second):
+		t.Fatal("stream was not closed after container was removed")
+	case sr := <-bc:
+		if sr.err != nil {
+			t.Fatal(err)
+		}
+
+		dec := json.NewDecoder(bytes.NewBuffer(sr.body))
+		var s *stats.Stats
+		// decode only one object from the stream
+		if err := dec.Decode(&s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logDone("container REST API - check GET containers/stats")
+}
+
+func TestBuildApiDockerfilePath(t *testing.T) {
+	// Test to make sure we stop people from trying to leave the
+	// build context when specifying the path to the dockerfile
+	buffer := new(bytes.Buffer)
+	tw := tar.NewWriter(buffer)
+	defer tw.Close()
+
+	dockerfile := []byte("FROM busybox")
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "Dockerfile",
+		Size: int64(len(dockerfile)),
+	}); err != nil {
+		t.Fatalf("failed to write tar file header: %v", err)
+	}
+	if _, err := tw.Write(dockerfile); err != nil {
+		t.Fatalf("failed to write tar file content: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("failed to close tar archive: %v", err)
+	}
+
+	out, err := sockRequestRaw("POST", "/build?dockerfile=../Dockerfile", buffer, "application/x-tar")
+	if err == nil {
+		t.Fatalf("Build was supposed to fail: %s", out)
+	}
+
+	if !strings.Contains(string(out), "must be within the build context") {
+		t.Fatalf("Didn't complain about leaving build context: %s", out)
+	}
+
+	logDone("container REST API - check build w/bad Dockerfile path")
+}
+
+func TestBuildApiDockerfileSymlink(t *testing.T) {
+	// Test to make sure we stop people from trying to leave the
+	// build context when specifying a symlink as the path to the dockerfile
+	buffer := new(bytes.Buffer)
+	tw := tar.NewWriter(buffer)
+	defer tw.Close()
+
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "Dockerfile",
+		Typeflag: tar.TypeSymlink,
+		Linkname: "/etc/passwd",
+	}); err != nil {
+		t.Fatalf("failed to write tar file header: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("failed to close tar archive: %v", err)
+	}
+
+	out, err := sockRequestRaw("POST", "/build", buffer, "application/x-tar")
+	if err == nil {
+		t.Fatalf("Build was supposed to fail: %s", out)
+	}
+
+	// The reason the error is "Cannot locate specified Dockerfile" is because
+	// in the builder, the symlink is resolved within the context, therefore
+	// Dockerfile -> /etc/passwd becomes etc/passwd from the context which is
+	// a nonexistent file.
+	if !strings.Contains(string(out), "Cannot locate specified Dockerfile: Dockerfile") {
+		t.Fatalf("Didn't complain about leaving build context: %s", out)
+	}
+
+	logDone("container REST API - check build w/bad Dockerfile symlink path")
 }

@@ -133,11 +133,31 @@ While not strictly a means of identifying a container, you can specify a version
 image you'd like to run the container with by adding `image[:tag]` to the command. For
 example, `docker run ubuntu:14.04`.
 
+## PID Settings
+    --pid=""  : Set the PID (Process) Namespace mode for the container,
+           'host': use the host's PID namespace inside the container
+By default, all containers have the PID namespace enabled.
+
+PID namespace provides separation of processes. The PID Namespace removes the
+view of the system processes, and allows process ids to be reused including
+pid 1.
+
+In certain cases you want your container to share the host's process namespace,
+basically allowing processes within the container to see all of the processes
+on the system.  For example, you could build a container with debugging tools
+like `strace` or `gdb`, but want to use these tools when debugging processes
+within the container.
+
+    $ sudo docker run --pid=host rhel7 strace -p 1234
+
+This command would allow you to use `strace` inside the container on pid 1234 on
+the host.
+
 ## IPC Settings
     --ipc=""  : Set the IPC mode for the container,
                                  'container:<name|id>': reuses another container's IPC namespace
                                  'host': use the host's IPC namespace inside the container
-By default, all containers have the IPC namespace enabled 
+By default, all containers have the IPC namespace enabled.
 
 IPC (POSIX/SysV IPC) namespace provides separation of named shared memory segments, semaphores and message queues.  
 
@@ -254,7 +274,7 @@ the container exits**, you can add the `--rm` flag:
     --security-opt="label:type:TYPE"   : Set the label type for the container
     --security-opt="label:level:LEVEL" : Set the label level for the container
     --security-opt="label:disable"     : Turn off label confinement for the container
-    --secutity-opt="apparmor:PROFILE"  : Set the apparmor profile to be applied 
+    --security-opt="apparmor:PROFILE"  : Set the apparmor profile to be applied 
                                          to the container
 
 You can override the default labeling scheme for each container by specifying
@@ -290,13 +310,26 @@ The operator can also adjust the performance parameters of the
 container:
 
     -m="": Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
+    -memory-swap="": Total memory limit (memory + swap, format: <number><optional unit>, where unit = b, k, m or g)
     -c=0 : CPU shares (relative weight)
 
-The operator can constrain the memory available to a container easily
-with `docker run -m`. If the host supports swap memory, then the `-m`
-memory setting can be larger than physical RAM.
+We have four ways to set memory usage:
+ - memory=inf, memory-swap=inf (not specify any of them)
+   There is no memory limit, you can use as much as you want.
 
-Similarly the operator can increase the priority of this container with
+ - memory=L<inf, memory-swap=inf (specify memory and set memory-swap as `-1`)
+   It is not allowed to use more than L bytes of memory, but use as much swap
+   as you want (only if the host supports swap memory).
+
+ - memory=L<inf, memory-swap=2*L (specify memory without memory-swap)
+   It is not allowed to use more than L bytes of memory, swap *plus* memory
+   usage is double of that.
+
+ - memory=L<inf, memory-swap=S<inf, L<=S (specify both memory and memory-swap)
+   It is not allowed to use more than L bytes of memory, swap *plus* memory
+   usage is limited by S.
+
+The operator can increase the priority of this container with
 the `-c` option. By default, all containers run at the same priority and
 get the same proportion of CPU cycles, but you can tell the kernel to
 give more shares of CPU time to one or more containers when you start
@@ -321,7 +354,7 @@ milliseconds.
     --cap-drop: Drop Linux capabilities
     --privileged=false: Give extended privileges to this container
     --device=[]: Allows you to run devices inside the container without the --privileged flag.
-    --lxc-conf=[]: (lxc exec-driver only) Add custom lxc options --lxc-conf="lxc.cgroup.cpuset.cpus = 0,1"
+    --lxc-conf=[]: Add custom lxc options
 
 By default, Docker containers are "unprivileged" and cannot, for
 example, run a Docker daemon inside a Docker container. This is because
@@ -487,11 +520,12 @@ or override the Dockerfile's exposed defaults:
     --expose=[]: Expose a port or a range of ports from the container
                 without publishing it to your host
     -P=false   : Publish all exposed ports to the host interfaces
-    -p=[]      : Publish a container᾿s port to the host (format:
-                 ip:hostPort:containerPort | ip::containerPort |
-                 hostPort:containerPort | containerPort)
-                 (use 'docker port' to see the actual mapping)
-    --link=""  : Add link to another container (name:alias)
+    -p=[]      : Publish a container᾿s port or a range of ports to the host 
+                   format: ip:hostPort:containerPort | ip::containerPort | hostPort:containerPort | containerPort
+                   Both hostPort and containerPort can be specified as a range of ports. 
+                   When specifying ranges for both, the number of container ports in the range must match the number of host ports in the range. (e.g., `-p 1234-1236:1234-1236/tcp`)
+                   (use 'docker port' to see the actual mapping)
+    --link=""  : Add link to another container (<name or id>:alias)
 
 As mentioned previously, `EXPOSE` (and `--expose`) makes ports available
 **in** a container for incoming connections. The port number on the
@@ -574,7 +608,7 @@ above, or already defined by the developer with a Dockerfile `ENV`:
 
 Similarly the operator can set the **hostname** with `-h`.
 
-`--link name:alias` also sets environment variables, using the *alias* string to
+`--link <name or id>:alias` also sets environment variables, using the *alias* string to
 define environment variables within the container that give the IP and PORT
 information for connecting to the service container. Let's imagine we have a
 container running Redis:
@@ -625,6 +659,12 @@ mechanism to communicate with a linked container by its alias:
 
 If you restart the source container (`servicename` in this case), the recipient
 container's `/etc/hosts` entry will be automatically updated.
+
+> **Note**:
+> Unlike host entries in the `/ets/hosts` file, IP addresses stored in the
+> environment variables are not automatically updated if the source container is
+> restarted. We recommend using the host entries in `/etc/hosts` to resolve the
+> IP address of linked containers.
 
 ## VOLUME (shared filesystems)
 

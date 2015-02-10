@@ -10,13 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"unicode"
 )
 
 var (
-	errDockerfileJSONNesting = errors.New("You may not nest arrays in Dockerfile statements.")
+	errDockerfileNotStringArray = errors.New("When using JSON array syntax, arrays must be comprised of strings only.")
 )
 
 // ignore the current argument. This will still leave a command parsed, but
@@ -31,6 +30,10 @@ func parseIgnore(rest string) (*Node, map[string]bool, error) {
 // ONBUILD RUN foo bar -> (onbuild (run foo bar))
 //
 func parseSubCommand(rest string) (*Node, map[string]bool, error) {
+	if rest == "" {
+		return nil, nil, nil
+	}
+
 	_, child, err := parseLine(rest)
 	if err != nil {
 		return nil, nil, err
@@ -134,7 +137,7 @@ func parseEnv(rest string) (*Node, map[string]bool, error) {
 	}
 
 	if len(words) == 0 {
-		return nil, nil, fmt.Errorf("ENV must have some arguments")
+		return nil, nil, fmt.Errorf("ENV requires at least one argument")
 	}
 
 	// Old format (ENV name value)
@@ -182,6 +185,10 @@ func parseEnv(rest string) (*Node, map[string]bool, error) {
 // parses a whitespace-delimited set of arguments. The result is effectively a
 // linked list of string arguments.
 func parseStringsWhitespaceDelimited(rest string) (*Node, map[string]bool, error) {
+	if rest == "" {
+		return nil, nil, nil
+	}
+
 	node := &Node{}
 	rootnode := node
 	prevnode := node
@@ -202,6 +209,9 @@ func parseStringsWhitespaceDelimited(rest string) (*Node, map[string]bool, error
 
 // parsestring just wraps the string in quotes and returns a working node.
 func parseString(rest string) (*Node, map[string]bool, error) {
+	if rest == "" {
+		return nil, nil, nil
+	}
 	n := &Node{}
 	n.Value = rest
 	return n, nil, nil
@@ -209,48 +219,43 @@ func parseString(rest string) (*Node, map[string]bool, error) {
 
 // parseJSON converts JSON arrays to an AST.
 func parseJSON(rest string) (*Node, map[string]bool, error) {
-	var (
-		myJson   []interface{}
-		next     = &Node{}
-		orignext = next
-		prevnode = next
-	)
-
+	var myJson []interface{}
 	if err := json.Unmarshal([]byte(rest), &myJson); err != nil {
 		return nil, nil, err
 	}
 
+	var top, prev *Node
 	for _, str := range myJson {
-		switch str.(type) {
-		case string:
-		case float64:
-			str = strconv.FormatFloat(str.(float64), 'G', -1, 64)
-		default:
-			return nil, nil, errDockerfileJSONNesting
+		if s, ok := str.(string); !ok {
+			return nil, nil, errDockerfileNotStringArray
+		} else {
+			node := &Node{Value: s}
+			if prev == nil {
+				top = node
+			} else {
+				prev.Next = node
+			}
+			prev = node
 		}
-		next.Value = str.(string)
-		next.Next = &Node{}
-		prevnode = next
-		next = next.Next
 	}
 
-	prevnode.Next = nil
-
-	return orignext, map[string]bool{"json": true}, nil
+	return top, map[string]bool{"json": true}, nil
 }
 
 // parseMaybeJSON determines if the argument appears to be a JSON array. If
 // so, passes to parseJSON; if not, quotes the result and returns a single
 // node.
 func parseMaybeJSON(rest string) (*Node, map[string]bool, error) {
-	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return nil, nil, nil
+	}
 
 	node, attrs, err := parseJSON(rest)
 
 	if err == nil {
 		return node, attrs, nil
 	}
-	if err == errDockerfileJSONNesting {
+	if err == errDockerfileNotStringArray {
 		return nil, nil, err
 	}
 
@@ -263,14 +268,12 @@ func parseMaybeJSON(rest string) (*Node, map[string]bool, error) {
 // so, passes to parseJSON; if not, attmpts to parse it as a whitespace
 // delimited string.
 func parseMaybeJSONToList(rest string) (*Node, map[string]bool, error) {
-	rest = strings.TrimSpace(rest)
-
 	node, attrs, err := parseJSON(rest)
 
 	if err == nil {
 		return node, attrs, nil
 	}
-	if err == errDockerfileJSONNesting {
+	if err == errDockerfileNotStringArray {
 		return nil, nil, err
 	}
 

@@ -12,8 +12,7 @@ import (
 func (s *TagStore) Install(eng *engine.Engine) error {
 	for name, handler := range map[string]engine.Handler{
 		"image_set":      s.CmdSet,
-		"image_tag":      s.CmdTag,
-		"tag":            s.CmdTagLegacy, // FIXME merge with "image_tag"
+		"tag":            s.CmdTag,
 		"image_get":      s.CmdGet,
 		"image_inspect":  s.CmdLookup,
 		"image_tarlayer": s.CmdTarLayer,
@@ -150,7 +149,6 @@ func (s *TagStore) CmdLookup(job *engine.Job) engine.Status {
 		out.Set("Os", image.OS)
 		out.SetInt64("Size", image.Size)
 		out.SetInt64("VirtualSize", image.GetParentsSize(0)+image.Size)
-		out.Set("Checksum", image.Checksum)
 		if _, err = out.WriteTo(job.Stdout); err != nil {
 			return job.Error(err)
 		}

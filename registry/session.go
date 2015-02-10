@@ -54,7 +54,7 @@ func NewSession(authConfig *AuthConfig, factory *utils.HTTPRequestFactory, endpo
 			return nil, err
 		}
 		if info.Standalone {
-			log.Debugf("Endpoint %s is eligible for private registry registry. Enabling decorator.", r.indexEndpoint.String())
+			log.Debugf("Endpoint %s is eligible for private registry. Enabling decorator.", r.indexEndpoint.String())
 			dec := utils.NewHTTPAuthDecorator(authConfig.Username, authConfig.Password)
 			factory.AddDecorator(dec)
 		}
@@ -65,7 +65,7 @@ func NewSession(authConfig *AuthConfig, factory *utils.HTTPRequestFactory, endpo
 }
 
 func (r *Session) doRequest(req *http.Request) (*http.Response, *http.Client, error) {
-	return doRequest(req, r.jar, r.timeout, r.indexEndpoint.secure)
+	return doRequest(req, r.jar, r.timeout, r.indexEndpoint.IsSecure)
 }
 
 // Retrieve the history of a given image from the Registry.
@@ -584,7 +584,7 @@ func (r *Session) SearchRepositories(term string) (*SearchResults, error) {
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 {
-		return nil, utils.NewHTTPRequestError(fmt.Sprintf("Unexepected status code %d", res.StatusCode), res)
+		return nil, utils.NewHTTPRequestError(fmt.Sprintf("Unexpected status code %d", res.StatusCode), res)
 	}
 	result := new(SearchResults)
 	err = json.NewDecoder(res.Body).Decode(result)

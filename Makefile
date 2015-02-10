@@ -30,7 +30,7 @@ DOCKER_DOCS_IMAGE := docker-docs$(if $(GIT_BRANCH),:$(GIT_BRANCH))
 
 DOCKER_RUN_DOCKER := docker run --rm -it --privileged $(DOCKER_ENVS) $(DOCKER_MOUNT) "$(DOCKER_IMAGE)"
 
-DOCKER_RUN_DOCS := docker run --rm -it $(DOCS_MOUNT) -e AWS_S3_BUCKET
+DOCKER_RUN_DOCS := docker run --rm -it $(DOCS_MOUNT) -e AWS_S3_BUCKET -e NOCACHE
 
 # for some docs workarounds (see below in "docs-build" target)
 GITCOMMIT := $(shell git rev-parse --short HEAD 2>/dev/null)
@@ -53,7 +53,7 @@ docs-shell: docs-build
 	$(DOCKER_RUN_DOCS) -p $(if $(DOCSPORT),$(DOCSPORT):)8000 "$(DOCKER_DOCS_IMAGE)" bash
 
 docs-release: docs-build
-	$(DOCKER_RUN_DOCS) -e OPTIONS -e BUILD_ROOT "$(DOCKER_DOCS_IMAGE)" ./release.sh
+	$(DOCKER_RUN_DOCS) -e OPTIONS -e BUILD_ROOT -e DISTRIBUTION_ID "$(DOCKER_DOCS_IMAGE)" ./release.sh
 
 docs-test: docs-build
 	$(DOCKER_RUN_DOCS) "$(DOCKER_DOCS_IMAGE)" ./test.sh
@@ -74,7 +74,7 @@ test-docker-py: build
 	$(DOCKER_RUN_DOCKER) hack/make.sh binary test-docker-py
 
 validate: build
-	$(DOCKER_RUN_DOCKER) hack/make.sh validate-gofmt validate-dco
+	$(DOCKER_RUN_DOCKER) hack/make.sh validate-gofmt validate-dco validate-toml
 
 shell: build
 	$(DOCKER_RUN_DOCKER) bash
@@ -83,6 +83,7 @@ build: bundles
 	docker build -t "$(DOCKER_IMAGE)" .
 
 docs-build:
+	( git remote | grep -v upstream ) || git diff --name-status upstream/release..upstream/docs docs/ > docs/changed-files
 	cp ./VERSION docs/VERSION
 	echo "$(GIT_BRANCH)" > docs/GIT_BRANCH
 	echo "$(AWS_S3_BUCKET)" > docs/AWS_S3_BUCKET

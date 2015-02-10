@@ -28,6 +28,7 @@ MAINTAINER Tianon Gravi <admwiggin@gmail.com> (@tianon)
 
 # Packaged dependencies
 RUN apt-get update && apt-get install -y \
+	apparmor \
 	aufs-tools \
 	automake \
 	btrfs-tools \
@@ -39,7 +40,6 @@ RUN apt-get update && apt-get install -y \
 	libapparmor-dev \
 	libcap-dev \
 	libsqlite3-dev \
-	lxc=1.0* \
 	mercurial \
 	parallel \
 	python-mock \
@@ -62,19 +62,32 @@ RUN cd /usr/local/lvm2 \
 	&& make install_device-mapper
 # see https://git.fedorahosted.org/cgit/lvm2.git/tree/INSTALL
 
+# Install lxc
+ENV LXC_VERSION 1.0.7
+RUN mkdir -p /usr/src/lxc \
+	&& curl -sSL https://linuxcontainers.org/downloads/lxc/lxc-${LXC_VERSION}.tar.gz | tar -v -C /usr/src/lxc/ -xz --strip-components=1
+RUN cd /usr/src/lxc \
+	&& ./configure \
+	&& make \
+	&& make install \
+	&& ldconfig
+
 # Install Go
-RUN curl -sSL https://golang.org/dl/go1.4.src.tar.gz | tar -v -C /usr/local -xz
-ENV PATH /usr/local/go/bin:$PATH
+ENV GO_VERSION 1.4.1
+RUN curl -sSL https://golang.org/dl/go${GO_VERSION}.src.tar.gz | tar -v -C /usr/local -xz \
+	&& mkdir -p /go/bin
+ENV PATH /go/bin:/usr/local/go/bin:$PATH
 ENV GOPATH /go:/go/src/github.com/docker/docker/vendor
-ENV PATH /go/bin:$PATH
 RUN cd /usr/local/go/src && ./make.bash --no-clean 2>&1
 
 # Compile Go for cross compilation
 ENV DOCKER_CROSSPLATFORMS \
 	linux/386 linux/arm \
 	darwin/amd64 darwin/386 \
-	freebsd/amd64 freebsd/386 freebsd/arm \
-	windows/amd64 windows/386
+	freebsd/amd64 freebsd/386 freebsd/arm
+
+# TODO when https://jenkins.dockerproject.com/job/Windows/ is green, add windows back to the list above
+#	windows/amd64 windows/386
 
 # (set an explicit GOARM of 5 for maximum compatibility)
 ENV GOARM 5
@@ -86,8 +99,9 @@ RUN cd /usr/local/go/src \
 			./make.bash --no-clean 2>&1; \
 	done
 
-# reinstall standard library with netgo
-RUN go clean -i net && go install -tags netgo std
+# We still support compiling with older Go, so need to grab older "gofmt"
+ENV GOFMT_VERSION 1.3.3
+RUN curl -sSL https://storage.googleapis.com/golang/go${GOFMT_VERSION}.$(go env GOOS)-$(go env GOARCH).tar.gz | tar -C /go/bin -xz --strip-components=2 go/bin/gofmt
 
 # Grab Go's cover tool for dead-simple code coverage testing
 RUN go get golang.org/x/tools/cmd/cover
@@ -101,8 +115,19 @@ RUN git clone -b buildroot-2014.02 https://github.com/jpetazzo/docker-busybox.gi
 # Get the "cirros" image source so we can import it instead of fetching it during tests
 RUN curl -sSL -o /cirros.tar.gz https://github.com/ewindisch/docker-cirros/raw/1cded459668e8b9dbf4ef976c94c05add9bbd8e9/cirros-0.3.0-x86_64-lxc.tar.gz
 
+# Install registry
+ENV REGISTRY_COMMIT c448e0416925a9876d5576e412703c9b8b865e19
+RUN set -x \
+	&& git clone https://github.com/docker/distribution.git /go/src/github.com/docker/distribution \
+	&& (cd /go/src/github.com/docker/distribution && git checkout -q $REGISTRY_COMMIT) \
+	&& GOPATH=/go/src/github.com/docker/distribution/Godeps/_workspace:/go \
+		go build -o /go/bin/registry-v2 github.com/docker/distribution/cmd/registry
+
 # Get the "docker-py" source so we can run their integration tests
-RUN git clone -b 0.7.0 https://github.com/docker/docker-py.git /docker-py
+ENV DOCKER_PY_COMMIT aa19d7b6609c6676e8258f6b900dea2eda1dbe95
+RUN git clone https://github.com/docker/docker-py.git /docker-py \
+	&& cd /docker-py \
+	&& git checkout -q $DOCKER_PY_COMMIT
 
 # Setup s3cmd config
 RUN { \
@@ -126,9 +151,13 @@ ENV DOCKER_BUILDTAGS apparmor selinux btrfs_noversion
 COPY vendor /go/src/github.com/docker/docker/vendor
 # (copy vendor/ because go-md2man needs golang.org/x/net)
 RUN set -x \
-	&& git clone -b v1 https://github.com/cpuguy83/go-md2man.git /go/src/github.com/cpuguy83/go-md2man \
+	&& git clone -b v1.0.1 https://github.com/cpuguy83/go-md2man.git /go/src/github.com/cpuguy83/go-md2man \
 	&& git clone -b v1.2 https://github.com/russross/blackfriday.git /go/src/github.com/russross/blackfriday \
 	&& go install -v github.com/cpuguy83/go-md2man
+
+# install toml validator
+RUN git clone -b v0.1.0 https://github.com/BurntSushi/toml.git /go/src/github.com/BurntSushi/toml \
+    && go install -v github.com/BurntSushi/toml/cmd/tomlv
 
 # Wrap all commands in the "docker-in-docker" script to allow nested containers
 ENTRYPOINT ["hack/dind"]

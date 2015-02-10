@@ -25,6 +25,7 @@ import (
 	imagepkg "github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/chrootarchive"
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/system"
@@ -86,9 +87,9 @@ func (b *Builder) commit(id string, autoCmd []string, comment string) error {
 		}
 		defer container.Unmount()
 	}
-	container := b.Daemon.Get(id)
-	if container == nil {
-		return fmt.Errorf("An error occured while creating the container")
+	container, err := b.Daemon.Get(id)
+	if err != nil {
+		return err
 	}
 
 	// Note: Actually copy the struct
@@ -308,22 +309,20 @@ func calcCopyInfo(b *Builder, cmdName string, cInfos *[]*copyInfo, origPath stri
 			ci.destPath = ci.destPath + filename
 		}
 
-		// Calc the checksum, only if we're using the cache
-		if b.UtilizeCache {
-			r, err := archive.Tar(tmpFileName, archive.Uncompressed)
-			if err != nil {
-				return err
-			}
-			tarSum, err := tarsum.NewTarSum(r, true, tarsum.Version0)
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(ioutil.Discard, tarSum); err != nil {
-				return err
-			}
-			ci.hash = tarSum.Sum(nil)
-			r.Close()
+		// Calc the checksum, even if we're using the cache
+		r, err := archive.Tar(tmpFileName, archive.Uncompressed)
+		if err != nil {
+			return err
 		}
+		tarSum, err := tarsum.NewTarSum(r, true, tarsum.Version0)
+		if err != nil {
+			return err
+		}
+		if _, err := io.Copy(ioutil.Discard, tarSum); err != nil {
+			return err
+		}
+		ci.hash = tarSum.Sum(nil)
+		r.Close()
 
 		return nil
 	}
@@ -358,12 +357,6 @@ func calcCopyInfo(b *Builder, cmdName string, cInfos *[]*copyInfo, origPath stri
 	ci.decompress = allowDecompression
 	*cInfos = append(*cInfos, &ci)
 
-	// If not using cache don't need to do anything else.
-	// If we are using a cache then calc the hash for the src file/dir
-	if !b.UtilizeCache {
-		return nil
-	}
-
 	// Deal with the single file case
 	if !fi.IsDir() {
 		// This will match first file in sums of the archive
@@ -390,7 +383,15 @@ func calcCopyInfo(b *Builder, cmdName string, cInfos *[]*copyInfo, origPath stri
 
 	for _, fileInfo := range b.context.GetSums() {
 		absFile := path.Join(b.contextPath, fileInfo.Name())
-		if strings.HasPrefix(absFile, absOrigPath) || absFile == absOrigPathNoSlash {
+		// Any file in the context that starts with the given path will be
+		// picked up and its hashcode used.  However, we'll exclude the
+		// root dir itself.  We do this for a coupel of reasons:
+		// 1 - ADD/COPY will not copy the dir itself, just its children
+		//     so there's no reason to include it in the hash calc
+		// 2 - the metadata on the dir will change when any child file
+		//     changes.  This will lead to a miss in the cache check if that
+		//     child file is in the .dockerignore list.
+		if strings.HasPrefix(absFile, absOrigPath) && absFile != absOrigPathNoSlash {
 			subfiles = append(subfiles, fileInfo.Sum())
 		}
 	}
@@ -419,21 +420,21 @@ func (b *Builder) pullImage(name string) (*imagepkg.Image, error) {
 	if tag == "" {
 		tag = "latest"
 	}
+	job := b.Engine.Job("pull", remote, tag)
 	pullRegistryAuth := b.AuthConfig
 	if len(b.AuthConfigFile.Configs) > 0 {
 		// The request came with a full auth config file, we prefer to use that
-		endpoint, _, err := registry.ResolveRepositoryName(remote)
+		repoInfo, err := registry.ResolveRepositoryInfo(job, remote)
 		if err != nil {
 			return nil, err
 		}
-		resolvedAuth := b.AuthConfigFile.ResolveAuthConfig(endpoint)
+		resolvedAuth := b.AuthConfigFile.ResolveAuthConfig(repoInfo.Index)
 		pullRegistryAuth = &resolvedAuth
 	}
-	job := b.Engine.Job("pull", remote, tag)
 	job.SetenvBool("json", b.StreamFormatter.Json())
 	job.SetenvBool("parallel", true)
 	job.SetenvJson("authConfig", pullRegistryAuth)
-	job.Stdout.Add(b.OutOld)
+	job.Stdout.Add(ioutils.NopWriteCloser(b.OutOld))
 	if err := job.Run(); err != nil {
 		return nil, err
 	}
@@ -532,29 +533,30 @@ func (b *Builder) create() (*daemon.Container, error) {
 	b.TmpContainers[c.ID] = struct{}{}
 	fmt.Fprintf(b.OutStream, " ---> Running in %s\n", utils.TruncateID(c.ID))
 
-	// override the entry point that may have been picked up from the base image
-	c.Path = config.Cmd[0]
-	c.Args = config.Cmd[1:]
+	if len(config.Cmd) > 0 {
+		// override the entry point that may have been picked up from the base image
+		c.Path = config.Cmd[0]
+		c.Args = config.Cmd[1:]
+	} else {
+		config.Cmd = []string{}
+	}
 
 	return c, nil
 }
 
 func (b *Builder) run(c *daemon.Container) error {
+	var errCh chan error
+	if b.Verbose {
+		errCh = b.Daemon.Attach(&c.StreamConfig, c.Config.OpenStdin, c.Config.StdinOnce, c.Config.Tty, nil, b.OutStream, b.ErrStream)
+	}
+
 	//start the container
 	if err := c.Start(); err != nil {
 		return err
 	}
 
-	if b.Verbose {
-		logsJob := b.Engine.Job("logs", c.ID)
-		logsJob.Setenv("follow", "1")
-		logsJob.Setenv("stdout", "1")
-		logsJob.Setenv("stderr", "1")
-		logsJob.Stdout.Add(b.OutStream)
-		logsJob.Stderr.Set(b.ErrStream)
-		if err := logsJob.Run(); err != nil {
-			return err
-		}
+	if err := <-errCh; err != nil {
+		return err
 	}
 
 	// Wait for it to finish
@@ -705,7 +707,11 @@ func fixPermissions(source, destination string, uid, gid int, destExisted bool) 
 
 func (b *Builder) clearTmp() {
 	for c := range b.TmpContainers {
-		tmp := b.Daemon.Get(c)
+		tmp, err := b.Daemon.Get(c)
+		if err != nil {
+			fmt.Fprint(b.OutStream, err.Error())
+		}
+
 		if err := b.Daemon.Destroy(tmp); err != nil {
 			fmt.Fprintf(b.OutStream, "Error removing intermediate container %s: %s\n", utils.TruncateID(c), err.Error())
 			return

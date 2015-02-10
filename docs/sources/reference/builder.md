@@ -113,7 +113,7 @@ was no formal definition on as to which instructions handled environment
 replacement at the time. After 1.3 this behavior will be preserved and
 canonical.
 
-Environment variables (declared with the `ENV` statement) can also be used in
+Environment variables (declared with [the `ENV` statement](#env)) can also be used in
 certain instructions as variables to be interpreted by the `Dockerfile`. Escapes
 are also handled for including variable-like syntax into a statement literally.
 
@@ -153,6 +153,12 @@ is interpreted as a newline-separated list of exclusion patterns.
 Exclusion patterns match files or directories relative to the source repository
 that will be excluded from the context. Globbing is done using Go's
 [filepath.Match](http://golang.org/pkg/path/filepath#Match) rules.
+
+> **Note**:
+> The `.dockerignore` file can even be used to ignore the `Dockerfile` and
+> `.dockerignore` files. This might be useful if you are copying files from
+> the root of the build context into your new containter but do not want to 
+> include the `Dockerfile` or `.dockerignore` files (e.g. `ADD . /someDir/`).
 
 The following example shows the use of the `.dockerignore` file to exclude the
 `.git` directory from the context. Its effect can be seen in the changed size of
@@ -343,8 +349,8 @@ accessible from the host by default. To expose ports to the host, at runtime,
     ENV <key>=<value> ...
 
 The `ENV` instruction sets the environment variable `<key>` to the value
-`<value>`. This value will be passed to all future `RUN` instructions. This is
-functionally equivalent to prefixing the command with `<key>=<value>`
+`<value>`. This value will be in the environment of all "descendent" `Dockerfile`
+commands and can be [replaced inline](#environment-replacement) in many as well.
 
 The `ENV` instruction has two forms. The first form, `ENV <key> <value>`,
 will set a single variable to a value. The entire string after the first
@@ -375,13 +381,18 @@ from the resulting image. You can view the values using `docker inspect`, and
 change them using `docker run --env <key>=<value>`.
 
 > **Note**:
-> One example where this can cause unexpected consequences, is setting
-> `ENV DEBIAN_FRONTEND noninteractive`. Which will persist when the container
-> is run interactively; for example: `docker run -t -i image bash`
+> Environment persistence can cause unexpected effects. For example,
+> setting `ENV DEBIAN_FRONTEND noninteractive` may confuse apt-get
+> users on a Debian-based image. To set a value for a single command, use
+> `RUN <key>=<value> <command>`.
 
 ## ADD
 
-    ADD <src>... <dest>
+ADD has two forms:
+
+- `ADD <src>... <dest>`
+- `ADD ["<src>"... "<dest>"]` (this form is required for paths containing
+whitespace)
 
 The `ADD` instruction copies new files, directories or remote file URLs from `<src>`
 and adds them to the filesystem of the container at the path `<dest>`.  
@@ -481,7 +492,11 @@ The copy obeys the following rules:
 
 ## COPY
 
-    COPY <src>... <dest>
+COPY has two forms:
+
+- `COPY <src>... <dest>`
+- `COPY ["<src>"... "<dest>"]` (this form is required for paths containing
+whitespace)
 
 The `COPY` instruction copies new files or directories from `<src>`
 and adds them to the filesystem of the container at the path `<dest>`.
@@ -786,8 +801,8 @@ and for any `RUN`, `CMD` and `ENTRYPOINT` instructions that follow it in the
 
     WORKDIR /path/to/workdir
 
-The `WORKDIR` instruction sets the working directory for any `RUN`, `CMD` and
-`ENTRYPOINT` instructions that follow it in the `Dockerfile`.
+The `WORKDIR` instruction sets the working directory for any `RUN`, `CMD`,
+`ENTRYPOINT`, `COPY` and `ADD` instructions that follow it in the `Dockerfile`.
 
 It can be used multiple times in the one `Dockerfile`. If a relative path
 is provided, it will be relative to the path of the previous `WORKDIR`
