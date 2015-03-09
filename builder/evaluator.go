@@ -28,9 +28,12 @@ import (
 	"strings"
 
 	log "github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api"
+	"github.com/docker/docker/builder/command"
 	"github.com/docker/docker/builder/parser"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/engine"
+	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/tarsum"
@@ -45,35 +48,33 @@ var (
 
 // Environment variable interpolation will happen on these statements only.
 var replaceEnvAllowed = map[string]struct{}{
-	"env":     {},
-	"add":     {},
-	"copy":    {},
-	"workdir": {},
-	"expose":  {},
-	"volume":  {},
-	"user":    {},
+	command.Env:     {},
+	command.Add:     {},
+	command.Copy:    {},
+	command.Workdir: {},
+	command.Expose:  {},
+	command.Volume:  {},
+	command.User:    {},
 }
 
-// EvaluateTable is public so that we can get the list of Dockerfile
-// commands from within the test cases
-var EvaluateTable map[string]func(*Builder, []string, map[string]bool, string) error
+var evaluateTable map[string]func(*Builder, []string, map[string]bool, string) error
 
 func init() {
-	EvaluateTable = map[string]func(*Builder, []string, map[string]bool, string) error{
-		"env":        env,
-		"maintainer": maintainer,
-		"add":        add,
-		"copy":       dispatchCopy, // copy() is a go builtin
-		"from":       from,
-		"onbuild":    onbuild,
-		"workdir":    workdir,
-		"run":        run,
-		"cmd":        cmd,
-		"entrypoint": entrypoint,
-		"expose":     expose,
-		"volume":     volume,
-		"user":       user,
-		"insert":     insert,
+	evaluateTable = map[string]func(*Builder, []string, map[string]bool, string) error{
+		command.Env:        env,
+		command.Maintainer: maintainer,
+		command.Add:        add,
+		command.Copy:       dispatchCopy, // copy() is a go builtin
+		command.From:       from,
+		command.Onbuild:    onbuild,
+		command.Workdir:    workdir,
+		command.Run:        run,
+		command.Cmd:        cmd,
+		command.Entrypoint: entrypoint,
+		command.Expose:     expose,
+		command.Volume:     volume,
+		command.User:       user,
+		command.Insert:     insert,
 	}
 }
 
@@ -90,11 +91,17 @@ type Builder struct {
 
 	Verbose      bool
 	UtilizeCache bool
+	cacheBusted  bool
 
 	// controls how images and containers are handled between steps.
 	Remove      bool
 	ForceRemove bool
 	Pull        bool
+
+	// set this to true if we want the builder to not commit between steps.
+	// This is useful when we only want to use the evaluator table to generate
+	// the final configs of the Dockerfile but dont want the layers
+	disableCommit bool
 
 	AuthConfig     *registry.AuthConfig
 	AuthConfigFile *registry.ConfigFile
@@ -141,7 +148,7 @@ func (b *Builder) Run(context io.Reader) (string, error) {
 		}
 	}()
 
-	if err := b.readDockerfile(b.dockerfileName); err != nil {
+	if err := b.readDockerfile(); err != nil {
 		return "", err
 	}
 
@@ -156,23 +163,39 @@ func (b *Builder) Run(context io.Reader) (string, error) {
 			}
 			return "", err
 		}
-		fmt.Fprintf(b.OutStream, " ---> %s\n", utils.TruncateID(b.image))
+		fmt.Fprintf(b.OutStream, " ---> %s\n", common.TruncateID(b.image))
 		if b.Remove {
 			b.clearTmp()
 		}
 	}
 
 	if b.image == "" {
-		return "", fmt.Errorf("No image was generated. Is your Dockerfile empty?\n")
+		return "", fmt.Errorf("No image was generated. Is your Dockerfile empty?")
 	}
 
-	fmt.Fprintf(b.OutStream, "Successfully built %s\n", utils.TruncateID(b.image))
+	fmt.Fprintf(b.OutStream, "Successfully built %s\n", common.TruncateID(b.image))
 	return b.image, nil
 }
 
 // Reads a Dockerfile from the current context. It assumes that the
 // 'filename' is a relative path from the root of the context
-func (b *Builder) readDockerfile(origFile string) error {
+func (b *Builder) readDockerfile() error {
+	// If no -f was specified then look for 'Dockerfile'. If we can't find
+	// that then look for 'dockerfile'.  If neither are found then default
+	// back to 'Dockerfile' and use that in the error message.
+	if b.dockerfileName == "" {
+		b.dockerfileName = api.DefaultDockerfileName
+		tmpFN := filepath.Join(b.contextPath, api.DefaultDockerfileName)
+		if _, err := os.Lstat(tmpFN); err != nil {
+			tmpFN = filepath.Join(b.contextPath, strings.ToLower(api.DefaultDockerfileName))
+			if _, err := os.Lstat(tmpFN); err == nil {
+				b.dockerfileName = strings.ToLower(api.DefaultDockerfileName)
+			}
+		}
+	}
+
+	origFile := b.dockerfileName
+
 	filename, err := symlink.FollowSymlinkInScope(filepath.Join(b.contextPath, origFile), b.contextPath)
 	if err != nil {
 		return fmt.Errorf("The Dockerfile (%s) must be within the build context", origFile)
@@ -226,7 +249,7 @@ func (b *Builder) readDockerfile(origFile string) error {
 // Child[Node, Node, Node] where Child is from parser.Node.Children and each
 // node comes from parser.Node.Next. This forms a "line" with a statement and
 // arguments and we process them in this normalized form by hitting
-// EvaluateTable with the leaf nodes of the command and the Builder object.
+// evaluateTable with the leaf nodes of the command and the Builder object.
 //
 // ONBUILD is a special case; in this case the parser will emit:
 // Child[Node, Child[Node, Node...]] where the first node is the literal
@@ -282,7 +305,7 @@ func (b *Builder) dispatch(stepN int, ast *parser.Node) error {
 
 	// XXX yes, we skip any cmds that are not valid; the parser should have
 	// picked these out already.
-	if f, ok := EvaluateTable[cmd]; ok {
+	if f, ok := evaluateTable[cmd]; ok {
 		return f(b, strList, attrs, original)
 	}
 

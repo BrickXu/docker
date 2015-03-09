@@ -12,9 +12,9 @@
 
 	[Rules.maintainers]
 
-	title = "What is a maintainer?"
+		title = "What is a maintainer?"
 
-	text = """
+		text = """
 There are different types of maintainers, with different responsibilities, but
 all maintainers have 3 things in common:
 
@@ -337,13 +337,14 @@ made through a pull request.
 			"unclejack",
 			"crosbymichael",
 			"erikh",
+			"estesp",
 			"icecrime",
 			"jfrazelle",
 			"lk4d4",
 			"tibor",
 			"vbatts",
 			"vieux",
-			"vish"
+			"vishh"
 		]
 
 
@@ -403,6 +404,8 @@ made through a pull request.
 				"fredlf",
 				"james",
 				"sven",
+				"spf13",
+				"mary"
 			]
 
 		[Org.Subsystems.libcontainer]
@@ -421,7 +424,10 @@ made through a pull request.
 				"dmp42",
 				"vbatts",
 				"joffrey",
-				"samalba"
+				"samalba",
+				"sday",
+				"jlhawn",
+				"dmcg"
 			]
 
 		[Org.Subsystems."build tools"]
@@ -499,6 +505,16 @@ made through a pull request.
 	Email = "dug@us.ibm.com"
 	GitHub = "duglin"
 
+	[people.dmcg]
+	Name = "Derek McGowan"
+	Email = "derek@docker.com"
+	Github = "dmcgowan"
+
+	[people.dmp42]
+	Name = "Olivier Gambier"
+	Email = "olivier@docker.com"
+	Github = "dmp42"
+
 	[people.ehazlett]
 	Name = "Evan Hazlett"
 	Email = "ejhazlett@gmail.com"
@@ -514,6 +530,11 @@ made through a pull request.
 	Email = "eric@windisch.us"
 	GitHub = "ewindisch"
 
+	[people.estesp]
+	Name = "Phil Estes"
+	Email = "estesp@linux.vnet.ibm.com"
+	GitHub = "estesp"
+
 	[people.icecrime]
 	Name = "Arnaud Porterie"
 	Email = "arnaud@docker.com"
@@ -524,10 +545,30 @@ made through a pull request.
 	Email = "jess@docker.com"
 	GitHub = "jfrazelle"
 
+	[people.jlhawn]
+	Name = "Josh Hawn"
+	Email = "josh.hawn@docker.com"
+	Github = "jlhawn"
+
+	[people.joffrey]
+	Name = "Joffrey Fuhrer"
+	Email = "joffrey@docker.com"
+	Github = "shin-"
+
 	[people.lk4d4]
 	Name = "Alexander Morozov"
 	Email = "lk4d4@docker.com"
 	GitHub = "lk4d4"
+
+	[people.mary]
+	Name = "Mary Anthony"
+	Email = "mary.anthony@docker.com"
+	GitHub = "moxiegirl"
+
+	[people.sday]
+	Name = "Stephen Day"
+	Email = "stephen.day@docker.com"
+	Github = "stevvooe"
 
 	[people.shykes]
 	Name = "Solomon Hykes"
@@ -584,7 +625,7 @@ made through a pull request.
 	Email = "cristian.staretu@gmail.com"
 	GitHub = "unclejack"
 
-	[people.vish]
+	[people.vishh]
 	Name = "Vishnu Kannan"
 	Email = "vishnuk@google.com"
 	GitHub = "vishh"

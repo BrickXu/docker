@@ -26,15 +26,15 @@ To list the help on any command just execute the command, followed by the `--hel
 
     Run a command in a new container
 
-      -a, --attach=[]            Attach to STDIN, STDOUT or STDERR.
+      -a, --attach=[]            Attach to STDIN, STDOUT or STDERR
       -c, --cpu-shares=0         CPU shares (relative weight)
     ...
 
 ## Option types
 
 Single character command line options can be combined, so rather than
-typing `docker run -t -i --name test busybox sh`,
-you can write `docker run -ti --name test busybox sh`.
+typing `docker run -i -t --name test busybox sh`,
+you can write `docker run -it --name test busybox sh`.
 
 ### Boolean
 
@@ -74,40 +74,43 @@ expect an integer, and they can only be specified once.
     A self-sufficient runtime for linux containers.
 
     Options:
-      --api-enable-cors=false                    Enable CORS headers in the remote API
-      -b, --bridge=""                            Attach containers to a network bridge
-      --bip=""                                   Specify network bridge IP
-      -D, --debug=false                          Enable debug mode
-      -d, --daemon=false                         Enable daemon mode
-      --dns=[]                                   DNS server to use
-      --dns-search=[]                            DNS search domains to use
-      -e, --exec-driver="native"                 Exec driver to use
-      --fixed-cidr=""                            IPv4 subnet for fixed IPs
-      --fixed-cidr-v6=""                         IPv6 subnet for fixed IPs
-      -G, --group="docker"                       Group for the unix socket
-      -g, --graph="/var/lib/docker"              Root of the Docker runtime
-      -H, --host=[]                              Daemon socket(s) to use or connect to
-      --icc=true                                 Enable inter-container communication
-      --insecure-registry=[]                     Enable insecure registry communication
-      --ip=0.0.0.0                               Default IP when binding container ports
-      --ip-forward=true                          Enable net.ipv4.ip_forward
-      --ip-masq=true                             Enable IP masquerading
-      --iptables=true                            Enable addition of iptables rules
-      --ipv6=false                               Enable IPv6 networking
-       -l, --log-level="info"                    Set the logging level
-      --label=[]                                 Set key=value labels to the daemon
-      --mtu=0                                    Set the containers network MTU
-      -p, --pidfile="/var/run/docker.pid"        Path to use for daemon PID file
-      --registry-mirror=[]                       Preferred Docker registry mirror
-      -s, --storage-driver=""                    Storage driver to use
-      --selinux-enabled=false                    Enable selinux support
-      --storage-opt=[]                           Set storage driver options
-      --tls=false                                Use TLS; implied by --tlsverify flag
-      --tlscacert="/home/sven/.docker/ca.pem"    Trust certs signed only by this CA
-      --tlscert="/home/sven/.docker/cert.pem"    Path to TLS certificate file
-      --tlskey="/home/sven/.docker/key.pem"      Path to TLS key file
-      --tlsverify=false                          Use TLS and verify the remote
-      -v, --version=false                        Print version information and quit
+      --api-enable-cors=false                Enable CORS headers in the remote API
+      --api-cors-header=""                   Set CORS headers in the remote API
+      -b, --bridge=""                        Attach containers to a network bridge
+      --bip=""                               Specify network bridge IP
+      -D, --debug=false                      Enable debug mode
+      -d, --daemon=false                     Enable daemon mode
+      --dns=[]                               DNS server to use
+      --dns-search=[]                        DNS search domains to use
+      -e, --exec-driver="native"             Exec driver to use
+      --fixed-cidr=""                        IPv4 subnet for fixed IPs
+      --fixed-cidr-v6=""                     IPv6 subnet for fixed IPs
+      -G, --group="docker"                   Group for the unix socket
+      -g, --graph="/var/lib/docker"          Root of the Docker runtime
+      -H, --host=[]                          Daemon socket(s) to connect to
+      -h, --help=false                       Print usage
+      --icc=true                             Enable inter-container communication
+      --insecure-registry=[]                 Enable insecure registry communication
+      --ip=0.0.0.0                           Default IP when binding container ports
+      --ip-forward=true                      Enable net.ipv4.ip_forward
+      --ip-masq=true                         Enable IP masquerading
+      --iptables=true                        Enable addition of iptables rules
+      --ipv6=false                           Enable IPv6 networking
+      -l, --log-level="info"                 Set the logging level
+      --label=[]                             Set key=value labels to the daemon
+      --mtu=0                                Set the containers network MTU
+      -p, --pidfile="/var/run/docker.pid"    Path to use for daemon PID file
+      --registry-mirror=[]                   Preferred Docker registry mirror
+      -s, --storage-driver=""                Storage driver to use
+      --selinux-enabled=false                Enable selinux support
+      --storage-opt=[]                       Set storage driver options
+      --tls=false                            Use TLS; implied by --tlsverify
+      --tlscacert="~/.docker/ca.pem"         Trust certs signed only by this CA
+      --tlscert="~/.docker/cert.pem"         Path to TLS certificate file
+      --tlskey="~/.docker/key.pem"           Path to TLS key file
+      --tlsverify=false                      Use TLS and verify the remote
+      -v, --version=false                    Print version information and quit
+      --default-ulimit=[]                    Set default ulimit settings for containers.
 
 Options with [] may be specified multiple times.
 
@@ -173,11 +176,7 @@ string is equivalent to setting the `--tlsverify` flag. The following are equiva
 
 The Docker client will honor the `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`
 environment variables (or the lowercase versions thereof). `HTTPS_PROXY` takes
-precedence over `HTTP_PROXY`. If you happen to have a proxy configured with the
-`HTTP_PROXY` or `HTTPS_PROXY` environment variables but still want to
-communicate with the Docker daemon over its default `unix` domain socket,
-setting the `NO_PROXY` environment variable to the path of the socket
-(`/var/run/docker.sock`) is required.
+precedence over `HTTP_PROXY`.
 
 ### Daemon storage-driver option
 
@@ -206,8 +205,8 @@ share executable memory between devices. Use `docker -d -s btrfs -g /mnt/btrfs_p
 
 The `overlay` is a very fast union filesystem. It is now merged in the main
 Linux kernel as of [3.18.0](https://lkml.org/lkml/2014/10/26/137).
-Call `docker -d -s overlay` to use it. 
-> **Note:** 
+Call `docker -d -s overlay` to use it.
+> **Note:**
 > It is currently unsupported on `btrfs` or any Copy on Write filesystem
 > and should only be used over `ext4` partitions.
 
@@ -226,11 +225,11 @@ Currently supported options are:
     are inherently "sparse", so a 10G device which is mostly empty doesn't use
     10 GB of space on the pool. However, the filesystem will use more space for
     the empty case the larger the device is.
-    
+
      **Warning**: This value affects the system-wide "base" empty filesystem
      that may already be initialized and inherited by pulled images. Typically,
      a change to this value will require additional steps to take effect:
-    
+
         $ sudo service docker stop
         $ sudo rm -rf /var/lib/docker
         $ sudo service docker start
@@ -375,7 +374,7 @@ verification failed (i.e., wrong CA).
 By default, Docker assumes all, but local (see local registries below), registries are secure.
 Communicating with an insecure registry is not possible if Docker assumes that registry is secure.
 In order to communicate with an insecure registry, the Docker daemon requires `--insecure-registry`
-in one of the following two forms: 
+in one of the following two forms:
 
 * `--insecure-registry myregistry:5000` tells the Docker daemon that myregistry:5000 should be considered insecure.
 * `--insecure-registry 10.1.0.0/16` tells the Docker daemon that all registries whose domain resolve to an IP address is part
@@ -406,6 +405,14 @@ to your Docker host's configuration:
 This will only add the proxy and authentication to the Docker daemon's requests -
 your `docker build`s and running containers will need extra configuration to use
 the proxy
+
+### Default Ulimits
+
+`--default-ulimit` allows you to set the default `ulimit` options to use for all
+containers. It takes the same options as `--ulimit` for `docker run`. If these
+defaults are not set, `ulimit` settings will be inheritted, if not set on
+`docker run`, from the Docker daemon. Any `--ulimit` options passed to
+`docker run` will overwrite these defaults.
 
 ### Miscellaneous options
 
@@ -480,7 +487,7 @@ attaching to a tty-enabled container (i.e.: launched with `-t`).
     $ echo $?
     0
     $ docker ps -a | grep topdemo
-    7998ac8581f9        ubuntu:14.04        "/usr/bin/top -b"   38 seconds ago      Exited (0) 21 seconds ago                          topdemo 
+    7998ac8581f9        ubuntu:14.04        "/usr/bin/top -b"   38 seconds ago      Exited (0) 21 seconds ago                          topdemo
 
 And in this second example, you can see the exit code returned by the `bash` process
 is returned by the `docker attach` command to its caller too:
@@ -509,21 +516,27 @@ is returned by the `docker attach` command to its caller too:
       --rm=true                Remove intermediate containers after a successful build
       -t, --tag=""             Repository name (and optionally a tag) for the image
 
-Use this command to build Docker images from a Dockerfile and a
-"context".
+Builds Docker images from a Dockerfile and a "context". A build's context is
+the files located in the specified `PATH` or `URL`.  The build process can
+refer to any of the files in the context. For example, your build can use
+an [*ADD*](/reference/builder/#add) instruction to reference a file in the
+context.
 
-The files at `PATH` or `URL` are called the "context" of the build. The
-build process may refer to any of the files in the context, for example
-when using an [*ADD*](/reference/builder/#add) instruction.
-When a single Dockerfile is given as `URL` or is piped through `STDIN`
-(`docker build - < Dockerfile`), then no context is set.
+The `URL` parameter can specify the location of a Git repository; in this
+case,  the repository is the context. The Git repository is recursively
+cloned with its submodules.  The system does a fresh `git clone -recursive`
+in a temporary directory on your local host. Then, this clone is sent to
+the Docker daemon as the context. Local clones give you the ability to
+access private repositories using local user credentials, VPN's, and so forth.
 
-When a Git repository is set as `URL`, then the repository is used as
-the context. The Git repository is cloned with its submodules
-(`git clone -recursive`). A fresh `git clone` occurs in a temporary directory
-on your local host, and then this is sent to the Docker daemon as the
-context.  This way, your local user credentials and VPN's etc can be
-used to access private repositories.
+Instead of specifying a context, you can pass a single Dockerfile in the
+`URL` or pipe the file in via `STDIN`.  To pipe a Dockerfile from `STDIN`:
+
+	docker build - < Dockerfile
+
+If you use STDIN or specify a `URL`, the system places the contents into a
+file called `Dockerfile`, and any `-f`, `--file` option is ignored. In this 
+scenario, there is no context.
 
 If a file named `.dockerignore` exists in the root of `PATH` then it
 is interpreted as a newline-separated list of exclusion patterns.
@@ -532,7 +545,7 @@ will be excluded from the context. Globbing is done using Go's
 [filepath.Match](http://golang.org/pkg/path/filepath#Match) rules.
 
 Please note that `.dockerignore` files in other subdirectories are
-considered as normal files. Filepaths in .dockerignore are absolute with
+considered as normal files. Filepaths in `.dockerignore` are absolute with
 the current directory as the root. Wildcards are allowed but the search
 is not recursive.
 
@@ -669,8 +682,8 @@ instructions instead of `Dockerfile`.
     $ sudo docker build -f dockerfiles/Dockerfile.debug -t myapp_debug .
     $ sudo docker build -f dockerfiles/Dockerfile.prod  -t myapp_prod .
 
-The above commands will build the current build context (as specified by 
-the `.`) twice, once using a debug version of a `Dockerfile` and once using 
+The above commands will build the current build context (as specified by
+the `.`) twice, once using a debug version of a `Dockerfile` and once using
 a production version.
 
     $ cd /home/me/myapp/some/dir/really/deep
@@ -678,9 +691,9 @@ a production version.
     $ sudo docker build -f ../../../../dockerfiles/debug /home/me/myapp
 
 These two `docker build` commands do the exact same thing. They both
-use the contents of the `debug` file instead of looking for a `Dockerfile` 
-and will use `/home/me/myapp` as the root of the build context. Note that 
-`debug` is in the directory structure of the build context, regardless of how 
+use the contents of the `debug` file instead of looking for a `Dockerfile`
+and will use `/home/me/myapp` as the root of the build context. Note that
+`debug` is in the directory structure of the build context, regardless of how
 you refer to it on the command line.
 
 > **Note:** `docker build` will return a `no such file or directory` error
@@ -697,6 +710,7 @@ you refer to it on the command line.
     Create a new image from a container's changes
 
       -a, --author=""     Author (e.g., "John Hannibal Smith <hannibal@a-team.com>")
+      -c, --change=[]     Apply specified Dockerfile instructions while committing the image
       -m, --message=""    Commit message
       -p, --pause=true    Pause container during commit
 
@@ -711,7 +725,12 @@ while the image is committed. This reduces the likelihood of
 encountering data corruption during the process of creating the commit.
 If this behavior is undesired, set the 'p' option to false.
 
-#### Commit an existing container
+The `--change` option will apply `Dockerfile` instructions to the image
+that is created.
+Supported `Dockerfile` instructions: `CMD`, `ENTRYPOINT`, `ENV`, `EXPOSE`,
+`ONBUILD`, `USER`, `VOLUME`, `WORKDIR`
+
+#### Commit a container
 
     $ sudo docker ps
     ID                  IMAGE               COMMAND             CREATED             STATUS              PORTS
@@ -722,6 +741,19 @@ If this behavior is undesired, set the 'p' option to false.
     $ sudo docker images | head
     REPOSITORY                        TAG                 ID                  CREATED             VIRTUAL SIZE
     SvenDowideit/testimage            version3            f5283438590d        16 seconds ago      335.7 MB
+
+#### Commit a container with new configurations
+
+    $ sudo docker ps
+    ID                  IMAGE               COMMAND             CREATED             STATUS              PORTS
+    c3f279d17e0a        ubuntu:12.04        /bin/bash           7 days ago          Up 25 hours
+    197387f1b436        ubuntu:12.04        /bin/bash           7 days ago          Up 25 hours
+    $ sudo docker inspect -f "{{ .Config.Env }}" c3f279d17e0a
+    [HOME=/ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin]
+    $ sudo docker commit --change "ENV DEBUG true" c3f279d17e0a  SvenDowideit/testimage:version3
+    f5283438590d
+    $ sudo docker inspect -f "{{ .Config.Env }}" f5283438590d
+    [HOME=/ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin DEBUG=true]
 
 ## cp
 
@@ -740,7 +772,7 @@ Creates a new container.
 
     Create a new container
 
-      -a, --attach=[]            Attach to STDIN, STDOUT or STDERR.
+      -a, --attach=[]            Attach to STDIN, STDOUT or STDERR
       --add-host=[]              Add a custom host-to-IP mapping (host:ip)
       -c, --cpu-shares=0         CPU shares (relative weight)
       --cap-add=[]               Add Linux capabilities
@@ -784,9 +816,6 @@ container at any point.
 
 This is useful when you want to set up a container configuration ahead
 of time so that it is ready to start when you need it.
-
-Note that volumes set by `create` may be over-ridden by options set with
-`start`.
 
 Please see the [run command](#run) section for more details.
 
@@ -862,7 +891,7 @@ For example:
 
     Get real time events from the server
 
-      -f, --filter=[]    Provide filter values (i.e., 'event=stop')
+      -f, --filter=[]    Filter output based on conditions provided
       --since=""         Show all events created since timestamp
       --until=""         Stream events until this timestamp
 
@@ -1013,8 +1042,8 @@ For example:
 
 > **Note:**
 > `docker export` does not export the contents of volumes associated with the
-> container. If a volume is mounted on top of an existing directory in the 
-> container, `docker export` will export the contents of the *underlying* 
+> container. If a volume is mounted on top of an existing directory in the
+> container, `docker export` will export the contents of the *underlying*
 > directory, not the contents of the volume.
 >
 > Refer to [Backup, restore, or migrate data volumes](/userguide/dockervolumes/#backup-restore-or-migrate-data-volumes)
@@ -1047,7 +1076,7 @@ To see how the `docker:latest` image was built:
     List images
 
       -a, --all=false      Show all images (default hides intermediate images)
-      -f, --filter=[]      Provide filter values (i.e., 'dangling=true')
+      -f, --filter=[]      Filter output based on conditions provided
       --no-trunc=false     Don't truncate output
       -q, --quiet=false    Only show numeric IDs
 
@@ -1143,10 +1172,17 @@ NOTE: Docker will warn you if any containers exist that are using these untagged
 	tarball (.tar, .tar.gz, .tgz, .bzip, .tar.xz, .txz) into it, then
 	optionally tag it.
 
+      -c, --change=[]     Apply specified Dockerfile instructions while importing the image
+
 URLs must start with `http` and point to a single file archive (.tar,
 .tar.gz, .tgz, .bzip, .tar.xz, or .txz) containing a root filesystem. If
 you would like to import from a local directory or archive, you can use
 the `-` parameter to take the data from `STDIN`.
+
+The `--change` option will apply `Dockerfile` instructions to the image
+that is created.
+Supported `Dockerfile` instructions: `CMD`, `ENTRYPOINT`, `ENV`, `EXPOSE`,
+`ONBUILD`, `USER`, `VOLUME`, `WORKDIR`
 
 #### Examples
 
@@ -1165,6 +1201,10 @@ Import to docker via pipe and `STDIN`.
 **Import from a local directory:**
 
     $ sudo tar -c . | sudo docker import - exampleimagedir
+
+**Import from a local directory with new configurations:**
+
+    $ sudo tar -c . | sudo docker import --change "ENV DEBUG true" - exampleimagedir
 
 Note the `sudo` in this example – you must preserve
 the ownership of the files (especially root ownership) during the
@@ -1201,6 +1241,9 @@ For example:
     EventsListeners: 0
     Init Path: /usr/bin/docker
     Docker Root Dir: /var/lib/docker
+    Http Proxy: http://test:test@localhost:8080
+    Https Proxy: https://test:test@localhost:8080
+    No Proxy: 9.81.1.160
     Username: svendowideit
     Registry: [https://index.docker.io/v1/]
     Labels:
@@ -1217,7 +1260,7 @@ ensure we know how your setup is configured.
 
     Return low-level information on a container or image
 
-      -f, --format=""    Format the output using the given go template.
+      -f, --format=""    Format the output using the given go template
 
 By default, this will render all results in a JSON array. If a format is
 specified, the given template will be executed for each result.
@@ -1240,6 +1283,10 @@ For the most part, you can pick out any field from the JSON in a fairly
 straightforward manner.
 
     $ sudo docker inspect --format='{{.NetworkSettings.MacAddress}}' $INSTANCE_ID
+
+**Get an instance's log path:**
+
+    $ sudo docker inspect --format='{{.LogPath}}' $INSTANCE_ID
 
 **List All Port Bindings:**
 
@@ -1359,7 +1406,7 @@ nano-second part of the timestamp will be padded with zero when necessary.
 
 ## pause
 
-    Usage: docker pause CONTAINER
+    Usage: docker pause CONTAINER [CONTAINER...]
 
     Pause all processes within a container
 
@@ -1396,29 +1443,13 @@ just a specific mapping:
     $ sudo docker port test 7890
     0.0.0.0:4321
 
-## pause
-
-    Usage: docker pause CONTAINER
-
-    Pause all processes within a container
-
-The `docker pause` command uses the cgroups freezer to suspend all processes in
-a container.  Traditionally when suspending a process the `SIGSTOP` signal is
-used, which is observable by the process being suspended. With the cgroups freezer
-the process is unaware, and unable to capture, that it is being suspended,
-and subsequently resumed.
-
-See the
-[cgroups freezer documentation](https://www.kernel.org/doc/Documentation/cgroups/freezer-subsystem.txt)
-for further details.
-
 ## rename
 
     Usage: docker rename OLD_NAME NEW_NAME
 
     rename a existing container to a NEW_NAME
 
-The `docker rename` command allows the container to be renamed to a different name.  
+The `docker rename` command allows the container to be renamed to a different name.
 
 ## ps
 
@@ -1427,26 +1458,26 @@ The `docker rename` command allows the container to be renamed to a different na
     List containers
 
       -a, --all=false       Show all containers (default shows just running)
-      --before=""           Show only container created before Id or Name.
-      -f, --filter=[]       Provide filter values. Valid filters:
-                              exited=<int> - containers with exit code of <int>
-                              status=(restarting|running|paused|exited)
-      -l, --latest=false    Show the latest created container, include non-running.
-      -n=-1                 Show n last created containers, include non-running .
+      --before=""           Show only container created before Id or Name
+      -f, --filter=[]       Filter output based on conditions provided
+      -l, --latest=false    Show the latest created container, include non-running
+      -n=-1                 Show n last created containers, include non-running 
       --no-trunc=false      Don't truncate output
       -q, --quiet=false     Only display numeric IDs
       -s, --size=false      Display total file sizes
-      --since=""            Show created since Id or Name, include non-running.
+      --since=""            Show created since Id or Name, include non-running
 
 Running `docker ps --no-trunc` showing 2 linked containers.
 
     $ sudo docker ps
-    CONTAINER ID                                                            IMAGE                        COMMAND                CREATED              STATUS              PORTS               NAMES
-    f7ee772232194fcc088c6bdec6ea09f7b3f6c54d53934658164b8602d7cd4744        ubuntu:12.04                 bash                   17 seconds ago       Up 16 seconds                           webapp
-    d0963715a061c7c7b7cc80b2646da913a959fbf13e80a971d4a60f6997a2f595        crosbymichael/redis:latest   /redis-server --dir    33 minutes ago       Up 33 minutes       6379/tcp            redis,webapp/db
+    CONTAINER ID        IMAGE                        COMMAND                CREATED              STATUS              PORTS               NAMES
+    4c01db0b339c        ubuntu:12.04                 bash                   17 seconds ago       Up 16 seconds       3300-3310/tcp       webapp
+    d7886598dbe2        crosbymichael/redis:latest   /redis-server --dir    33 minutes ago       Up 33 minutes       6379/tcp            redis,webapp/db
 
 `docker ps` will show only running containers by default. To see all containers:
 `docker ps -a`
+
+`docker ps` will group exposed ports into a single range if possible. E.g., a container that exposes TCP ports `100, 101, 102` will display `100-102/tcp` in the `PORTS` column.
 
 #### Filtering
 
@@ -1490,8 +1521,7 @@ To download a particular image, or set of images (i.e., a repository),
 use `docker pull`:
 
     $ sudo docker pull debian
-    # will pull the debian:latest image, its intermediate layers
-    # and any aliases of the same id
+    # will pull the debian:latest image and its intermediate layers
     $ sudo docker pull debian:testing
     # will pull the image named debian:testing and any intermediate
     # layers it is based on.
@@ -1518,7 +1548,7 @@ registry or to a self-hosted one.
 
     Restart a running container
 
-      -t, --time=10      Seconds to wait for stop before killing the container.
+      -t, --time=10      Seconds to wait for stop before killing the container
 
 ## rm
 
@@ -1598,7 +1628,7 @@ removed before the image is removed.
 
     Run a command in a new container
 
-      -a, --attach=[]            Attach to STDIN, STDOUT or STDERR.
+      -a, --attach=[]            Attach to STDIN, STDOUT or STDERR
       --add-host=[]              Add a custom host-to-IP mapping (host:ip)
       -c, --cpu-shares=0         CPU shares (relative weight)
       --cap-add=[]               Add Linux capabilities
@@ -1606,45 +1636,36 @@ removed before the image is removed.
       --cidfile=""               Write the container ID to the file
       --cpuset=""                CPUs in which to allow execution (0-3, 0,1)
       -d, --detach=false         Run container in background and print container ID
-      --device=[]                Add a host device to the container (e.g. --device=/dev/sdc:/dev/xvdc:rwm)
+      --device=[]                Add a host device to the container
       --dns=[]                   Set custom DNS servers
-      --dns-search=[]            Set custom DNS search domains (Use --dns-search=. if you don't wish to set the search domain)
+      --dns-search=[]            Set custom DNS search domains
       -e, --env=[]               Set environment variables
       --entrypoint=""            Overwrite the default ENTRYPOINT of the image
-      --env-file=[]              Read in a line delimited file of environment variables
-      --expose=[]                Expose a port or a range of ports (e.g. --expose=3300-3310) from the container without publishing it to your host
+      --env-file=[]              Read in a file of environment variables
+      --expose=[]                Expose a port or a range of ports
       -h, --hostname=""          Container host name
+      --help=false               Print usage
       -i, --interactive=false    Keep STDIN open even if not attached
-      --ipc=""                   Default is to create a private IPC namespace (POSIX SysV IPC) for the container
-                                   'container:<name|id>': reuses another container shared memory, semaphores and message queues
-                                   'host': use the host shared memory,semaphores and message queues inside the container.  Note: the host mode gives the container full access to local shared memory and is therefore considered insecure.
-      --link=[]                  Add link to another container in the form of name:alias
+      --ipc=""                   IPC namespace to use
+      --link=[]                  Add link to another container
       --lxc-conf=[]              Add custom lxc options
       -m, --memory=""            Memory limit
-      -memory-swap=""            Total memory (memory+swap), '-1' to disable swap
       --mac-address=""           Container MAC address (e.g. 92:d0:c6:0a:29:33)
+      --memory-swap=""           Total memory (memory + swap), '-1' to disable swap
       --name=""                  Assign a name to the container
       --net="bridge"             Set the Network mode for the container
-                                   'bridge': creates a new network stack for the container on the docker bridge
-                                   'none': no networking for this container
-                                   'container:<name|id>': reuses another container network stack
-                                   'host': use the host network stack inside the container.  Note: the host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.
-      -P, --publish-all=false    Publish all exposed ports to random ports on the host interfaces
-      -p, --publish=[]           Publish a container's port to the host
-                                   format: ip:hostPort:containerPort | ip::containerPort | hostPort:containerPort | containerPort
-                                   Both hostPort and containerPort can be specified as a range of ports. 
-                                   When specifying ranges for both, the number of container ports in the range must match the number of host ports in the range. (e.g., `-p 1234-1236:1234-1236/tcp`)
-                                   (use 'docker port' to see the actual mapping)
-      --pid=host		 'host': use the host PID namespace inside the container.  Note: the host mode gives the container full access to local system services such as D-bus and is therefore considered insecure.
+      -P, --publish-all=false    Publish all exposed ports to random ports
+      -p, --publish=[]           Publish a container's port(s) to the host
+      --pid=""                   PID namespace to use
       --privileged=false         Give extended privileges to this container
-      --read-only=false           Mount the container's root filesystem as read only
-      --restart=""               Restart policy to apply when a container exits (no, on-failure[:max-retry], always)
+      --read-only=false          Mount the container's root filesystem as read only
+      --restart=""               Restart policy to apply when a container exits
       --rm=false                 Automatically remove the container when it exits
       --security-opt=[]          Security Options
       --sig-proxy=true           Proxy received signals to the process
       -t, --tty=false            Allocate a pseudo-TTY
-      -u, --user=""              Username or UID
-      -v, --volume=[]            Bind mount a volume (e.g., from the host: -v /host:/container, from Docker: -v /container)
+      -u, --user=""              Username or UID (format: <name|uid>[:<group|gid>])
+      -v, --volume=[]            Bind mount a volume
       --volumes-from=[]          Mount volumes from the specified container(s)
       -w, --workdir=""           Working directory inside the container
 
@@ -1728,7 +1749,7 @@ folder before starting your container.
 
     $ sudo docker run --read-only -v /icanwrite busybox touch /icanwrite here
 
-Volumes can be used in combination with `--read-only` to control where 
+Volumes can be used in combination with `--read-only` to control where
 a container writes files.  The `--read-only` flag mounts the container's root
 filesystem as read only prohibiting writes to locations other than the
 specified volumes for the container.
@@ -1758,7 +1779,7 @@ ports in Docker.
 This sets environmental variables in the container. For illustration all three
 flags are shown here. Where `-e`, `--env` take an environment variable and
 value, or if no `=` is provided, then that variable's current value is passed
-through (i.e. `$MYVAR1` from the host is set to `$MYVAR1` in the container). 
+through (i.e. `$MYVAR1` from the host is set to `$MYVAR1` in the container).
 When no `=` is provided and that variable is not defined in the client's
 environment then that variable will be removed from the container's list of
 environment variables.
@@ -1873,7 +1894,7 @@ flag:
 	fdisk: unable to open /dev/xvdc: Operation not permitted
 ```
 
-**Note:**
+> **Note:**
 > `--device` cannot be safely used with ephemeral devices. Block devices that
 > may be removed should not be added to untrusted containers with `--device`.
 
@@ -1910,41 +1931,56 @@ application change:
 
 #### Restart Policies
 
-Using the `--restart` flag on Docker run you can specify a restart policy for
-how a container should or should not be restarted on exit.
+Use Docker's `--restart` to specify a container's *restart policy*. A restart 
+policy controls whether the Docker daemon restarts a container after exit.
+Docker supports the following restart policies:
 
-An ever increasing delay (double the previous delay, starting at 100 milliseconds)
-is added before each restart to prevent flooding the server. This means the daemaon
-will wait for 100 mS, then 200 mS, 400, 800, 1600, and so on until either the
-`on-failure` limit is hit, or when you `docker stop` or even `docker rm -f`
-the container.
-
-When a restart policy is active on a container, it will be shown in `docker ps`
-as either `Up` or `Restarting` in `docker ps`. It can also be useful to use
-`docker events` to see the restart policy in effect.
-
-** no ** - Do not restart the container when it exits.
-
-** on-failure ** - Restart the container only if it exits with a non zero exit status.
-
-** always ** - Always restart the container regardless of the exit status.
-
-You can also specify the maximum amount of times Docker will try to
-restart the container when using the ** on-failure ** policy.  The
-default is that Docker will try forever to restart the container.
+<table>
+  <thead>
+    <tr>
+      <th>Policy</th>
+      <th>Result</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>no</strong></td>
+      <td>
+        Do not automatically restart the container when it exits. This is the 
+        default.
+      </td>
+    </tr>
+    <tr>
+      <td>
+        <span style="white-space: nowrap">
+          <strong>on-failure</strong>[:max-retries]
+        </span>
+      </td>
+      <td>
+        Restart only if the container exits with a non-zero exit status.
+        Optionally, limit the number of restart retries the Docker 
+        daemon attempts.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>always</strong></td>
+      <td>
+        Always restart the container regardless of the exit status.
+        When you specify always, the Docker daemon will try to restart
+        the container indefinitely.
+      </td>
+    </tr>
+  </tbody>
+</table>
 
     $ sudo docker run --restart=always redis
 
-This will run the `redis` container with a restart policy of ** always ** so that if
-the container exits, Docker will restart it.
+This will run the `redis` container with a restart policy of **always**
+so that if the container exits, Docker will restart it.
 
-    $ sudo docker run --restart=on-failure:10 redis
-
-This will run the `redis` container with a restart policy of **
-on-failure ** and a maximum restart count of 10.  If the `redis`
-container exits with a non-zero exit status more than 10 times in a row
-Docker will abort trying to restart the container.  Providing a maximum
-restart limit is only valid for the ** on-failure ** policy.
+More detailed information on restart policies can be found in the 
+[Restart Policies (--restart)](/reference/run/#restart-policies-restart) section
+of the Docker run reference page.
 
 ### Adding entries to a container hosts file
 
@@ -1962,13 +1998,38 @@ You can add other hosts into a container's `/etc/hosts` file by using one or mor
     round-trip min/avg/max/stddev = 7.600/19.152/30.705/11.553 ms
 ```
 
-> **Note:**
-> Sometimes you need to connect to the Docker host, which means getting the IP
-> address of the host. You can use the following shell commands to simplify this
-> process:
->
->      $ alias hostip="ip route show 0.0.0.0/0 | grep -Eo 'via \S+' | awk '{ print \$2 }'"
->      $ docker run  --add-host=docker:$(hostip) --rm -it debian
+Sometimes you need to connect to the Docker host from within your
+container.  To enable this, pass the Docker host's IP address to
+the container using the `--add-host` flag. To find the host's address,
+use the `ip addr show` command.
+
+The flags you pass to `ip addr show` depend on whether you are
+using IPv4 or IPv6 networking in your containers. Use the following
+flags for IPv4 address retrieval for a network device named `eth0`:
+
+    $ HOSTIP=`ip -4 addr show scope global dev eth0 | grep inet | awk '{print \$2}' | cut -d / -f 1`
+    $ docker run  --add-host=docker:${HOSTIP} --rm -it debian
+
+For IPv6 use the `-6` flag instead of the `-4` flag. For other network
+devices, replace `eth0` with the correct device name (for example `docker0`
+for the bridge device).
+
+### Setting ulimits in a container
+
+Since setting `ulimit` settings in a container requires extra privileges not
+available in the default container, you can set these using the `--ulimit` flag.
+`--ulimit` is specified with a soft and hard limit as such:
+`<type>=<soft limit>[:<hard limit>]`, for example:
+
+```
+    $ docker run --ulimit nofile=1024:1024 --rm debian ulimit -n
+    1024
+```
+
+>**Note:**
+> If you do not provide a `hard limit`, the `soft limit` will be used for both
+values. If no `ulimits` are set, they will be inherited from the default `ulimits`
+set on the daemon.
 
 ## save
 
@@ -2013,8 +2074,8 @@ See [*Find Public Images on Docker Hub*](
 /userguide/dockerrepos/#searching-for-images) for
 more details on finding shared images from the command line.
 
-> **Note:** 
-> Search queries will only return up to 25 results 
+> **Note:**
+> Search queries will only return up to 25 results
 
 ## start
 
@@ -2027,13 +2088,11 @@ more details on finding shared images from the command line.
 
 ## stats
 
-    Usage: docker stats [CONTAINERS]
+    Usage: docker stats CONTAINER [CONTAINER...]
 
     Display a live stream of one or more containers' resource usage statistics
 
       --help=false       Print usage
-
-> **Note**: this functionality currently only works when using the *libcontainer* exec-driver.
 
 Running `docker stats` on multiple containers
 
@@ -2043,7 +2102,7 @@ Running `docker stats` on multiple containers
     redis2              0.07%               2.746 MiB/64 MiB    4.29%               1.266 KiB/648 B
 
 
-The `docker stats` command will only return a live stream of data for running 
+The `docker stats` command will only return a live stream of data for running
 containers. Stopped containers will not return any data.
 
 > **Note:**
@@ -2056,7 +2115,7 @@ containers. Stopped containers will not return any data.
     Stop a running container by sending SIGTERM and then SIGKILL after a
 	grace period
 
-      -t, --time=10      Seconds to wait for stop before killing it.
+      -t, --time=10      Seconds to wait for stop before killing it
 
 The main process inside the container will receive `SIGTERM`, and after a
 grace period, `SIGKILL`.
@@ -2081,7 +2140,7 @@ them to [*Share Images via Repositories*](
 
 ## unpause
 
-    Usage: docker unpause CONTAINER
+    Usage: docker unpause CONTAINER [CONTAINER...]
 
     Unpause all processes within a container
 
@@ -2098,8 +2157,21 @@ for further details.
 
     Show the Docker version information.
 
-Show the Docker version, API version, Git commit, and Go version of
-both Docker client and daemon.
+Show the Docker version, API version, Git commit, Go version and OS/architecture
+of both Docker client and daemon. Example use:
+
+    $ sudo docker version
+    Client version: 1.5.0
+    Client API version: 1.17
+    Go version (client): go1.4.1
+    Git commit (client): a8a31ef
+    OS/Arch (client): darwin/amd64
+    Server version: 1.5.0
+    Server API version: 1.17
+    Go version (server): go1.4.1
+    Git commit (server): a8a31ef
+    OS/Arch (server): linux/amd64
+
 
 ## wait
 

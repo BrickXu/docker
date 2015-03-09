@@ -18,7 +18,7 @@ It benefits directly from the experience accumulated over several years
 of large-scale operation and support of hundreds of thousands of
 applications and databases.
 
-![Docker L](docs/theme/mkdocs/images/docker-logo-compressed.png "Docker")
+![Docker L](docs/sources/static_files/docker-logo-compressed.png "Docker")
 
 ## Security Disclosure
 
@@ -173,6 +173,8 @@ Under the hood, Docker is built on the following components:
   [namespacing](http://blog.dotcloud.com/under-the-hood-linux-kernels-on-dotcloud-part)
   capabilities of the Linux kernel;
 * The [Go](http://golang.org) programming language.
+* The [Docker Image Specification] (https://github.com/docker/docker/blob/master/image/spec/v1.md)
+* The [Libcontainer Specification] (https://github.com/docker/libcontainer/blob/master/SPEC.md)
 
 Contributing to Docker
 ======================
@@ -237,6 +239,6 @@ server for Docker (hosting/delivering of repositories and images)
 for a container-centric world 
 * [Docker Swarm](https://github.com/docker/swarm): A Docker-native clustering 
 system 
-* [Docker Compose, aka Fig](https://github.com/docker/fig): 
-Multi-container application management
+* [Docker Compose](https://github.com/docker/compose) (formerly Fig): 
+Define and run multi-container apps
 

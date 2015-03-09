@@ -15,7 +15,6 @@ import (
 	"github.com/docker/docker/pkg/chrootarchive"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/volumes"
-	"github.com/docker/libcontainer/label"
 )
 
 type Mount struct {
@@ -89,9 +88,10 @@ func (m *Mount) initialize() error {
 
 		// Make sure we remove these old volumes we don't actually want now.
 		// Ignore any errors here since this is just cleanup, maybe someone volumes-from'd this volume
-		v := m.container.daemon.volumes.Get(hostPath)
-		v.RemoveContainer(m.container.ID)
-		m.container.daemon.volumes.Delete(v.Path)
+		if v := m.container.daemon.volumes.Get(hostPath); v != nil {
+			v.RemoveContainer(m.container.ID)
+			m.container.daemon.volumes.Delete(v.Path)
+		}
 	}
 
 	// This is the full path to container fs + mntToPath
@@ -278,7 +278,7 @@ func (container *Container) applyVolumesFrom() error {
 
 		c, err := container.daemon.Get(id)
 		if err != nil {
-			return err
+			return fmt.Errorf("Could not apply volumes of non-existent container %q.", id)
 		}
 
 		var (
@@ -316,23 +316,7 @@ func validMountMode(mode string) bool {
 }
 
 func (container *Container) setupMounts() error {
-	mounts := []execdriver.Mount{
-		{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true},
-	}
-
-	if container.HostnamePath != "" {
-		mounts = append(mounts, execdriver.Mount{Source: container.HostnamePath, Destination: "/etc/hostname", Writable: true, Private: true})
-	}
-
-	if container.HostsPath != "" {
-		mounts = append(mounts, execdriver.Mount{Source: container.HostsPath, Destination: "/etc/hosts", Writable: true, Private: true})
-	}
-
-	for _, m := range mounts {
-		if err := label.SetFileLabel(m.Source, container.MountLabel); err != nil {
-			return err
-		}
-	}
+	mounts := []execdriver.Mount{}
 
 	// Mount user specified volumes
 	// Note, these are not private because you may want propagation of (un)mounts from host
@@ -345,6 +329,18 @@ func (container *Container) setupMounts() error {
 			Destination: path,
 			Writable:    container.VolumesRW[path],
 		})
+	}
+
+	if container.ResolvConfPath != "" {
+		mounts = append(mounts, execdriver.Mount{Source: container.ResolvConfPath, Destination: "/etc/resolv.conf", Writable: true, Private: true})
+	}
+
+	if container.HostnamePath != "" {
+		mounts = append(mounts, execdriver.Mount{Source: container.HostnamePath, Destination: "/etc/hostname", Writable: true, Private: true})
+	}
+
+	if container.HostsPath != "" {
+		mounts = append(mounts, execdriver.Mount{Source: container.HostsPath, Destination: "/etc/hosts", Writable: true, Private: true})
 	}
 
 	container.command.Mounts = mounts

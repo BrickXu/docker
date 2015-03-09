@@ -18,6 +18,7 @@ import (
 
 	log "github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
+	"github.com/docker/docker/autogen/dockerversion"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/execdriver/execdrivers"
 	"github.com/docker/docker/daemon/execdriver/lxc"
@@ -25,12 +26,12 @@ import (
 	_ "github.com/docker/docker/daemon/graphdriver/vfs"
 	_ "github.com/docker/docker/daemon/networkdriver/bridge"
 	"github.com/docker/docker/daemon/networkdriver/portallocator"
-	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
+	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/graphdb"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/namesgenerator"
@@ -155,31 +156,32 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 	return nil
 }
 
-// Get looks for a container with the provided prefix
-func (daemon *Daemon) Get(prefix string) (*Container, error) {
-	if containerByID := daemon.containers.Get(prefix); containerByID != nil {
-
+// Get looks for a container using the provided information, which could be
+// one of the following inputs from the caller:
+//  - A full container ID, which will exact match a container in daemon's list
+//  - A container name, which will only exact match via the GetByName() function
+//  - A partial container ID prefix (e.g. short ID) of any length that is
+//    unique enough to only return a single container object
+//  If none of these searches succeed, an error is returned
+func (daemon *Daemon) Get(prefixOrName string) (*Container, error) {
+	if containerByID := daemon.containers.Get(prefixOrName); containerByID != nil {
 		// prefix is an exact match to a full container ID
 		return containerByID, nil
 	}
 
-	// Either GetByName finds an entity matching prefix exactly, or it doesn't.
-	// Check value of containerByName and ignore any errors
-	containerByName, _ := daemon.GetByName(prefix)
-	containerId, indexError := daemon.idIndex.Get(prefix)
+	// GetByName will match only an exact name provided; we ignore errors
+	containerByName, _ := daemon.GetByName(prefixOrName)
+	containerId, indexError := daemon.idIndex.Get(prefixOrName)
 
 	if containerByName != nil {
-
 		// prefix is an exact match to a full container Name
 		return containerByName, nil
 	}
 
 	if containerId != "" {
-
 		// prefix is a fuzzy match to a container ID
 		return daemon.containers.Get(containerId), nil
 	}
-
 	return nil, indexError
 }
 
@@ -439,7 +441,9 @@ func (daemon *Daemon) setupResolvconfWatcher() error {
 		for {
 			select {
 			case event := <-watcher.Events:
-				if event.Op&fsnotify.Write == fsnotify.Write {
+				if event.Name == "/etc/resolv.conf" &&
+					(event.Op&fsnotify.Write == fsnotify.Write ||
+						event.Op&fsnotify.Create == fsnotify.Create) {
 					// verify a real change happened before we go further--a file write may have happened
 					// without an actual change to the file
 					updatedResolvConf, newResolvConfHash, err := resolvconf.GetIfChanged()
@@ -472,7 +476,7 @@ func (daemon *Daemon) setupResolvconfWatcher() error {
 		}
 	}()
 
-	if err := watcher.Add("/etc/resolv.conf"); err != nil {
+	if err := watcher.Add("/etc"); err != nil {
 		return err
 	}
 	return nil
@@ -510,7 +514,7 @@ func (daemon *Daemon) mergeAndVerifyConfig(config *runconfig.Config, img *image.
 func (daemon *Daemon) generateIdAndName(name string) (string, string, error) {
 	var (
 		err error
-		id  = utils.GenerateRandomID()
+		id  = common.GenerateRandomID()
 	)
 
 	if name == "" {
@@ -555,7 +559,7 @@ func (daemon *Daemon) reserveName(id, name string) (string, error) {
 			nameAsKnownByUser := strings.TrimPrefix(name, "/")
 			return "", fmt.Errorf(
 				"Conflict. The name %q is already in use by container %s. You have to delete (or rename) that container to be able to reuse that name.", nameAsKnownByUser,
-				utils.TruncateID(conflictingContainer.ID))
+				common.TruncateID(conflictingContainer.ID))
 		}
 	}
 	return name, nil
@@ -578,7 +582,7 @@ func (daemon *Daemon) generateNewName(id string) (string, error) {
 		return name, nil
 	}
 
-	name = "/" + utils.TruncateID(id)
+	name = "/" + common.TruncateID(id)
 	if _, err := daemon.containerGraph.Set(name, id); err != nil {
 		return "", err
 	}
@@ -767,9 +771,7 @@ func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.
 			}
 			child, err := daemon.Get(parts["name"])
 			if err != nil {
-				return err
-			}
-			if child == nil {
+				//An error from daemon.Get() means this name could not be found
 				return fmt.Errorf("Could not get container for %s", parts["name"])
 			}
 			if child.hostConfig.NetworkMode.IsHost() {

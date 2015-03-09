@@ -255,11 +255,15 @@ _docker_build() {
 			__docker_image_repos_and_tags
 			return
 			;;
+		--file|-f)
+			_filedir
+			return	
+			;;	
 	esac
 
 	case "$cur" in
 		-*)
-			COMPREPLY=( $( compgen -W "--force-rm --no-cache --quiet -q --rm --tag -t" -- "$cur" ) )
+			COMPREPLY=( $( compgen -W "--file -f --force-rm --no-cache --quiet -q --rm --tag -t" -- "$cur" ) )
 			;;
 		*)
 			local counter="$(__docker_pos_first_nonflag '--tag|-t')"
@@ -552,6 +556,13 @@ _docker_push() {
 	fi
 }
 
+_docker_rename() {
+	local counter=$(__docker_pos_first_nonflag)
+	if [ $cword -eq $counter ]; then
+		__docker_containers_all
+	fi
+}
+
 _docker_restart() {
 	case "$prev" in
 		--time|-t)
@@ -616,8 +627,10 @@ _docker_run() {
 		--lxc-conf
 		--mac-address
 		--memory -m
+		--memory-swap
 		--name
 		--net
+		--pid
 		--publish -p
 		--restart
 		--security-opt
@@ -628,9 +641,11 @@ _docker_run() {
 	"
 
 	local all_options="$options_with_args
+		--help
 		--interactive -i
 		--privileged
 		--publish-all -P
+		--read-only
 		--tty -t
 	"
 
@@ -663,7 +678,7 @@ _docker_run() {
 			_filedir
 			return
 			;;
-		--device|-d|--volume)
+		--device|--volume|-v)
 			case "$cur" in
 				*:*)
 					# TODO somehow do _filedir for stuff inside the image, if it's already specified (which is also somewhat difficult to determine)
@@ -914,6 +929,7 @@ _docker() {
 		ps
 		pull
 		push
+		rename
 		restart
 		rm
 		rmi

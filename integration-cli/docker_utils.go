@@ -20,6 +20,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/docker/docker/api"
 )
 
 // Daemon represents a Docker daemon for the testing framework.
@@ -266,11 +268,29 @@ func (d *Daemon) Cmd(name string, arg ...string) (string, error) {
 }
 
 func daemonHost() string {
-	daemonUrlStr := "unix:///var/run/docker.sock"
-	if daemonHostVar := os.Getenv("DOCKER_TEST_HOST"); daemonHostVar != "" {
+	daemonUrlStr := "unix://" + api.DEFAULTUNIXSOCKET
+	if daemonHostVar := os.Getenv("DOCKER_HOST"); daemonHostVar != "" {
 		daemonUrlStr = daemonHostVar
 	}
 	return daemonUrlStr
+}
+
+func sockConn(timeout time.Duration) (net.Conn, error) {
+	daemon := daemonHost()
+	daemonUrl, err := url.Parse(daemon)
+	if err != nil {
+		return nil, fmt.Errorf("could not parse url %q: %v", daemon, err)
+	}
+
+	var c net.Conn
+	switch daemonUrl.Scheme {
+	case "unix":
+		return net.DialTimeout(daemonUrl.Scheme, daemonUrl.Path, timeout)
+	case "tcp":
+		return net.DialTimeout(daemonUrl.Scheme, daemonUrl.Host, timeout)
+	default:
+		return c, fmt.Errorf("unknown scheme %v (%s)", daemonUrl.Scheme, daemon)
+	}
 }
 
 func sockRequest(method, endpoint string, data interface{}) ([]byte, error) {
@@ -283,23 +303,9 @@ func sockRequest(method, endpoint string, data interface{}) ([]byte, error) {
 }
 
 func sockRequestRaw(method, endpoint string, data io.Reader, ct string) ([]byte, error) {
-	daemon := daemonHost()
-	daemonUrl, err := url.Parse(daemon)
+	c, err := sockConn(time.Duration(10 * time.Second))
 	if err != nil {
-		return nil, fmt.Errorf("could not parse url %q: %v", daemon, err)
-	}
-
-	var c net.Conn
-	switch daemonUrl.Scheme {
-	case "unix":
-		c, err = net.DialTimeout(daemonUrl.Scheme, daemonUrl.Path, time.Duration(10*time.Second))
-	case "tcp":
-		c, err = net.DialTimeout(daemonUrl.Scheme, daemonUrl.Host, time.Duration(10*time.Second))
-	default:
-		err = fmt.Errorf("unknown scheme %v", daemonUrl.Scheme)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("could not dial docker daemon at %s: %v", daemon, err)
+		return nil, fmt.Errorf("could not dial docker daemon: %v", err)
 	}
 
 	client := httputil.NewClientConn(c, nil)
@@ -378,6 +384,16 @@ func getPausedContainers() (string, error) {
 	}
 
 	return out, err
+}
+
+func getSliceOfPausedContainers() ([]string, error) {
+	out, err := getPausedContainers()
+	if err == nil {
+		slice := strings.Split(strings.TrimSpace(out), "\n")
+		return slice, err
+	} else {
+		return []string{out}, err
+	}
 }
 
 func unpauseContainer(container string) error {
@@ -768,6 +784,12 @@ func fakeGIT(name string, files map[string]string) (*FakeGIT, error) {
 	if err != nil {
 		return nil, err
 	}
+	if output, err := exec.Command("git", "config", "user.name", "Fake User").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("error trying to set 'user.name': %s (%s)", err, output)
+	}
+	if output, err := exec.Command("git", "config", "user.email", "fake.user@example.com").CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("error trying to set 'user.email': %s (%s)", err, output)
+	}
 	if output, err := exec.Command("git", "add", "*").CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("error trying to add files to repo: %s (%s)", err, output)
 	}
@@ -829,14 +851,11 @@ func writeFile(dst, content string, t *testing.T) {
 // Return the contents of file at path `src`.
 // Call t.Fatal() at the first error (including if the file doesn't exist)
 func readFile(src string, t *testing.T) (content string) {
-	f, err := os.Open(src)
+	data, err := ioutil.ReadFile(src)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data, err := ioutil.ReadAll(f)
-	if err != nil {
-		t.Fatal(err)
-	}
+
 	return string(data)
 }
 
@@ -873,7 +892,13 @@ func readContainerFile(containerId, filename string) ([]byte, error) {
 	return content, nil
 }
 
+func readContainerFileWithExec(containerId, filename string) ([]byte, error) {
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "exec", containerId, "cat", filename))
+	return []byte(out), err
+}
+
 func setupRegistry(t *testing.T) func() {
+	testRequires(t, RegistryHosting)
 	reg, err := newTestRegistryV2(t)
 	if err != nil {
 		t.Fatal(err)
@@ -892,4 +917,25 @@ func setupRegistry(t *testing.T) func() {
 	}
 
 	return func() { reg.Close() }
+}
+
+// appendBaseEnv appends the minimum set of environment variables to exec the
+// docker cli binary for testing with correct configuration to the given env
+// list.
+func appendBaseEnv(env []string) []string {
+	preserveList := []string{
+		// preserve remote test host
+		"DOCKER_HOST",
+
+		// windows: requires preserving SystemRoot, otherwise dial tcp fails
+		// with "GetAddrInfoW: A non-recoverable error occurred during a database lookup."
+		"SystemRoot",
+	}
+
+	for _, key := range preserveList {
+		if val := os.Getenv(key); val != "" {
+			env = append(env, fmt.Sprintf("%s=%s", key, val))
+		}
+	}
+	return env
 }
