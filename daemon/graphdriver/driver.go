@@ -7,7 +7,7 @@ import (
 	"path"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/pkg/archive"
 )
 
@@ -39,9 +39,8 @@ var (
 		"aufs",
 		"btrfs",
 		"devicemapper",
-		"vfs",
-		// experimental, has to be enabled manually for now
 		"overlay",
+		"vfs",
 	}
 
 	ErrNotSupported   = errors.New("driver not supported")
@@ -184,6 +183,6 @@ func checkPriorDriver(name, root string) {
 		}
 	}
 	if len(priorDrivers) > 0 {
-		log.Warnf("graphdriver %s selected. Warning: your graphdriver directory %s already contains data managed by other graphdrivers: %s", name, root, strings.Join(priorDrivers, ","))
+		logrus.Warnf("Graphdriver %s selected. Your graphdriver directory %s already contains data managed by other graphdrivers: %s", name, root, strings.Join(priorDrivers, ","))
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,4 +107,97 @@ func TestRunWithUlimits(t *testing.T) {
 	}
 
 	logDone("run - ulimits are set")
+}
+
+func TestRunContainerWithCgroupParent(t *testing.T) {
+	testRequires(t, NativeExecDriver)
+	defer deleteAllContainers()
+
+	cgroupParent := "test"
+	data, err := ioutil.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Fatalf("failed to read '/proc/self/cgroup - %v", err)
+	}
+	selfCgroupPaths := parseCgroupPaths(string(data))
+	selfCpuCgroup, found := selfCgroupPaths["memory"]
+	if !found {
+		t.Fatalf("unable to find self cpu cgroup path. CgroupsPath: %v", selfCgroupPaths)
+	}
+
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "--cgroup-parent", cgroupParent, "--rm", "busybox", "cat", "/proc/self/cgroup"))
+	if err != nil {
+		t.Fatalf("unexpected failure when running container with --cgroup-parent option - %s\n%v", string(out), err)
+	}
+	cgroupPaths := parseCgroupPaths(string(out))
+	if len(cgroupPaths) == 0 {
+		t.Fatalf("unexpected output - %q", string(out))
+	}
+	found = false
+	expectedCgroupPrefix := path.Join(selfCpuCgroup, cgroupParent)
+	for _, path := range cgroupPaths {
+		if strings.HasPrefix(path, expectedCgroupPrefix) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("unexpected cgroup paths. Expected at least one cgroup path to have prefix %q. Cgroup Paths: %v", expectedCgroupPrefix, cgroupPaths)
+	}
+	logDone("run - cgroup parent")
+}
+
+func TestRunContainerWithCgroupParentAbsPath(t *testing.T) {
+	testRequires(t, NativeExecDriver)
+	defer deleteAllContainers()
+
+	cgroupParent := "/cgroup-parent/test"
+
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "--cgroup-parent", cgroupParent, "--rm", "busybox", "cat", "/proc/self/cgroup"))
+	if err != nil {
+		t.Fatalf("unexpected failure when running container with --cgroup-parent option - %s\n%v", string(out), err)
+	}
+	cgroupPaths := parseCgroupPaths(string(out))
+	if len(cgroupPaths) == 0 {
+		t.Fatalf("unexpected output - %q", string(out))
+	}
+	found := false
+	for _, path := range cgroupPaths {
+		if strings.HasPrefix(path, cgroupParent) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("unexpected cgroup paths. Expected at least one cgroup path to have prefix %q. Cgroup Paths: %v", cgroupParent, cgroupPaths)
+	}
+
+	logDone("run - cgroup parent with absolute cgroup path")
+}
+
+func TestRunDeviceDirectory(t *testing.T) {
+	testRequires(t, NativeExecDriver)
+	defer deleteAllContainers()
+	cmd := exec.Command(dockerBinary, "run", "--device", "/dev/snd:/dev/snd", "busybox", "sh", "-c", "ls /dev/snd/")
+
+	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		t.Fatal(err, out)
+	}
+
+	if actual := strings.Trim(out, "\r\n"); !strings.Contains(out, "timer") {
+		t.Fatalf("expected output /dev/snd/timer, received %s", actual)
+	}
+
+	cmd = exec.Command(dockerBinary, "run", "--device", "/dev/snd:/dev/othersnd", "busybox", "sh", "-c", "ls /dev/othersnd/")
+
+	out, _, err = runCommandWithOutput(cmd)
+	if err != nil {
+		t.Fatal(err, out)
+	}
+
+	if actual := strings.Trim(out, "\r\n"); !strings.Contains(out, "seq") {
+		t.Fatalf("expected output /dev/othersnd/timer, received %s", actual)
+	}
+
+	logDone("run - test --device directory mounts all internal devices")
 }

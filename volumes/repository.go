@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/graphdriver"
-	"github.com/docker/docker/pkg/common"
+	"github.com/docker/docker/pkg/stringid"
 )
 
 type Repository struct {
@@ -43,7 +43,7 @@ func (r *Repository) newVolume(path string, writable bool) (*Volume, error) {
 	var (
 		isBindMount bool
 		err         error
-		id          = common.GenerateRandomID()
+		id          = stringid.GenerateRandomID()
 	)
 	if path != "" {
 		isBindMount = true
@@ -95,16 +95,16 @@ func (r *Repository) restore() error {
 		}
 		if err := vol.FromDisk(); err != nil {
 			if !os.IsNotExist(err) {
-				log.Debugf("Error restoring volume: %v", err)
+				logrus.Debugf("Error restoring volume: %v", err)
 				continue
 			}
 			if err := vol.initialize(); err != nil {
-				log.Debugf("%s", err)
+				logrus.Debugf("%s", err)
 				continue
 			}
 		}
 		if err := r.add(vol); err != nil {
-			log.Debugf("Error restoring volume: %v", err)
+			logrus.Debugf("Error restoring volume: %v", err)
 		}
 	}
 	return nil

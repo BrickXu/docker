@@ -15,7 +15,7 @@ import (
 	"sort"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/nat"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/runconfig"
@@ -85,6 +85,37 @@ func maintainer(b *Builder, args []string, attributes map[string]bool, original 
 	return b.commit("", b.Config.Cmd, fmt.Sprintf("MAINTAINER %s", b.maintainer))
 }
 
+// LABEL some json data describing the image
+//
+// Sets the Label variable foo to bar,
+//
+func label(b *Builder, args []string, attributes map[string]bool, original string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("LABEL requires at least one argument")
+	}
+	if len(args)%2 != 0 {
+		// should never get here, but just in case
+		return fmt.Errorf("Bad input to LABEL, too many args")
+	}
+
+	commitStr := "LABEL"
+
+	if b.Config.Labels == nil {
+		b.Config.Labels = map[string]string{}
+	}
+
+	for j := 0; j < len(args); j++ {
+		// name  ==> args[j]
+		// value ==> args[j+1]
+		newVar := args[j] + "=" + args[j+1] + ""
+		commitStr += " " + newVar
+
+		b.Config.Labels[args[j]] = args[j+1]
+		j++
+	}
+	return b.commit("", b.Config.Cmd, commitStr)
+}
+
 // ADD foo /path
 //
 // Add the file 'foo' to '/path'. Tarball and Remote URL (git, http) handling
@@ -135,7 +166,7 @@ func from(b *Builder, args []string, attributes map[string]bool, original string
 		}
 	}
 	if err != nil {
-		if b.Daemon.Graph().IsNotExist(err) {
+		if b.Daemon.Graph().IsNotExist(err, name) {
 			image, err = b.pullImage(name)
 		}
 
@@ -213,8 +244,8 @@ func run(b *Builder, args []string, attributes map[string]bool, original string)
 
 	args = handleJsonArgs(args, attributes)
 
-	if len(args) == 1 {
-		args = append([]string{"/bin/sh", "-c"}, args[0])
+	if !attributes["json"] {
+		args = append([]string{"/bin/sh", "-c"}, args...)
 	}
 
 	runCmd := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -233,7 +264,7 @@ func run(b *Builder, args []string, attributes map[string]bool, original string)
 
 	defer func(cmd []string) { b.Config.Cmd = cmd }(cmd)
 
-	log.Debugf("[BUILDER] Command to be executed: %v", b.Config.Cmd)
+	logrus.Debugf("[BUILDER] Command to be executed: %v", b.Config.Cmd)
 
 	hit, err := b.probeCache()
 	if err != nil {
@@ -396,6 +427,10 @@ func volume(b *Builder, args []string, attributes map[string]bool, original stri
 		b.Config.Volumes = map[string]struct{}{}
 	}
 	for _, v := range args {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return fmt.Errorf("Volume specified can not be an empty string")
+		}
 		b.Config.Volumes[v] = struct{}{}
 	}
 	if err := b.commit("", b.Config.Cmd, fmt.Sprintf("VOLUME %v", args)); err != nil {

@@ -10,41 +10,42 @@ import (
 	"github.com/docker/libcontainer/cgroups"
 )
 
-func (daemon *Daemon) ContainerStats(job *engine.Job) engine.Status {
+func (daemon *Daemon) ContainerStats(job *engine.Job) error {
 	updates, err := daemon.SubscribeToContainerStats(job.Args[0])
 	if err != nil {
-		return job.Error(err)
+		return err
 	}
 	enc := json.NewEncoder(job.Stdout)
 	for v := range updates {
 		update := v.(*execdriver.ResourceStats)
-		ss := convertToAPITypes(update.ContainerStats)
+		ss := convertToAPITypes(update.Stats)
 		ss.MemoryStats.Limit = uint64(update.MemoryLimit)
 		ss.Read = update.Read
 		ss.CpuStats.SystemUsage = update.SystemUsage
 		if err := enc.Encode(ss); err != nil {
 			// TODO: handle the specific broken pipe
 			daemon.UnsubscribeToContainerStats(job.Args[0], updates)
-			return job.Error(err)
+			return err
 		}
 	}
-	return engine.StatusOK
+	return nil
 }
 
-// convertToAPITypes converts the libcontainer.ContainerStats to the api specific
+// convertToAPITypes converts the libcontainer.Stats to the api specific
 // structs.  This is done to preserve API compatibility and versioning.
-func convertToAPITypes(ls *libcontainer.ContainerStats) *types.Stats {
+func convertToAPITypes(ls *libcontainer.Stats) *types.Stats {
 	s := &types.Stats{}
-	if ls.NetworkStats != nil {
-		s.Network = types.Network{
-			RxBytes:   ls.NetworkStats.RxBytes,
-			RxPackets: ls.NetworkStats.RxPackets,
-			RxErrors:  ls.NetworkStats.RxErrors,
-			RxDropped: ls.NetworkStats.RxDropped,
-			TxBytes:   ls.NetworkStats.TxBytes,
-			TxPackets: ls.NetworkStats.TxPackets,
-			TxErrors:  ls.NetworkStats.TxErrors,
-			TxDropped: ls.NetworkStats.TxDropped,
+	if ls.Interfaces != nil {
+		s.Network = types.Network{}
+		for _, iface := range ls.Interfaces {
+			s.Network.RxBytes += iface.RxBytes
+			s.Network.RxPackets += iface.RxPackets
+			s.Network.RxErrors += iface.RxErrors
+			s.Network.RxDropped += iface.RxDropped
+			s.Network.TxBytes += iface.TxBytes
+			s.Network.TxPackets += iface.TxPackets
+			s.Network.TxErrors += iface.TxErrors
+			s.Network.TxDropped += iface.TxDropped
 		}
 	}
 	cs := ls.CgroupStats

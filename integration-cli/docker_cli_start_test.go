@@ -49,7 +49,7 @@ func TestStartAttachCorrectExitCode(t *testing.T) {
 		t.Fatalf("failed to run container: %v, output: %q", err, out)
 	}
 
-	out = stripTrailingCharacters(out)
+	out = strings.TrimSpace(out)
 
 	// make sure the container has exited before trying the "start -a"
 	waitCmd := exec.Command(dockerBinary, "wait", out)
@@ -158,9 +158,9 @@ func TestStartVolumesFromFailsCleanly(t *testing.T) {
 
 	// Check that we have the volumes we want
 	out, _, _ := dockerCmd(t, "inspect", "--format='{{ len .Volumes }}'", "consumer")
-	n_volumes := strings.Trim(out, " \r\n'")
-	if n_volumes != "2" {
-		t.Fatalf("Missing volumes: expected 2, got %s", n_volumes)
+	nVolumes := strings.Trim(out, " \r\n'")
+	if nVolumes != "2" {
+		t.Fatalf("Missing volumes: expected 2, got %s", nVolumes)
 	}
 
 	logDone("start - missing containers in --volumes-from did not affect subsequent runs")
@@ -239,4 +239,50 @@ func TestStartMultipleContainers(t *testing.T) {
 	}
 
 	logDone("start - start multiple containers continue on one failed")
+}
+
+func TestStartAttachMultipleContainers(t *testing.T) {
+
+	var cmd *exec.Cmd
+
+	defer deleteAllContainers()
+	// run  multiple containers to test
+	for _, container := range []string{"test1", "test2", "test3"} {
+		cmd = exec.Command(dockerBinary, "run", "-d", "--name", container, "busybox", "top")
+		if out, _, err := runCommandWithOutput(cmd); err != nil {
+			t.Fatal(out, err)
+		}
+	}
+
+	// stop all the containers
+	for _, container := range []string{"test1", "test2", "test3"} {
+		cmd = exec.Command(dockerBinary, "stop", container)
+		if out, _, err := runCommandWithOutput(cmd); err != nil {
+			t.Fatal(out, err)
+		}
+	}
+
+	// test start and attach multiple containers at once, expected error
+	for _, option := range []string{"-a", "-i", "-ai"} {
+		cmd = exec.Command(dockerBinary, "start", option, "test1", "test2", "test3")
+		out, _, err := runCommandWithOutput(cmd)
+		if !strings.Contains(out, "You cannot start and attach multiple containers at once.") || err == nil {
+			t.Fatal("Expected error but got none")
+		}
+	}
+
+	// confirm the state of all the containers be stopped
+	for container, expected := range map[string]string{"test1": "false", "test2": "false", "test3": "false"} {
+		cmd = exec.Command(dockerBinary, "inspect", "-f", "{{.State.Running}}", container)
+		out, _, err := runCommandWithOutput(cmd)
+		if err != nil {
+			t.Fatal(out, err)
+		}
+		out = strings.Trim(out, "\r\n")
+		if out != expected {
+			t.Fatal("Container running state wrong")
+		}
+	}
+
+	logDone("start - error on start and attach multiple containers at once")
 }

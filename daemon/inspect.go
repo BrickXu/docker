@@ -8,14 +8,14 @@ import (
 	"github.com/docker/docker/runconfig"
 )
 
-func (daemon *Daemon) ContainerInspect(job *engine.Job) engine.Status {
+func (daemon *Daemon) ContainerInspect(job *engine.Job) error {
 	if len(job.Args) != 1 {
-		return job.Errorf("usage: %s NAME", job.Name)
+		return fmt.Errorf("usage: %s NAME", job.Name)
 	}
 	name := job.Args[0]
 	container, err := daemon.Get(name)
 	if err != nil {
-		return job.Error(err)
+		return err
 	}
 
 	container.Lock()
@@ -26,10 +26,10 @@ func (daemon *Daemon) ContainerInspect(job *engine.Job) engine.Status {
 			HostConfig *runconfig.HostConfig
 		}{container, container.hostConfig})
 		if err != nil {
-			return job.Error(err)
+			return err
 		}
 		job.Stdout.Write(b)
-		return engine.StatusOK
+		return nil
 	}
 
 	out := &engine.Env{}
@@ -62,30 +62,38 @@ func (daemon *Daemon) ContainerInspect(job *engine.Job) engine.Status {
 			container.hostConfig.Links = append(container.hostConfig.Links, fmt.Sprintf("%s:%s", child.Name, linkAlias))
 		}
 	}
+	// we need this trick to preserve empty log driver, so
+	// container will use daemon defaults even if daemon change them
+	if container.hostConfig.LogConfig.Type == "" {
+		container.hostConfig.LogConfig = daemon.defaultLogConfig
+		defer func() {
+			container.hostConfig.LogConfig = runconfig.LogConfig{}
+		}()
+	}
 
 	out.SetJson("HostConfig", container.hostConfig)
 
 	container.hostConfig.Links = nil
 	if _, err := out.WriteTo(job.Stdout); err != nil {
-		return job.Error(err)
+		return err
 	}
-	return engine.StatusOK
+	return nil
 }
 
-func (daemon *Daemon) ContainerExecInspect(job *engine.Job) engine.Status {
+func (daemon *Daemon) ContainerExecInspect(job *engine.Job) error {
 	if len(job.Args) != 1 {
-		return job.Errorf("usage: %s ID", job.Name)
+		return fmt.Errorf("usage: %s ID", job.Name)
 	}
 	id := job.Args[0]
 	eConfig, err := daemon.getExecConfig(id)
 	if err != nil {
-		return job.Error(err)
+		return err
 	}
 
 	b, err := json.Marshal(*eConfig)
 	if err != nil {
-		return job.Error(err)
+		return err
 	}
 	job.Stdout.Write(b)
-	return engine.StatusOK
+	return nil
 }

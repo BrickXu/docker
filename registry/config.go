@@ -60,10 +60,10 @@ func (ipnet *netIPNet) MarshalJSON() ([]byte, error) {
 }
 
 func (ipnet *netIPNet) UnmarshalJSON(b []byte) (err error) {
-	var ipnet_str string
-	if err = json.Unmarshal(b, &ipnet_str); err == nil {
+	var ipnetStr string
+	if err = json.Unmarshal(b, &ipnetStr); err == nil {
 		var cidr *net.IPNet
-		if _, cidr, err = net.ParseCIDR(ipnet_str); err == nil {
+		if _, cidr, err = net.ParseCIDR(ipnetStr); err == nil {
 			*ipnet = netIPNet(*cidr)
 		}
 	}
@@ -223,8 +223,8 @@ func validateRemoteName(remoteName string) error {
 	if !validNamespaceChars.MatchString(namespace) {
 		return fmt.Errorf("Invalid namespace name (%s). Only [a-z0-9-_] are allowed.", namespace)
 	}
-	if len(namespace) < 4 || len(namespace) > 30 {
-		return fmt.Errorf("Invalid namespace name (%s). Cannot be fewer than 4 or more than 30 characters.", namespace)
+	if len(namespace) < 2 || len(namespace) > 255 {
+		return fmt.Errorf("Invalid namespace name (%s). Cannot be fewer than 2 or more than 255 characters.", namespace)
 	}
 	if strings.HasPrefix(namespace, "-") || strings.HasSuffix(namespace, "-") {
 		return fmt.Errorf("Invalid namespace name (%s). Cannot begin or end with a hyphen.", namespace)

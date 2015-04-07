@@ -192,9 +192,8 @@ func ValidateMACAddress(val string) (string, error) {
 	_, err := net.ParseMAC(strings.TrimSpace(val))
 	if err != nil {
 		return "", err
-	} else {
-		return val, nil
 	}
+	return val, nil
 }
 
 // Validates domain for resolvconf search configuration.
@@ -211,7 +210,7 @@ func validateDomain(val string) (string, error) {
 		return "", fmt.Errorf("%s is not a valid domain", val)
 	}
 	ns := domainRegexp.FindSubmatch([]byte(val))
-	if len(ns) > 0 {
+	if len(ns) > 0 && len(ns[1]) < 255 {
 		return string(ns[1]), nil
 	}
 	return "", fmt.Errorf("%s is not a valid domain", val)

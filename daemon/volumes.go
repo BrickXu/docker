@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/pkg/chrootarchive"
 	"github.com/docker/docker/pkg/symlink"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/volumes"
 )
 
@@ -24,6 +24,7 @@ type Mount struct {
 	Writable    bool
 	copyData    bool
 	from        *Container
+	isBind      bool
 }
 
 func (mnt *Mount) Export(resource string) (io.ReadCloser, error) {
@@ -79,7 +80,7 @@ func (m *Mount) initialize() error {
 	if hostPath, exists := m.container.Volumes[m.MountToPath]; exists {
 		// If this is a bind-mount/volumes-from, maybe it was passed in at start instead of create
 		// We need to make sure bind-mounts/volumes-from passed on start can override existing ones.
-		if !m.volume.IsBindMount && m.from == nil {
+		if (!m.volume.IsBindMount && !m.isBind) && m.from == nil {
 			return nil
 		}
 		if m.volume.Path == hostPath {
@@ -132,7 +133,7 @@ func (container *Container) registerVolumes() {
 		}
 		v, err := container.daemon.volumes.FindOrCreateVolume(path, writable)
 		if err != nil {
-			log.Debugf("error registering volume %s: %v", path, err)
+			logrus.Debugf("error registering volume %s: %v", path, err)
 			continue
 		}
 		v.AddContainer(container.ID)
@@ -143,7 +144,7 @@ func (container *Container) derefVolumes() {
 	for path := range container.VolumePaths() {
 		vol := container.daemon.volumes.Get(path)
 		if vol == nil {
-			log.Debugf("Volume %s was not found and could not be dereferenced", path)
+			logrus.Debugf("Volume %s was not found and could not be dereferenced", path)
 			continue
 		}
 		vol.RemoveContainer(container.ID)
@@ -172,6 +173,7 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 			volume:      vol,
 			MountToPath: mountToPath,
 			Writable:    writable,
+			isBind:      true, // in case the volume itself is a normal volume, but is being mounted in as a bindmount here
 		}
 	}
 
@@ -187,10 +189,13 @@ func (container *Container) parseVolumeMountConfig() (map[string]*Mount, error) 
 		if _, exists := container.Volumes[path]; exists {
 			continue
 		}
-
-		if stat, err := os.Stat(filepath.Join(container.basefs, path)); err == nil {
+		realPath, err := container.getResourcePath(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to evaluate the absolute path of symlink")
+		}
+		if stat, err := os.Stat(realPath); err == nil {
 			if !stat.IsDir() {
-				return nil, fmt.Errorf("file exists at %s, can't create volume there")
+				return nil, fmt.Errorf("file exists at %s, can't create volume there", realPath)
 			}
 		}
 
@@ -385,15 +390,14 @@ func copyExistingContents(source, destination string) error {
 // copyOwnership copies the permissions and uid:gid of the source file
 // into the destination file
 func copyOwnership(source, destination string) error {
-	var stat syscall.Stat_t
-
-	if err := syscall.Stat(source, &stat); err != nil {
+	stat, err := system.Stat(source)
+	if err != nil {
 		return err
 	}
 
-	if err := os.Chown(destination, int(stat.Uid), int(stat.Gid)); err != nil {
+	if err := os.Chown(destination, int(stat.Uid()), int(stat.Gid())); err != nil {
 		return err
 	}
 
-	return os.Chmod(destination, os.FileMode(stat.Mode))
+	return os.Chmod(destination, os.FileMode(stat.Mode()))
 }

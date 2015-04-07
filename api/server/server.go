@@ -6,40 +6,33 @@ import (
 
 	"encoding/base64"
 	"encoding/json"
-	"expvar"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
-	"net/http/pprof"
 	"os"
 	"strconv"
 	"strings"
 
-	"crypto/tls"
-	"crypto/x509"
-
 	"code.google.com/p/go.net/websocket"
-	"github.com/docker/libcontainer/user"
 	"github.com/gorilla/mux"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/daemon/networkdriver/portallocator"
+	"github.com/docker/docker/daemon"
+	"github.com/docker/docker/daemon/networkdriver/bridge"
 	"github.com/docker/docker/engine"
-	"github.com/docker/docker/pkg/listenbuffer"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/docker/pkg/systemd"
+	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/version"
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/utils"
 )
 
 var (
-	activationLock chan struct{}
+	activationLock = make(chan struct{})
 )
 
 type HttpServer struct {
@@ -135,7 +128,7 @@ func httpError(w http.ResponseWriter, err error) {
 	}
 
 	if err != nil {
-		log.Errorf("HTTP Error: statusCode=%d %s", statusCode, err.Error())
+		logrus.Errorf("HTTP Error: statusCode=%d %v", statusCode, err)
 		http.Error(w, err.Error(), statusCode)
 	}
 }
@@ -176,27 +169,25 @@ func getBoolParam(value string) (bool, error) {
 	return ret, nil
 }
 
+func getDaemon(eng *engine.Engine) *daemon.Daemon {
+	return eng.HackGetGlobalVar("httpapi.daemon").(*daemon.Daemon)
+}
+
 func postAuth(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
-	var (
-		authConfig, err = ioutil.ReadAll(r.Body)
-		job             = eng.Job("auth")
-		stdoutBuffer    = bytes.NewBuffer(nil)
-	)
+	var config *registry.AuthConfig
+	err := json.NewDecoder(r.Body).Decode(&config)
+	r.Body.Close()
 	if err != nil {
 		return err
 	}
-	job.Setenv("authConfig", string(authConfig))
-	job.Stdout.Add(stdoutBuffer)
-	if err = job.Run(); err != nil {
+	d := getDaemon(eng)
+	status, err := d.RegistryService.Auth(config)
+	if err != nil {
 		return err
 	}
-	if status := engine.Tail(stdoutBuffer, 1); status != "" {
-		var env engine.Env
-		env.Set("Status", status)
-		return writeJSONEnv(w, http.StatusOK, env)
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
+	return writeJSON(w, http.StatusOK, &types.AuthResponse{
+		Status: status,
+	})
 }
 
 func getVersion(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -505,7 +496,6 @@ func postCommit(eng *engine.Engine, version version.Version, w http.ResponseWrit
 	}
 	var (
 		config       engine.Env
-		env          engine.Env
 		job          = eng.Job("commit", r.Form.Get("container"))
 		stdoutBuffer = bytes.NewBuffer(nil)
 	)
@@ -515,7 +505,7 @@ func postCommit(eng *engine.Engine, version version.Version, w http.ResponseWrit
 	}
 
 	if err := config.Decode(r.Body); err != nil {
-		log.Errorf("%s", err)
+		logrus.Errorf("%s", err)
 	}
 
 	if r.FormValue("pause") == "" && version.GreaterThanOrEqualTo("1.13") {
@@ -535,8 +525,9 @@ func postCommit(eng *engine.Engine, version version.Version, w http.ResponseWrit
 	if err := job.Run(); err != nil {
 		return err
 	}
-	env.Set("Id", engine.Tail(stdoutBuffer, 1))
-	return writeJSONEnv(w, http.StatusCreated, env)
+	return writeJSON(w, http.StatusCreated, &types.ContainerCommitResponse{
+		ID: engine.Tail(stdoutBuffer, 1),
+	})
 }
 
 // Creates an image from Pull or from Import
@@ -594,7 +585,7 @@ func postImagesCreate(eng *engine.Engine, version version.Version, w http.Respon
 		if !job.Stdout.Used() {
 			return err
 		}
-		sf := utils.NewStreamFormatter(version.GreaterThan("1.0"))
+		sf := streamformatter.NewStreamFormatter(version.GreaterThan("1.0"))
 		w.Write(sf.FormatError(err))
 	}
 
@@ -606,31 +597,30 @@ func getImagesSearch(eng *engine.Engine, version version.Version, w http.Respons
 		return err
 	}
 	var (
+		config      *registry.AuthConfig
 		authEncoded = r.Header.Get("X-Registry-Auth")
-		authConfig  = &registry.AuthConfig{}
-		metaHeaders = map[string][]string{}
+		headers     = map[string][]string{}
 	)
 
 	if authEncoded != "" {
 		authJson := base64.NewDecoder(base64.URLEncoding, strings.NewReader(authEncoded))
-		if err := json.NewDecoder(authJson).Decode(authConfig); err != nil {
+		if err := json.NewDecoder(authJson).Decode(&config); err != nil {
 			// for a search it is not an error if no auth was given
 			// to increase compatibility with the existing api it is defaulting to be empty
-			authConfig = &registry.AuthConfig{}
+			config = &registry.AuthConfig{}
 		}
 	}
 	for k, v := range r.Header {
 		if strings.HasPrefix(k, "X-Meta-") {
-			metaHeaders[k] = v
+			headers[k] = v
 		}
 	}
-
-	var job = eng.Job("search", r.Form.Get("term"))
-	job.SetenvJson("metaHeaders", metaHeaders)
-	job.SetenvJson("authConfig", authConfig)
-	streamJSON(job, w, false)
-
-	return job.Run()
+	d := getDaemon(eng)
+	query, err := d.RegistryService.Search(r.Form.Get("term"), config, headers)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(w).Encode(query.Results)
 }
 
 func postImagesPush(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -660,7 +650,7 @@ func postImagesPush(eng *engine.Engine, version version.Version, w http.Response
 	} else {
 		// the old format is supported for compatibility if there was no authConfig header
 		if err := json.NewDecoder(r.Body).Decode(authConfig); err != nil {
-			return err
+			return fmt.Errorf("Bad parameters and missing X-Registry-Auth: %v", err)
 		}
 	}
 
@@ -679,7 +669,7 @@ func postImagesPush(eng *engine.Engine, version version.Version, w http.Response
 		if !job.Stdout.Used() {
 			return err
 		}
-		sf := utils.NewStreamFormatter(version.GreaterThan("1.0"))
+		sf := streamformatter.NewStreamFormatter(version.GreaterThan("1.0"))
 		w.Write(sf.FormatError(err))
 	}
 	return nil
@@ -708,6 +698,7 @@ func getImagesGet(eng *engine.Engine, version version.Version, w http.ResponseWr
 func postImagesLoad(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	job := eng.Job("load")
 	job.Stdin.Add(r.Body)
+	job.Stdout.Add(w)
 	return job.Run()
 }
 
@@ -876,7 +867,6 @@ func postContainersWait(eng *engine.Engine, version version.Version, w http.Resp
 		return fmt.Errorf("Missing parameter")
 	}
 	var (
-		env          engine.Env
 		stdoutBuffer = bytes.NewBuffer(nil)
 		job          = eng.Job("wait", vars["name"])
 	)
@@ -884,9 +874,13 @@ func postContainersWait(eng *engine.Engine, version version.Version, w http.Resp
 	if err := job.Run(); err != nil {
 		return err
 	}
-
-	env.Set("StatusCode", engine.Tail(stdoutBuffer, 1))
-	return writeJSONEnv(w, http.StatusOK, env)
+	statusCode, err := strconv.Atoi(engine.Tail(stdoutBuffer, 1))
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, &types.ContainerWaitResponse{
+		StatusCode: statusCode,
+	})
 }
 
 func postContainersResize(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -982,7 +976,7 @@ func wsContainersAttach(eng *engine.Engine, version version.Version, w http.Resp
 		job.Stdout.Add(ws)
 		job.Stderr.Set(ws)
 		if err := job.Run(); err != nil {
-			log.Errorf("Error attaching websocket: %s", err)
+			logrus.Errorf("Error attaching websocket: %s", err)
 		}
 	})
 	h.ServeHTTP(w, r)
@@ -1083,12 +1077,30 @@ func postBuild(eng *engine.Engine, version version.Version, w http.ResponseWrite
 	job.Setenv("forcerm", r.FormValue("forcerm"))
 	job.SetenvJson("authConfig", authConfig)
 	job.SetenvJson("configFile", configFile)
+	job.Setenv("memswap", r.FormValue("memswap"))
+	job.Setenv("memory", r.FormValue("memory"))
+	job.Setenv("cpusetcpus", r.FormValue("cpusetcpus"))
+	job.Setenv("cpushares", r.FormValue("cpushares"))
+
+	// Job cancellation. Note: not all job types support this.
+	if closeNotifier, ok := w.(http.CloseNotifier); ok {
+		finished := make(chan struct{})
+		defer close(finished)
+		go func() {
+			select {
+			case <-finished:
+			case <-closeNotifier.CloseNotify():
+				logrus.Infof("Client disconnected, cancelling job: %s", job.Name)
+				job.Cancel()
+			}
+		}()
+	}
 
 	if err := job.Run(); err != nil {
 		if !job.Stdout.Used() {
 			return err
 		}
-		sf := utils.NewStreamFormatter(version.GreaterThanOrEqualTo("1.8"))
+		sf := streamformatter.NewStreamFormatter(version.GreaterThanOrEqualTo("1.8"))
 		w.Write(sf.FormatError(err))
 	}
 	return nil
@@ -1123,7 +1135,7 @@ func postContainersCopy(eng *engine.Engine, version version.Version, w http.Resp
 	job.Stdout.Add(w)
 	w.Header().Set("Content-Type", "application/x-tar")
 	if err := job.Run(); err != nil {
-		log.Errorf("%s", err.Error())
+		logrus.Errorf("%v", err)
 		if strings.Contains(strings.ToLower(err.Error()), "no such id") {
 			w.WriteHeader(http.StatusNotFound)
 		} else if strings.Contains(err.Error(), "no such file or directory") {
@@ -1138,10 +1150,11 @@ func postContainerExecCreate(eng *engine.Engine, version version.Version, w http
 		return nil
 	}
 	var (
-		out          engine.Env
 		name         = vars["name"]
 		job          = eng.Job("execCreate", name)
 		stdoutBuffer = bytes.NewBuffer(nil)
+		outWarnings  []string
+		warnings     = bytes.NewBuffer(nil)
 	)
 
 	if err := job.DecodeEnv(r.Body); err != nil {
@@ -1149,15 +1162,23 @@ func postContainerExecCreate(eng *engine.Engine, version version.Version, w http
 	}
 
 	job.Stdout.Add(stdoutBuffer)
+	// Read warnings from stderr
+	job.Stderr.Add(warnings)
 	// Register an instance of Exec in container.
 	if err := job.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error setting up exec command in container %s: %s\n", name, err)
 		return err
 	}
-	// Return the ID
-	out.Set("Id", engine.Tail(stdoutBuffer, 1))
+	// Parse warnings from stderr
+	scanner := bufio.NewScanner(warnings)
+	for scanner.Scan() {
+		outWarnings = append(outWarnings, scanner.Text())
+	}
 
-	return writeJSONEnv(w, http.StatusCreated, out)
+	return writeJSON(w, http.StatusCreated, &types.ContainerExecCreateResponse{
+		ID:       engine.Tail(stdoutBuffer, 1),
+		Warnings: outWarnings,
+	})
 }
 
 // TODO(vishh): Refactor the code to avoid having to specify stream config as part of both create and start.
@@ -1230,7 +1251,7 @@ func optionsHandler(eng *engine.Engine, version version.Version, w http.Response
 	return nil
 }
 func writeCorsHeaders(w http.ResponseWriter, r *http.Request, corsHeaders string) {
-	log.Debugf("CORS header is enabled and set to: %s", corsHeaders)
+	logrus.Debugf("CORS header is enabled and set to: %s", corsHeaders)
 	w.Header().Add("Access-Control-Allow-Origin", corsHeaders)
 	w.Header().Add("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, X-Registry-Auth")
 	w.Header().Add("Access-Control-Allow-Methods", "GET, POST, DELETE, PUT, OPTIONS")
@@ -1244,16 +1265,16 @@ func ping(eng *engine.Engine, version version.Version, w http.ResponseWriter, r 
 func makeHttpHandler(eng *engine.Engine, logging bool, localMethod string, localRoute string, handlerFunc HttpApiFunc, corsHeaders string, dockerVersion version.Version) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// log the request
-		log.Debugf("Calling %s %s", localMethod, localRoute)
+		logrus.Debugf("Calling %s %s", localMethod, localRoute)
 
 		if logging {
-			log.Infof("%s %s", r.Method, r.RequestURI)
+			logrus.Infof("%s %s", r.Method, r.RequestURI)
 		}
 
 		if strings.Contains(r.Header.Get("User-Agent"), "Docker-Client/") {
 			userAgent := strings.Split(r.Header.Get("User-Agent"), "/")
 			if len(userAgent) == 2 && !dockerVersion.Equal(version.Version(userAgent[1])) {
-				log.Debugf("Warning: client and server don't have the same version (client: %s, server: %s)", userAgent[1], dockerVersion)
+				logrus.Debugf("Warning: client and server don't have the same version (client: %s, server: %s)", userAgent[1], dockerVersion)
 			}
 		}
 		version := version.Version(mux.Vars(r)["version"])
@@ -1265,49 +1286,22 @@ func makeHttpHandler(eng *engine.Engine, logging bool, localMethod string, local
 		}
 
 		if version.GreaterThan(api.APIVERSION) {
-			http.Error(w, fmt.Errorf("client and server don't have same version (client : %s, server: %s)", version, api.APIVERSION).Error(), http.StatusNotFound)
+			http.Error(w, fmt.Errorf("client and server don't have same version (client API version: %s, server API version: %s)", version, api.APIVERSION).Error(), http.StatusNotFound)
 			return
 		}
 
 		if err := handlerFunc(eng, version, w, r, mux.Vars(r)); err != nil {
-			log.Errorf("Handler for %s %s returned error: %s", localMethod, localRoute, err)
+			logrus.Errorf("Handler for %s %s returned error: %s", localMethod, localRoute, err)
 			httpError(w, err)
 		}
 	}
-}
-
-// Replicated from expvar.go as not public.
-func expvarHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	fmt.Fprintf(w, "{\n")
-	first := true
-	expvar.Do(func(kv expvar.KeyValue) {
-		if !first {
-			fmt.Fprintf(w, ",\n")
-		}
-		first = false
-		fmt.Fprintf(w, "%q: %s", kv.Key, kv.Value)
-	})
-	fmt.Fprintf(w, "\n}\n")
-}
-
-func AttachProfiler(router *mux.Router) {
-	router.HandleFunc("/debug/vars", expvarHandler)
-	router.HandleFunc("/debug/pprof/", pprof.Index)
-	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	router.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	router.HandleFunc("/debug/pprof/block", pprof.Handler("block").ServeHTTP)
-	router.HandleFunc("/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
-	router.HandleFunc("/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
-	router.HandleFunc("/debug/pprof/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
 }
 
 // we keep enableCors just for legacy usage, need to be removed in the future
 func createRouter(eng *engine.Engine, logging, enableCors bool, corsHeaders string, dockerVersion string) *mux.Router {
 	r := mux.NewRouter()
 	if os.Getenv("DEBUG") != "" {
-		AttachProfiler(r)
+		ProfilerSetup(r, "/debug/")
 	}
 	m := map[string]map[string]HttpApiFunc{
 		"GET": {
@@ -1374,7 +1368,7 @@ func createRouter(eng *engine.Engine, logging, enableCors bool, corsHeaders stri
 
 	for method, routes := range m {
 		for route, fct := range routes {
-			log.Debugf("Registering %s, %s", method, route)
+			logrus.Debugf("Registering %s, %s", method, route)
 			// NOTE: scope issue, make sure the variables are local and won't be changed
 			localRoute := route
 			localFct := fct
@@ -1406,123 +1400,6 @@ func ServeRequest(eng *engine.Engine, apiversion version.Version, w http.Respons
 	router.ServeHTTP(w, req)
 }
 
-// serveFd creates an http.Server and sets it up to serve given a socket activated
-// argument.
-func serveFd(addr string, job *engine.Job) error {
-	r := createRouter(job.Eng, job.GetenvBool("Logging"), job.GetenvBool("EnableCors"), job.Getenv("CorsHeaders"), job.Getenv("Version"))
-
-	ls, e := systemd.ListenFD(addr)
-	if e != nil {
-		return e
-	}
-
-	chErrors := make(chan error, len(ls))
-
-	// We don't want to start serving on these sockets until the
-	// daemon is initialized and installed. Otherwise required handlers
-	// won't be ready.
-	<-activationLock
-
-	// Since ListenFD will return one or more sockets we have
-	// to create a go func to spawn off multiple serves
-	for i := range ls {
-		listener := ls[i]
-		go func() {
-			httpSrv := http.Server{Handler: r}
-			chErrors <- httpSrv.Serve(listener)
-		}()
-	}
-
-	for i := 0; i < len(ls); i++ {
-		err := <-chErrors
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func lookupGidByName(nameOrGid string) (int, error) {
-	groupFile, err := user.GetGroupPath()
-	if err != nil {
-		return -1, err
-	}
-	groups, err := user.ParseGroupFileFilter(groupFile, func(g user.Group) bool {
-		return g.Name == nameOrGid || strconv.Itoa(g.Gid) == nameOrGid
-	})
-	if err != nil {
-		return -1, err
-	}
-	if groups != nil && len(groups) > 0 {
-		return groups[0].Gid, nil
-	}
-	return -1, fmt.Errorf("Group %s not found", nameOrGid)
-}
-
-func setupTls(cert, key, ca string, l net.Listener) (net.Listener, error) {
-	tlsCert, err := tls.LoadX509KeyPair(cert, key)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("Could not load X509 key pair (%s, %s): %v", cert, key, err)
-		}
-		return nil, fmt.Errorf("Error reading X509 key pair (%s, %s): %q. Make sure the key is encrypted.",
-			cert, key, err)
-	}
-	tlsConfig := &tls.Config{
-		NextProtos:   []string{"http/1.1"},
-		Certificates: []tls.Certificate{tlsCert},
-		// Avoid fallback on insecure SSL protocols
-		MinVersion: tls.VersionTLS10,
-	}
-
-	if ca != "" {
-		certPool := x509.NewCertPool()
-		file, err := ioutil.ReadFile(ca)
-		if err != nil {
-			return nil, fmt.Errorf("Could not read CA certificate: %v", err)
-		}
-		certPool.AppendCertsFromPEM(file)
-		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsConfig.ClientCAs = certPool
-	}
-
-	return tls.NewListener(l, tlsConfig), nil
-}
-
-func newListener(proto, addr string, bufferRequests bool) (net.Listener, error) {
-	if bufferRequests {
-		return listenbuffer.NewListenBuffer(proto, addr, activationLock)
-	}
-
-	return net.Listen(proto, addr)
-}
-
-func changeGroup(addr string, nameOrGid string) error {
-	gid, err := lookupGidByName(nameOrGid)
-	if err != nil {
-		return err
-	}
-
-	log.Debugf("%s group found. gid: %d", nameOrGid, gid)
-	return os.Chown(addr, 0, gid)
-}
-
-func setSocketGroup(addr, group string) error {
-	if group == "" {
-		return nil
-	}
-
-	if err := changeGroup(addr, group); err != nil {
-		if group != "docker" {
-			return err
-		}
-		log.Debugf("Warning: could not chgrp %s to docker: %v", addr, err)
-	}
-
-	return nil
-}
-
 func allocateDaemonPort(addr string) error {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -1542,40 +1419,11 @@ func allocateDaemonPort(addr string) error {
 	}
 
 	for _, hostIP := range hostIPs {
-		if _, err := portallocator.RequestPort(hostIP, "tcp", intPort); err != nil {
+		if _, err := bridge.RequestPort(hostIP, "tcp", intPort); err != nil {
 			return fmt.Errorf("failed to allocate daemon listening port %d (err: %v)", intPort, err)
 		}
 	}
 	return nil
-}
-
-func setupTcpHttp(addr string, job *engine.Job) (*HttpServer, error) {
-	if !job.GetenvBool("TlsVerify") {
-		log.Infof("/!\\ DON'T BIND ON ANY IP ADDRESS WITHOUT setting -tlsverify IF YOU DON'T KNOW WHAT YOU'RE DOING /!\\")
-	}
-
-	r := createRouter(job.Eng, job.GetenvBool("Logging"), job.GetenvBool("EnableCors"), job.Getenv("CorsHeaders"), job.Getenv("Version"))
-
-	l, err := newListener("tcp", addr, job.GetenvBool("BufferRequests"))
-	if err != nil {
-		return nil, err
-	}
-
-	if err := allocateDaemonPort(addr); err != nil {
-		return nil, err
-	}
-
-	if job.GetenvBool("Tls") || job.GetenvBool("TlsVerify") {
-		var tlsCa string
-		if job.GetenvBool("TlsVerify") {
-			tlsCa = job.Getenv("TlsCa")
-		}
-		l, err = setupTls(job.Getenv("TlsCert"), job.Getenv("TlsKey"), tlsCa, l)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return &HttpServer{&http.Server{Addr: addr, Handler: r}, l}, nil
 }
 
 type Server interface {
@@ -1585,50 +1433,45 @@ type Server interface {
 
 // ServeApi loops through all of the protocols sent in to docker and spawns
 // off a go routine to setup a serving http.Server for each.
-func ServeApi(job *engine.Job) engine.Status {
+func ServeApi(job *engine.Job) error {
 	if len(job.Args) == 0 {
-		return job.Errorf("usage: %s PROTO://ADDR [PROTO://ADDR ...]", job.Name)
+		return fmt.Errorf("usage: %s PROTO://ADDR [PROTO://ADDR ...]", job.Name)
 	}
 	var (
 		protoAddrs = job.Args
 		chErrors   = make(chan error, len(protoAddrs))
 	)
-	activationLock = make(chan struct{})
 
 	for _, protoAddr := range protoAddrs {
 		protoAddrParts := strings.SplitN(protoAddr, "://", 2)
 		if len(protoAddrParts) != 2 {
-			return job.Errorf("usage: %s PROTO://ADDR [PROTO://ADDR ...]", job.Name)
+			return fmt.Errorf("usage: %s PROTO://ADDR [PROTO://ADDR ...]", job.Name)
 		}
 		go func() {
-			log.Infof("Listening for HTTP on %s (%s)", protoAddrParts[0], protoAddrParts[1])
+			logrus.Infof("Listening for HTTP on %s (%s)", protoAddrParts[0], protoAddrParts[1])
 			srv, err := NewServer(protoAddrParts[0], protoAddrParts[1], job)
 			if err != nil {
 				chErrors <- err
 				return
 			}
-			chErrors <- srv.Serve()
+			job.Eng.OnShutdown(func() {
+				if err := srv.Close(); err != nil {
+					logrus.Error(err)
+				}
+			})
+			if err = srv.Serve(); err != nil && strings.Contains(err.Error(), "use of closed network connection") {
+				err = nil
+			}
+			chErrors <- err
 		}()
 	}
 
 	for i := 0; i < len(protoAddrs); i++ {
 		err := <-chErrors
 		if err != nil {
-			return job.Error(err)
+			return err
 		}
 	}
 
-	return engine.StatusOK
-}
-
-func AcceptConnections(job *engine.Job) engine.Status {
-	// Tell the init daemon we are accepting requests
-	go systemd.SdNotify("READY=1")
-
-	// close the lock so the listeners start accepting connections
-	if activationLock != nil {
-		close(activationLock)
-	}
-
-	return engine.StatusOK
+	return nil
 }

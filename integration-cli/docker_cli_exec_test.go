@@ -60,7 +60,7 @@ func TestExecInteractiveStdinClose(t *testing.T) {
 
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			t.Fatal(err, out)
+			t.Fatal(err, string(out))
 		}
 
 		if string(out) == "" {
@@ -141,7 +141,7 @@ func TestExecAfterContainerRestart(t *testing.T) {
 		t.Fatal(out, err)
 	}
 
-	cleanedContainerID := stripTrailingCharacters(out)
+	cleanedContainerID := strings.TrimSpace(out)
 
 	runCmd = exec.Command(dockerBinary, "restart", cleanedContainerID)
 	if out, _, err = runCommandWithOutput(runCmd); err != nil {
@@ -197,7 +197,7 @@ func TestExecAfterDaemonRestart(t *testing.T) {
 	logDone("exec - exec running container after daemon restart")
 }
 
-// Regresssion test for #9155, #9044
+// Regression test for #9155, #9044
 func TestExecEnv(t *testing.T) {
 	defer deleteAllContainers()
 
@@ -253,7 +253,7 @@ func TestExecPausedContainer(t *testing.T) {
 		t.Fatal(out, err)
 	}
 
-	ContainerID := stripTrailingCharacters(out)
+	ContainerID := strings.TrimSpace(out)
 
 	pausedCmd := exec.Command(dockerBinary, "pause", "testing")
 	out, _, _, err = runCommandWithStdoutStderr(pausedCmd)
@@ -501,12 +501,12 @@ func TestLinksPingLinkedContainersOnRename(t *testing.T) {
 
 	var out string
 	out, _, _ = dockerCmd(t, "run", "-d", "--name", "container1", "busybox", "sleep", "10")
-	idA := stripTrailingCharacters(out)
+	idA := strings.TrimSpace(out)
 	if idA == "" {
 		t.Fatal(out, "id should not be nil")
 	}
 	out, _, _ = dockerCmd(t, "run", "-d", "--link", "container1:alias1", "--name", "container2", "busybox", "sleep", "10")
-	idB := stripTrailingCharacters(out)
+	idB := strings.TrimSpace(out)
 	if idB == "" {
 		t.Fatal(out, "id should not be nil")
 	}
@@ -538,7 +538,6 @@ func TestRunExecDir(t *testing.T) {
 	id := strings.TrimSpace(out)
 	execDir := filepath.Join(execDriverPath, id)
 	stateFile := filepath.Join(execDir, "state.json")
-	contFile := filepath.Join(execDir, "container.json")
 
 	{
 		fi, err := os.Stat(execDir)
@@ -549,10 +548,6 @@ func TestRunExecDir(t *testing.T) {
 			t.Fatalf("%q must be a directory", execDir)
 		}
 		fi, err = os.Stat(stateFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fi, err = os.Stat(contFile)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -564,23 +559,12 @@ func TestRunExecDir(t *testing.T) {
 		t.Fatal(err, out)
 	}
 	{
-		fi, err := os.Stat(execDir)
-		if err != nil {
+		_, err := os.Stat(execDir)
+		if err == nil {
 			t.Fatal(err)
 		}
-		if !fi.IsDir() {
-			t.Fatalf("%q must be a directory", execDir)
-		}
-		fi, err = os.Stat(stateFile)
 		if err == nil {
-			t.Fatalf("Statefile %q is exists for stopped container!", stateFile)
-		}
-		if !os.IsNotExist(err) {
-			t.Fatalf("Error should be about non-existing, got %s", err)
-		}
-		fi, err = os.Stat(contFile)
-		if err == nil {
-			t.Fatalf("Container file %q is exists for stopped container!", contFile)
+			t.Fatalf("Exec directory %q exists for removed container!", execDir)
 		}
 		if !os.IsNotExist(err) {
 			t.Fatalf("Error should be about non-existing, got %s", err)
@@ -600,10 +584,6 @@ func TestRunExecDir(t *testing.T) {
 			t.Fatalf("%q must be a directory", execDir)
 		}
 		fi, err = os.Stat(stateFile)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fi, err = os.Stat(contFile)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,35 +1,39 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
-	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/parsers"
+	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/docker/utils"
 )
 
-func (daemon *Daemon) ImageDelete(job *engine.Job) engine.Status {
+func (daemon *Daemon) ImageDelete(job *engine.Job) error {
 	if n := len(job.Args); n != 1 {
-		return job.Errorf("Usage: %s IMAGE", job.Name)
+		return fmt.Errorf("Usage: %s IMAGE", job.Name)
 	}
-	imgs := engine.NewTable("", 0)
-	if err := daemon.DeleteImage(job.Eng, job.Args[0], imgs, true, job.GetenvBool("force"), job.GetenvBool("noprune")); err != nil {
-		return job.Error(err)
+
+	list := []types.ImageDelete{}
+	if err := daemon.DeleteImage(job.Eng, job.Args[0], &list, true, job.GetenvBool("force"), job.GetenvBool("noprune")); err != nil {
+		return err
 	}
-	if len(imgs.Data) == 0 {
-		return job.Errorf("Conflict, %s wasn't deleted", job.Args[0])
+	if len(list) == 0 {
+		return fmt.Errorf("Conflict, %s wasn't deleted", job.Args[0])
 	}
-	if _, err := imgs.WriteListTo(job.Stdout); err != nil {
-		return job.Error(err)
+	if err := json.NewEncoder(job.Stdout).Encode(list); err != nil {
+		return err
 	}
-	return engine.StatusOK
+	return nil
 }
 
 // FIXME: make this private and use the job instead
-func (daemon *Daemon) DeleteImage(eng *engine.Engine, name string, imgs *engine.Table, first, force, noprune bool) error {
+func (daemon *Daemon) DeleteImage(eng *engine.Engine, name string, list *[]types.ImageDelete, first, force, noprune bool) error {
 	var (
 		repoName, tag string
 		tags          = []string{}
@@ -48,7 +52,7 @@ func (daemon *Daemon) DeleteImage(eng *engine.Engine, name string, imgs *engine.
 	img, err := daemon.Repositories().LookupImage(name)
 	if err != nil {
 		if r, _ := daemon.Repositories().Get(repoName); r != nil {
-			return fmt.Errorf("No such image: %s:%s", repoName, tag)
+			return fmt.Errorf("No such image: %s", utils.ImageReference(repoName, tag))
 		}
 		return fmt.Errorf("No such image: %s", name)
 	}
@@ -101,9 +105,9 @@ func (daemon *Daemon) DeleteImage(eng *engine.Engine, name string, imgs *engine.
 			return err
 		}
 		if tagDeleted {
-			out := &engine.Env{}
-			out.Set("Untagged", repoName+":"+tag)
-			imgs.Add(out)
+			*list = append(*list, types.ImageDelete{
+				Untagged: utils.ImageReference(repoName, tag),
+			})
 			eng.Job("log", "untag", img.ID, "").Run()
 		}
 	}
@@ -116,12 +120,12 @@ func (daemon *Daemon) DeleteImage(eng *engine.Engine, name string, imgs *engine.
 			if err := daemon.Graph().Delete(img.ID); err != nil {
 				return err
 			}
-			out := &engine.Env{}
-			out.SetJson("Deleted", img.ID)
-			imgs.Add(out)
+			*list = append(*list, types.ImageDelete{
+				Deleted: img.ID,
+			})
 			eng.Job("log", "delete", img.ID, "").Run()
 			if img.Parent != "" && !noprune {
-				err := daemon.DeleteImage(eng, img.Parent, imgs, false, force, noprune)
+				err := daemon.DeleteImage(eng, img.Parent, list, false, force, noprune)
 				if first {
 					return err
 				}
@@ -137,7 +141,7 @@ func (daemon *Daemon) canDeleteImage(imgID string, force bool) error {
 	for _, container := range daemon.List() {
 		parent, err := daemon.Repositories().LookupImage(container.ImageID)
 		if err != nil {
-			if daemon.Graph().IsNotExist(err) {
+			if daemon.Graph().IsNotExist(err, container.ImageID) {
 				return nil
 			}
 			return err
@@ -147,11 +151,11 @@ func (daemon *Daemon) canDeleteImage(imgID string, force bool) error {
 			if imgID == p.ID {
 				if container.IsRunning() {
 					if force {
-						return fmt.Errorf("Conflict, cannot force delete %s because the running container %s is using it, stop it and retry", common.TruncateID(imgID), common.TruncateID(container.ID))
+						return fmt.Errorf("Conflict, cannot force delete %s because the running container %s is using it, stop it and retry", stringid.TruncateID(imgID), stringid.TruncateID(container.ID))
 					}
-					return fmt.Errorf("Conflict, cannot delete %s because the running container %s is using it, stop it and use -f to force", common.TruncateID(imgID), common.TruncateID(container.ID))
+					return fmt.Errorf("Conflict, cannot delete %s because the running container %s is using it, stop it and use -f to force", stringid.TruncateID(imgID), stringid.TruncateID(container.ID))
 				} else if !force {
-					return fmt.Errorf("Conflict, cannot delete %s because the container %s is using it, use -f to force", common.TruncateID(imgID), common.TruncateID(container.ID))
+					return fmt.Errorf("Conflict, cannot delete %s because the container %s is using it, use -f to force", stringid.TruncateID(imgID), stringid.TruncateID(container.ID))
 				}
 			}
 			return nil

@@ -18,12 +18,13 @@ import (
 	"strings"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/autogen/dockerversion"
 	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/ioutils"
+	"github.com/docker/docker/pkg/jsonmessage"
+	"github.com/docker/docker/pkg/stringutils"
 )
 
 type KeyValuePair struct {
@@ -156,7 +157,7 @@ func DockerInitPath(localCopy string) string {
 
 func GetTotalUsedFds() int {
 	if fds, err := ioutil.ReadDir(fmt.Sprintf("/proc/%d/fd", os.Getpid())); err != nil {
-		log.Errorf("Error opening /proc/%d/fd: %s", os.Getpid(), err)
+		logrus.Errorf("Error opening /proc/%d/fd: %s", os.Getpid(), err)
 	} else {
 		return len(fds)
 	}
@@ -254,7 +255,7 @@ func NewWriteFlusher(w io.Writer) *WriteFlusher {
 }
 
 func NewHTTPRequestError(msg string, res *http.Response) error {
-	return &JSONError{
+	return &jsonmessage.JSONError{
 		Message: msg,
 		Code:    res.StatusCode,
 	}
@@ -312,7 +313,7 @@ var globalTestID string
 // new directory.
 func TestDirectory(templateDir string) (dir string, err error) {
 	if globalTestID == "" {
-		globalTestID = common.RandomString()[:4]
+		globalTestID = stringutils.GenerateRandomString()[:4]
 	}
 	prefix := fmt.Sprintf("docker-test%s-%s-", globalTestID, GetCallerName(2))
 	if prefix == "" {
@@ -534,4 +535,21 @@ func (wc *WriteCounter) Write(p []byte) (count int, err error) {
 	count, err = wc.Writer.Write(p)
 	wc.Count += int64(count)
 	return
+}
+
+// ImageReference combines `repo` and `ref` and returns a string representing
+// the combination. If `ref` is a digest (meaning it's of the form
+// <algorithm>:<digest>, the returned string is <repo>@<ref>. Otherwise,
+// ref is assumed to be a tag, and the returned string is <repo>:<tag>.
+func ImageReference(repo, ref string) string {
+	if DigestReference(ref) {
+		return repo + "@" + ref
+	}
+	return repo + ":" + ref
+}
+
+// DigestReference returns true if ref is a digest reference; i.e. if it
+// is of the form <algorithm>:<digest>.
+func DigestReference(ref string) bool {
+	return strings.Contains(ref, ":")
 }

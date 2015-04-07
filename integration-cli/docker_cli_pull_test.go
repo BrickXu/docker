@@ -85,6 +85,8 @@ func TestPullVerified(t *testing.T) {
 
 // pulling an image from the central registry should work
 func TestPullImageFromCentralRegistry(t *testing.T) {
+	testRequires(t, Network)
+
 	defer deleteImages("hello-world")
 
 	pullCmd := exec.Command(dockerBinary, "pull", "hello-world")
@@ -106,6 +108,8 @@ func TestPullNonExistingImage(t *testing.T) {
 // pulling an image from the central registry using official names should work
 // ensure all pulls result in the same image
 func TestPullImageOfficialNames(t *testing.T) {
+	testRequires(t, Network)
+
 	names := []string{
 		"docker.io/hello-world",
 		"index.docker.io/hello-world",

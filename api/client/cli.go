@@ -64,7 +64,7 @@ func (cli *DockerCli) getMethod(args ...string) (func(...string) error, bool) {
 	return method.Interface().(func(...string) error), true
 }
 
-// Cmd executes the specified command
+// Cmd executes the specified command.
 func (cli *DockerCli) Cmd(args ...string) error {
 	if len(args) > 1 {
 		method, exists := cli.getMethod(args[:2]...)
@@ -93,10 +93,13 @@ func (cli *DockerCli) Subcmd(name, signature, description string, exitOnError bo
 	flags := flag.NewFlagSet(name, errorHandling)
 	flags.Usage = func() {
 		options := ""
-		if flags.FlagCountUndeprecated() > 0 {
-			options = "[OPTIONS] "
+		if signature != "" {
+			signature = " " + signature
 		}
-		fmt.Fprintf(cli.out, "\nUsage: docker %s %s%s\n\n%s\n\n", name, options, signature, description)
+		if flags.FlagCountUndeprecated() > 0 {
+			options = " [OPTIONS]"
+		}
+		fmt.Fprintf(cli.out, "\nUsage: docker %s%s%s\n\n%s\n\n", name, options, signature, description)
 		flags.SetOutput(cli.out)
 		flags.PrintDefaults()
 		os.Exit(0)
@@ -134,19 +137,12 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, a
 	if tlsConfig != nil {
 		scheme = "https"
 	}
-
 	if in != nil {
-		if file, ok := in.(*os.File); ok {
-			inFd = file.Fd()
-			isTerminalIn = term.IsTerminal(inFd)
-		}
+		inFd, isTerminalIn = term.GetFdInfo(in)
 	}
 
 	if out != nil {
-		if file, ok := out.(*os.File); ok {
-			outFd = file.Fd()
-			isTerminalOut = term.IsTerminal(outFd)
-		}
+		outFd, isTerminalOut = term.GetFdInfo(out)
 	}
 
 	if err == nil {

@@ -2,6 +2,12 @@ page_title: Docker run reference
 page_description: Configure containers at runtime
 page_keywords: docker, run, configure, runtime
 
+<!-- TODO (@thaJeztah) define more flexible table/td classes -->
+<style>
+.content-body table .no-wrap {
+    white-space: nowrap;
+}
+</style>
 # Docker run reference
 
 **Docker runs processes in isolated containers**. When an operator
@@ -18,26 +24,30 @@ other `docker` command.
 
 The basic `docker run` command takes this form:
 
-    $ sudo docker run [OPTIONS] IMAGE[:TAG] [COMMAND] [ARG...]
+    $ docker run [OPTIONS] IMAGE[:TAG|@DIGEST] [COMMAND] [ARG...]
 
 To learn how to interpret the types of `[OPTIONS]`,
 see [*Option types*](/reference/commandline/cli/#option-types).
 
-The list of `[OPTIONS]` breaks down into two groups:
+The `run` options control the image's runtime behavior in a container. These
+settings affect:
 
-1. Settings exclusive to operators, including:
-     * Detached or Foreground running,
-     * Container Identification,
-     * Network settings, and
-     * Runtime Constraints on CPU and Memory
-     * Privileges and LXC Configuration
-2. Settings shared between operators and developers, where operators can
-   override defaults developers set in images at build time.
+ * detached or foreground running
+ * container identification
+ * network settings
+ * runtime constraints on CPU and memory
+ * privileges and LXC configuration
+ 
+An image developer may set defaults for these same settings when they create the
+image using the `docker build` command. Operators, however, can override all
+defaults set by the developer using the `run` options.  And, operators can also
+override nearly all the defaults set by the Docker runtime itself.
 
-Together, the `docker run [OPTIONS]` give the operator complete control over runtime
-behavior, allowing them to override all defaults set by
-the developer during `docker build` and nearly all the defaults set by
-the Docker runtime itself.
+Finally, depending on your Docker system configuration, you may be required to
+preface each `docker` command with `sudo`. To avoid having to use `sudo` with
+the `docker` command, your system administrator can create a Unix group called
+`docker` and add users to it. For more information about this configuration,
+refer to the Docker installation documentation for your operating system.
 
 ## Operator exclusive options
 
@@ -50,9 +60,9 @@ following options.
  - [Container Identification](#container-identification)
      - [Name (--name)](#name-name)
      - [PID Equivalent](#pid-equivalent)
- - [IPC Settings](#ipc-settings)
+ - [IPC Settings (--ipc)](#ipc-settings-ipc)
  - [Network Settings](#network-settings)
- - [Restart Policies<br />(--restart)](#restart-policies-restart)
+ - [Restart Policies (--restart)](#restart-policies-restart)
  - [Clean Up (--rm)](#clean-up-rm)
  - [Runtime Constraints on CPU and Memory](#runtime-constraints-on-cpu-and-memory)
  - [Runtime Privilege, Linux Capabilities, and LXC Configuration](#runtime-privilege-linux-capabilities-and-lxc-configuration)
@@ -93,11 +103,12 @@ streams]( https://github.com/docker/docker/blob/
 specify to which of the three standard streams (`STDIN`, `STDOUT`,
 `STDERR`) you'd like to connect instead, as in:
 
-    $ sudo docker run -a stdin -a stdout -i -t ubuntu /bin/bash
+    $ docker run -a stdin -a stdout -i -t ubuntu /bin/bash
 
 For interactive processes (like a shell), you must use `-i -t` together in
-order to allocate a tty for the container process. Specifying `-t` is however
-forbidden when the client standard output is redirected or pipe, such as in:
+order to allocate a tty for the container process. `-i -t` is often written `-it`
+as you'll see in later examples.  Specifying `-t` is forbidden when the client
+standard output is redirected or piped, such as in:
 `echo test | docker run -i busybox cat`.
 
 ## Container identification
@@ -127,16 +138,23 @@ programs might write out their process ID to a file (you've seen them as
 PID files):
 
     --cidfile="": Write the container ID to the file
-    
+
 ### Image[:tag]
 
 While not strictly a means of identifying a container, you can specify a version of an
 image you'd like to run the container with by adding `image[:tag]` to the command. For
 example, `docker run ubuntu:14.04`.
 
-## PID Settings
+### Image[@digest]
+
+Images using the v2 or later image format have a content-addressable identifier
+called a digest. As long as the input used to generate the image is unchanged,
+the digest value is predictable and referenceable.
+
+## PID Settings (--pid)
     --pid=""  : Set the PID (Process) Namespace mode for the container,
            'host': use the host's PID namespace inside the container
+
 By default, all containers have the PID namespace enabled.
 
 PID namespace provides separation of processes. The PID Namespace removes the
@@ -149,18 +167,21 @@ on the system.  For example, you could build a container with debugging tools
 like `strace` or `gdb`, but want to use these tools when debugging processes
 within the container.
 
-    $ sudo docker run --pid=host rhel7 strace -p 1234
+    $ docker run --pid=host rhel7 strace -p 1234
 
 This command would allow you to use `strace` inside the container on pid 1234 on
 the host.
 
-## IPC Settings
+## IPC Settings (--ipc)
+
     --ipc=""  : Set the IPC mode for the container,
-                                 'container:<name|id>': reuses another container's IPC namespace
-                                 'host': use the host's IPC namespace inside the container
+                 'container:<name|id>': reuses another container's IPC namespace
+                 'host': use the host's IPC namespace inside the container
+
 By default, all containers have the IPC namespace enabled.
 
-IPC (POSIX/SysV IPC) namespace provides separation of named shared memory segments, semaphores and message queues.  
+IPC (POSIX/SysV IPC) namespace provides separation of named shared memory 
+segments, semaphores and message queues.
 
 Shared memory segments are used to accelerate inter-process communication at
 memory speed, rather than through pipes or through the network stack. Shared
@@ -174,10 +195,10 @@ of the containers.
 
     --dns=[]         : Set custom dns servers for the container
     --net="bridge"   : Set the Network mode for the container
-                                  'bridge': creates a new network stack for the container on the docker bridge
-                                  'none': no networking for this container
-                                  'container:<name|id>': reuses another container network stack
-                                  'host': use the host network stack inside the container
+                        'bridge': creates a new network stack for the container on the docker bridge
+                        'none': no networking for this container
+                        'container:<name|id>': reuses another container network stack
+                        'host': use the host network stack inside the container
     --add-host=""    : Add a line to /etc/hosts (host:IP)
     --mac-address="" : Sets the container's Ethernet device's MAC address
 
@@ -196,10 +217,41 @@ explicitly by providing a MAC via the `--mac-address` parameter (format:
 
 Supported networking modes are:
 
-* none - no networking in the container
-* bridge - (default) connect the container to the bridge via veth interfaces
-* host - use the host's network stack inside the container.  Note: This gives the container full access to local system services such as D-bus and is therefore considered insecure.
-* container - use another container's network stack
+<table>
+  <thead>
+    <tr>
+      <th class="no-wrap">Mode</th>
+      <th>Description</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="no-wrap"><strong>none</strong></td>
+      <td>
+        No networking in the container.
+      </td>
+    </tr>
+    <tr>
+      <td class="no-wrap"><strong>bridge</strong> (default)</td>
+      <td>
+        Connect the container to the bridge via veth interfaces.
+      </td>
+    </tr>
+    <tr>
+      <td class="no-wrap"><strong>host</strong></td>
+      <td>
+        Use the host's network stack inside the container.
+      </td>
+    </tr>
+    <tr>
+      <td class="no-wrap"><strong>container</strong>:&lt;name|id&gt;</td>
+      <td>
+        Use the network stack of another container, specified via
+        its *name* or *id*.
+      </td>
+    </tr>
+  </tbody>
+</table>
 
 #### Mode: none
 
@@ -227,6 +279,16 @@ container.  The container's hostname will match the hostname on the host
 system.  Publishing ports and linking to other containers will not work
 when sharing the host's network stack.
 
+Compared to the default `bridge` mode, the `host` mode gives *significantly*
+better networking performance since it uses the host's native networking stack
+wheras the bridge has to go through one level of virtualizaion through the
+docker daemon. It is recommended to run containers in this mode when their
+networking performance is critical, for example, a production Load Balancer
+or a High Performance Web Server.
+
+> **Note**: `--net="host"` gives the container full access to local system
+> services such as D-bus and is therefore considered insecure.
+
 #### Mode: container
 
 With the networking mode set to `container` a container will share the
@@ -237,9 +299,9 @@ Example running a Redis container with Redis binding to `localhost` then
 running the `redis-cli` command and connecting to the Redis server over the
 `localhost` interface.
 
-    $ sudo docker run -d --name redis example/redis --bind 127.0.0.1
+    $ docker run -d --name redis example/redis --bind 127.0.0.1
     $ # use the redis container's network stack to access localhost
-    $ sudo docker run --rm -ti --net container:redis example/redis-cli -h 127.0.0.1
+    $ docker run --rm -it --net container:redis example/redis-cli -h 127.0.0.1
 
 ### Managing /etc/hosts
 
@@ -247,7 +309,7 @@ Your container will have lines in `/etc/hosts` which define the hostname of the
 container itself as well as `localhost` and a few other common things.  The
 `--add-host` flag can be used to add additional lines to `/etc/hosts`.  
 
-    $ /docker run -ti --add-host db-static:86.75.30.9 ubuntu cat /etc/hosts
+    $ docker run -it --add-host db-static:86.75.30.9 ubuntu cat /etc/hosts
     172.17.0.22     09d03f76bf2c
     fe00::0         ip6-localnet
     ff00::0         ip6-mcastprefix
@@ -323,7 +385,7 @@ for a container can be obtained via [`docker inspect`](
 /reference/commandline/cli/#inspect). For example, to get the number of restarts
 for container "my-container";
 
-    $ sudo docker inspect -f "{{ .RestartCount }}" my-container
+    $ docker inspect -f "{{ .RestartCount }}" my-container
     # 2
 
 Or, to get the last time the container was (re)started;
@@ -337,12 +399,12 @@ results in an error.
 
 ###Examples
 
-    $ sudo docker run --restart=always redis
+    $ docker run --restart=always redis
 
 This will run the `redis` container with a restart policy of **always**
 so that if the container exits, Docker will restart it.
 
-    $ sudo docker run --restart=on-failure:10 redis
+    $ docker run --restart=on-failure:10 redis
 
 This will run the `redis` container with a restart policy of **on-failure** 
 and a maximum restart count of 10.  If the `redis` container exits with a
@@ -376,71 +438,161 @@ the `--security-opt` flag. For example, you can specify the MCS/MLS level, a
 requirement for MLS systems. Specifying the level in the following command
 allows you to share the same content between containers.
 
-    # docker run --security-opt label:level:s0:c100,c200 -i -t fedora bash
+    $ docker run --security-opt label:level:s0:c100,c200 -i -t fedora bash
 
 An MLS example might be:
 
-    # docker run --security-opt label:level:TopSecret -i -t rhel7 bash
+    $ docker run --security-opt label:level:TopSecret -i -t rhel7 bash
 
 To disable the security labeling for this container versus running with the
 `--permissive` flag, use the following command:
 
-    # docker run --security-opt label:disable -i -t fedora bash
+    $ docker run --security-opt label:disable -i -t fedora bash
 
 If you want a tighter security policy on the processes within a container,
 you can specify an alternate type for the container. You could run a container
 that is only allowed to listen on Apache ports by executing the following
 command:
 
-    # docker run --security-opt label:type:svirt_apache_t -i -t centos bash
+    $ docker run --security-opt label:type:svirt_apache_t -i -t centos bash
 
 Note:
 
 You would have to write policy defining a `svirt_apache_t` type.
 
-## Runtime constraints on CPU and memory
+## Runtime constraints on resources
 
 The operator can also adjust the performance parameters of the
 container:
 
-    -m="": Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
+    -m, --memory="": Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
     -memory-swap="": Total memory limit (memory + swap, format: <number><optional unit>, where unit = b, k, m or g)
-    -c=0 : CPU shares (relative weight)
+    -c, --cpu-shares=0: CPU shares (relative weight)
+    --cpuset-cpus="": CPUs in which to allow execution (0-3, 0,1)
+
+### Memory constraints
 
 We have four ways to set memory usage:
- - memory=inf, memory-swap=inf (not specify any of them)
-   There is no memory limit, you can use as much as you want.
 
- - memory=L&lt;inf, memory-swap=inf (specify memory and set memory-swap as `-1`)
-   It is not allowed to use more than L bytes of memory, but use as much swap
-   as you want (only if the host supports swap memory).
+<table>
+  <thead>
+    <tr>
+      <th>Option</th>
+      <th>Result</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td class="no-wrap">
+          <strong>memory=inf, memory-swap=inf</strong> (default)
+      </td>
+      <td>
+        There is no memory limit for the container. The container can use
+        as much memory as needed.
+      </td>
+    </tr>
+    <tr>
+      <td class="no-wrap"><strong>memory=L&lt;inf, memory-swap=inf</strong></td>
+      <td>
+        (specify memory and set memory-swap as <code>-1</code>) The container is
+        not allowed to use more than L bytes of memory, but can use as much swap
+        as is needed (if the host supports swap memory).
+      </td>
+    </tr>
+    <tr>
+      <td class="no-wrap"><strong>memory=L&lt;inf, memory-swap=2*L</strong></td>
+      <td>
+        (specify memory without memory-swap) The container is not allowed to
+        use more than L bytes of memory, swap *plus* memory usage is double
+        of that.
+      </td>
+    </tr>
+    <tr>
+      <td class="no-wrap">
+          <strong>memory=L&lt;inf, memory-swap=S&lt;inf, L&lt;=S</strong>
+      </td>
+      <td>
+        (specify both memory and memory-swap) The container is not allowed to
+        use more than L bytes of memory, swap *plus* memory usage is limited
+        by S.
+      </td>
+    </tr>
+  </tbody>
+</table>
 
- - memory=L&lt;inf, memory-swap=2*L (specify memory without memory-swap)
-   It is not allowed to use more than L bytes of memory, swap *plus* memory
-   usage is double of that.
+Examples:
 
- - memory=L&lt;inf, memory-swap=S&lt;inf, L&lt;=S (specify both memory and memory-swap)
-   It is not allowed to use more than L bytes of memory, swap *plus* memory
-   usage is limited by S.
+    $ docker run -ti ubuntu:14.04 /bin/bash
 
-The operator can increase the priority of this container with
-the `-c` option. By default, all containers run at the same priority and
-get the same proportion of CPU cycles, but you can tell the kernel to
-give more shares of CPU time to one or more containers when you start
-them via Docker.
+We set nothing about memory, this means the processes in the container can use
+as much memory and swap memory as they need.
 
-The flag `-c` or `--cpu-shares` with value 0 indicates that the running
-container has access to all 1024 (default) CPU shares. However, this value
-can be modified to run a container with a different priority or different
-proportion of CPU cycles.
+    $ docker run -ti -m 300M --memory-swap -1 ubuntu:14.04 /bin/bash
 
-E.g., If we start three {C0, C1, C2} containers with default values
-(`-c` OR `--cpu-shares` = 0) and one {C3} with (`-c` or `--cpu-shares`=512)
-then C0, C1, and C2 would have access to 100% CPU shares (1024) and C3 would
-only have access to 50% CPU shares (512). In the context of a time-sliced OS
-with time quantum set as 100 milliseconds, containers C0, C1, and C2 will run
-for full-time quantum, and container C3 will run for half-time quantum i.e 50
-milliseconds.
+We set memory limit and disabled swap memory limit, this means the processes in
+the container can use 300M memory and as much swap memory as they need (if the
+host supports swap memory).
+
+    $ docker run -ti -m 300M ubuntu:14.04 /bin/bash
+
+We set memory limit only, this means the processes in the container can use
+300M memory and 300M swap memory, by default, the total virtual memory size
+(--memory-swap) will be set as double of memory, in this case, memory + swap
+would be 2*300M, so processes can use 300M swap memory as well.
+
+    $ docker run -ti -m 300M --memory-swap 1G ubuntu:14.04 /bin/bash
+
+We set both memory and swap memory, so the processes in the container can use
+300M memory and 700M swap memory.
+
+### CPU share constraint
+
+By default, all containers get the same proportion of CPU cycles. This proportion
+can be modified by changing the container's CPU share weighting relative
+to the weighting of all other running containers.
+
+To modify the proportion from the default of 1024, use the `-c` or `--cpu-shares`
+flag to set the weighting to 2 or higher.
+
+The proportion will only apply when CPU-intensive processes are running.
+When tasks in one container are idle, other containers can use the
+left-over CPU time. The actual amount of CPU time will vary depending on
+the number of containers running on the system.
+
+For example, consider three containers, one has a cpu-share of 1024 and
+two others have a cpu-share setting of 512. When processes in all three
+containers attempt to use 100% of CPU, the first container would receive
+50% of the total CPU time. If you add a fouth container with a cpu-share
+of 1024, the first container only gets 33% of the CPU. The remaining containers
+receive 16.5%, 16.5% and 33% of the CPU.
+
+On a multi-core system, the shares of CPU time are distributed over all CPU
+cores. Even if a container is limited to less than 100% of CPU time, it can
+use 100% of each individual CPU core.
+
+For example, consider a system with more than three cores. If you start one
+container `{C0}` with `-c=512` running one process, and another container
+`{C1}` with `-c=1024` running two processes, this can result in the following
+division of CPU shares:
+
+    PID    container	CPU	CPU share
+    100    {C0}		0	100% of CPU0
+    101    {C1}		1	100% of CPU1
+    102    {C1}		2	100% of CPU2
+
+### Cpuset constraint
+
+We can set cpus in which to allow execution for containers.
+
+Examples:
+
+    $ docker run -ti --cpuset-cpus="1,3" ubuntu:14.04 /bin/bash
+
+This means processes in container can be executed on cpu 1 and cpu 3.
+
+    $ docker run -ti --cpuset-cpus="0-2" ubuntu:14.04 /bin/bash
+
+This means processes in container can be executed on cpu 0, cpu 1 and cpu 2.
 
 ## Runtime privilege, Linux capabilities, and LXC configuration
 
@@ -469,34 +621,75 @@ If you want to limit access to a specific device or devices you can use
 the `--device` flag. It allows you to specify one or more devices that
 will be accessible within the container.
 
-    $ sudo docker run --device=/dev/snd:/dev/snd ...
+    $ docker run --device=/dev/snd:/dev/snd ...
 
 By default, the container will be able to `read`, `write`, and `mknod` these devices.
 This can be overridden using a third `:rwm` set of options to each `--device` flag:
 
+    $ docker run --device=/dev/sda:/dev/xvdc --rm -it ubuntu fdisk  /dev/xvdc
 
-```
-	$ sudo docker run --device=/dev/sda:/dev/xvdc --rm -it ubuntu fdisk  /dev/xvdc
+    Command (m for help): q
+    $ docker run --device=/dev/sda:/dev/xvdc:r --rm -it ubuntu fdisk  /dev/xvdc
+    You will not be able to write the partition table.
 
-	Command (m for help): q
-	$ sudo docker run --device=/dev/sda:/dev/xvdc:r --rm -it ubuntu fdisk  /dev/xvdc
-	You will not be able to write the partition table.
+    Command (m for help): q
 
-	Command (m for help): q
-
-	$ sudo docker run --device=/dev/sda:/dev/xvdc:w --rm -it ubuntu fdisk  /dev/xvdc
+    $ docker run --device=/dev/sda:/dev/xvdc:w --rm -it ubuntu fdisk  /dev/xvdc
         crash....
 
-	$ sudo docker run --device=/dev/sda:/dev/xvdc:m --rm -it ubuntu fdisk  /dev/xvdc
-	fdisk: unable to open /dev/xvdc: Operation not permitted
-```
+    $ docker run --device=/dev/sda:/dev/xvdc:m --rm -it ubuntu fdisk  /dev/xvdc
+    fdisk: unable to open /dev/xvdc: Operation not permitted
 
 In addition to `--privileged`, the operator can have fine grain control over the
 capabilities using `--cap-add` and `--cap-drop`. By default, Docker has a default
-list of capabilities that are kept. Both flags support the value `all`, so if the
+list of capabilities that are kept. The following table lists the Linux capability options which can be added or dropped.
+
+| Capability Key | Capability Description |
+| :----------------- | :---------------| :-------------------- |
+| SETPCAP | Modify process capabilities. |
+| SYS_MODULE| Load and unload kernel modules. |
+| SYS_RAWIO | Perform I/O port operations (iopl(2) and ioperm(2)). |
+| SYS_PACCT | Use acct(2), switch process accounting on or off. |
+| SYS_ADMIN | Perform a range of system administration operations. |
+| SYS_NICE | Raise process nice value (nice(2), setpriority(2)) and change the nice value for arbitrary processes. |
+| SYS_RESOURCE | Override resource Limits. |
+| SYS_TIME | Set system clock (settimeofday(2), stime(2), adjtimex(2)); set real-time (hardware) clock. |
+| SYS_TTY_CONFIG | Use vhangup(2); employ various privileged ioctl(2) operations on virtual terminals. |
+| MKNOD | Create special files using mknod(2). |
+| AUDIT_WRITE | Write records to kernel auditing log. |
+| AUDIT_CONTROL | Enable and disable kernel auditing; change auditing filter rules; retrieve auditing status and filtering rules. |
+| MAC_OVERRIDE | Allow MAC configuration or state changes. Implemented for the Smack LSM. |
+| MAC_ADMIN | Override Mandatory Access Control (MAC). Implemented for the Smack Linux Security Module (LSM). |
+| NET_ADMIN | Perform various network-related operations. |
+| SYSLOG | Perform privileged syslog(2) operations.  |
+| CHOWN | Make arbitrary changes to file UIDs and GIDs (see chown(2)). |
+| NET_RAW | Use RAW and PACKET sockets. |
+| DAC_OVERRIDE | Bypass file read, write, and execute permission checks. |
+| FOWNER | Bypass permission checks on operations that normally require the file system UID of the process to match the UID of the file. |
+| DAC_READ_SEARCH | Bypass file read permission checks and directory read and execute permission checks. |
+| FSETID | Don't clear set-user-ID and set-group-ID permission bits when a file is modified. |
+| KILL | Bypass permission checks for sending signals. |
+| SETGID | Make arbitrary manipulations of process GIDs and supplementary GID list. |
+| SETUID | Make arbitrary manipulations of process UIDs. |
+| LINUX_IMMUTABLE | Set the FS_APPEND_FL and FS_IMMUTABLE_FL i-node flags. |
+| NET_BIND_SERVICE  | Bind a socket to internet domain privileged ports (port numbers less than 1024). |
+| NET_BROADCAST |  Make socket broadcasts, and listen to multicasts. |
+| IPC_LOCK | Lock memory (mlock(2), mlockall(2), mmap(2), shmctl(2)). |
+| IPC_OWNER | Bypass permission checks for operations on System V IPC objects. |
+| SYS_CHROOT | Use chroot(2), change root directory. |
+| SYS_PTRACE | Trace arbitrary processes using ptrace(2). |
+| SYS_BOOT | Use reboot(2) and kexec_load(2), reboot and load a new kernel for later execution. |
+| LEASE | Establish leases on arbitrary files (see fcntl(2)). |
+| SETFCAP | Set file capabilities.|
+| WAKE_ALARM | Trigger something that will wake up the system. |
+| BLOCK_SUSPEND | Employ features that can block system suspend. |
+
+Further reference information is available on the [capabilities(7) - Linux man page](http://linux.die.net/man/7/capabilities)
+
+Both flags support the value `all`, so if the
 operator wants to have all capabilities but `MKNOD` they could use:
 
-    $ sudo docker run --cap-add=ALL --cap-drop=MKNOD ...
+    $ docker run --cap-add=ALL --cap-drop=MKNOD ...
 
 For interacting with the network stack, instead of using `--privileged` they
 should use `--cap-add=NET_ADMIN` to modify the network interfaces.
@@ -545,6 +738,25 @@ familiar with using LXC directly.
 > you can use `--lxc-conf` to set a container's IP address, but this will not be
 > reflected in the `/etc/hosts` file.
 
+## Logging drivers (--log-driver)
+
+You can specify a different logging driver for the container than for the daemon.
+
+#### Logging driver: none
+
+Disables any logging for the container. `docker logs` won't be available with
+this driver.
+
+#### Logging driver: json-file
+
+Default logging driver for Docker. Writes JSON messages to file. `docker logs`
+command is available only for this logging driver
+
+#### Logging driver: syslog
+
+Syslog logging driver for Docker. Writes log messages to syslog. `docker logs`
+command is not available for this logging driver
+
 ## Overriding Dockerfile image defaults
 
 When a developer builds an image from a [*Dockerfile*](/reference/builder)
@@ -570,7 +782,7 @@ Dockerfile instruction and how the operator can override that setting.
 Recall the optional `COMMAND` in the Docker
 commandline:
 
-    $ sudo docker run [OPTIONS] IMAGE[:TAG] [COMMAND] [ARG...]
+    $ docker run [OPTIONS] IMAGE[:TAG|@DIGEST] [COMMAND] [ARG...]
 
 This command is optional because the person who created the `IMAGE` may
 have already provided a default `COMMAND` using the Dockerfile `CMD`
@@ -597,12 +809,12 @@ runtime by using a string to specify the new `ENTRYPOINT`. Here is an
 example of how to run a shell in a container that has been set up to
 automatically run something else (like `/usr/bin/redis-server`):
 
-    $ sudo docker run -i -t --entrypoint /bin/bash example/redis
+    $ docker run -i -t --entrypoint /bin/bash example/redis
 
 or two examples of how to pass more parameters to that ENTRYPOINT:
 
-    $ sudo docker run -i -t --entrypoint /bin/bash example/redis -c ls -l
-    $ sudo docker run -i -t --entrypoint /usr/bin/redis-cli example/redis --help
+    $ docker run -i -t --entrypoint /bin/bash example/redis -c ls -l
+    $ docker run -i -t --entrypoint /usr/bin/redis-cli example/redis --help
 
 ## EXPOSE (incoming ports)
 
@@ -635,10 +847,11 @@ developer, the operator has three choices: start the server container
 with `-P` or `-p,` or start the client container with `--link`.
 
 If the operator uses `-P` or `-p` then Docker will make the exposed port
-accessible on the host and the ports will be available to any client
-that can reach the host. When using `-P`, Docker will bind the exposed 
-ports to a random port on the host between 49153 and 65535. To find the
-mapping between the host ports and the exposed ports, use `docker port`.
+accessible on the host and the ports will be available to any client that can
+reach the host. When using `-P`, Docker will bind the exposed port to a random
+port on the host within an *ephemeral port range* defined by
+`/proc/sys/net/ipv4/ip_local_port_range`. To find the mapping between the host
+ports and the exposed ports, use `docker port`.
 
 If the operator uses `--link` when starting the new client container,
 then the client container can access the exposed port via a private
@@ -688,7 +901,7 @@ Additionally, the operator can **set any environment variable** in the
 container by using one or more `-e` flags, even overriding those mentioned 
 above, or already defined by the developer with a Dockerfile `ENV`:
 
-    $ sudo docker run -e "deep=purple" --rm ubuntu /bin/bash -c export
+    $ docker run -e "deep=purple" --rm ubuntu /bin/bash -c export
     declare -x HOME="/"
     declare -x HOSTNAME="85bc26a0e200"
     declare -x OLDPWD
@@ -706,23 +919,23 @@ information for connecting to the service container. Let's imagine we have a
 container running Redis:
 
     # Start the service container, named redis-name
-    $ sudo docker run -d --name redis-name dockerfiles/redis
+    $ docker run -d --name redis-name dockerfiles/redis
     4241164edf6f5aca5b0e9e4c9eccd899b0b8080c64c0cd26efe02166c73208f3
 
     # The redis-name container exposed port 6379
-    $ sudo docker ps
+    $ docker ps
     CONTAINER ID        IMAGE                        COMMAND                CREATED             STATUS              PORTS               NAMES
     4241164edf6f        $ dockerfiles/redis:latest   /redis-stable/src/re   5 seconds ago       Up 4 seconds        6379/tcp            redis-name
 
     # Note that there are no public ports exposed since we didn᾿t use -p or -P
-    $ sudo docker port 4241164edf6f 6379
+    $ docker port 4241164edf6f 6379
     2014/01/25 00:55:38 Error: No public port '6379' published for 4241164edf6f
 
 Yet we can get information about the Redis container's exposed ports
 with `--link`. Choose an alias that will form a
 valid environment variable!
 
-    $ sudo docker run --rm --link redis-name:redis_alias --entrypoint /bin/bash dockerfiles/redis -c export
+    $ docker run --rm --link redis-name:redis_alias --entrypoint /bin/bash dockerfiles/redis -c export
     declare -x HOME="/"
     declare -x HOSTNAME="acda7f7b1cdc"
     declare -x OLDPWD
@@ -739,21 +952,21 @@ valid environment variable!
 
 And we can use that information to connect from another container as a client:
 
-    $ sudo docker run -i -t --rm --link redis-name:redis_alias --entrypoint /bin/bash dockerfiles/redis -c '/redis-stable/src/redis-cli -h $REDIS_ALIAS_PORT_6379_TCP_ADDR -p $REDIS_ALIAS_PORT_6379_TCP_PORT'
+    $ docker run -i -t --rm --link redis-name:redis_alias --entrypoint /bin/bash dockerfiles/redis -c '/redis-stable/src/redis-cli -h $REDIS_ALIAS_PORT_6379_TCP_ADDR -p $REDIS_ALIAS_PORT_6379_TCP_PORT'
     172.17.0.32:6379>
 
 Docker will also map the private IP address to the alias of a linked
 container by inserting an entry into `/etc/hosts`.  You can use this
 mechanism to communicate with a linked container by its alias:
 
-    $ sudo docker run -d --name servicename busybox sleep 30
-    $ sudo docker run -i -t --link servicename:servicealias busybox ping -c 1 servicealias
+    $ docker run -d --name servicename busybox sleep 30
+    $ docker run -i -t --link servicename:servicealias busybox ping -c 1 servicealias
 
 If you restart the source container (`servicename` in this case), the recipient
 container's `/etc/hosts` entry will be automatically updated.
 
 > **Note**:
-> Unlike host entries in the `/ets/hosts` file, IP addresses stored in the
+> Unlike host entries in the `/etc/hosts` file, IP addresses stored in the
 > environment variables are not automatically updated if the source container is
 > restarted. We recommend using the host entries in `/etc/hosts` to resolve the
 > IP address of linked containers.

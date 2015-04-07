@@ -16,7 +16,7 @@ func TestRestartStoppedContainer(t *testing.T) {
 		t.Fatal(out, err)
 	}
 
-	cleanedContainerID := stripTrailingCharacters(out)
+	cleanedContainerID := strings.TrimSpace(out)
 
 	runCmd = exec.Command(dockerBinary, "wait", cleanedContainerID)
 	if out, _, err = runCommandWithOutput(runCmd); err != nil {
@@ -60,7 +60,7 @@ func TestRestartRunningContainer(t *testing.T) {
 		t.Fatal(out, err)
 	}
 
-	cleanedContainerID := stripTrailingCharacters(out)
+	cleanedContainerID := strings.TrimSpace(out)
 
 	time.Sleep(1 * time.Second)
 
@@ -104,7 +104,7 @@ func TestRestartWithVolumes(t *testing.T) {
 		t.Fatal(out, err)
 	}
 
-	cleanedContainerID := stripTrailingCharacters(out)
+	cleanedContainerID := strings.TrimSpace(out)
 
 	runCmd = exec.Command(dockerBinary, "inspect", "--format", "{{ len .Volumes }}", cleanedContainerID)
 	out, _, err = runCommandWithOutput(runCmd)
@@ -191,6 +191,16 @@ func TestRestartPolicyAlways(t *testing.T) {
 		t.Fatalf("Container restart policy name is %s, expected %s", name, "always")
 	}
 
+	MaximumRetryCount, err := inspectField(id, "HostConfig.RestartPolicy.MaximumRetryCount")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// MaximumRetryCount=0 if the restart policy is always
+	if MaximumRetryCount != "0" {
+		t.Fatalf("Container Maximum Retry Count is %s, expected %s", MaximumRetryCount, "0")
+	}
+
 	logDone("restart - recording restart policy name for --restart=always")
 }
 
@@ -213,4 +223,34 @@ func TestRestartPolicyOnFailure(t *testing.T) {
 	}
 
 	logDone("restart - recording restart policy name for --restart=on-failure")
+}
+
+// a good container with --restart=on-failure:3
+// MaximumRetryCount!=0; RestartCount=0
+func TestContainerRestartwithGoodContainer(t *testing.T) {
+	defer deleteAllContainers()
+	out, err := exec.Command(dockerBinary, "run", "-d", "--restart=on-failure:3", "busybox", "true").CombinedOutput()
+	if err != nil {
+		t.Fatal(string(out), err)
+	}
+	id := strings.TrimSpace(string(out))
+	if err := waitInspect(id, "{{ .State.Restarting }} {{ .State.Running }}", "false false", 5); err != nil {
+		t.Fatal(err)
+	}
+	count, err := inspectField(id, "RestartCount")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != "0" {
+		t.Fatalf("Container was restarted %s times, expected %d", count, 0)
+	}
+	MaximumRetryCount, err := inspectField(id, "HostConfig.RestartPolicy.MaximumRetryCount")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if MaximumRetryCount != "3" {
+		t.Fatalf("Container Maximum Retry Count is %s, expected %s", MaximumRetryCount, "3")
+	}
+
+	logDone("restart - for a good container with restart policy, MaximumRetryCount is not 0 and RestartCount is 0")
 }

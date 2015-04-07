@@ -5,20 +5,23 @@ import (
 	"mime"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/version"
 	"github.com/docker/libtrust"
 )
 
+// Common constants for daemon and client.
 const (
-	APIVERSION            version.Version = "1.18"
-	DEFAULTHTTPHOST                       = "127.0.0.1"
-	DEFAULTUNIXSOCKET                     = "/var/run/docker.sock"
-	DefaultDockerfileName string          = "Dockerfile"
+	APIVERSION            version.Version = "1.19"                 // Current REST API version
+	DEFAULTHTTPHOST                       = "127.0.0.1"            // Default HTTP Host used if only port is provided to -H flag e.g. docker -d -H tcp://:8080
+	DEFAULTUNIXSOCKET                     = "/var/run/docker.sock" // Docker daemon by default always listens on the default unix socket
+	DefaultDockerfileName string          = "Dockerfile"           // Default filename with Docker commands, read by docker build
 )
 
 func ValidateHost(val string) (string, error) {
@@ -30,6 +33,7 @@ func ValidateHost(val string) (string, error) {
 }
 
 // TODO remove, used on < 1.5 in getContainersJSON
+// TODO this can go away when we get rid of engine.table
 func DisplayablePorts(ports *engine.Table) string {
 	var (
 		result          = []string{}
@@ -54,6 +58,61 @@ func DisplayablePorts(ports *engine.Table) string {
 				continue
 			}
 			portKey = fmt.Sprintf("%s/%s", port.Get("IP"), port.Get("Type"))
+		}
+		firstInGroup = firstInGroupMap[portKey]
+		lastInGroup = lastInGroupMap[portKey]
+
+		if firstInGroup == 0 {
+			firstInGroupMap[portKey] = current
+			lastInGroupMap[portKey] = current
+			continue
+		}
+
+		if current == (lastInGroup + 1) {
+			lastInGroupMap[portKey] = current
+			continue
+		}
+		result = append(result, FormGroup(portKey, firstInGroup, lastInGroup))
+		firstInGroupMap[portKey] = current
+		lastInGroupMap[portKey] = current
+	}
+	for portKey, firstInGroup := range firstInGroupMap {
+		result = append(result, FormGroup(portKey, firstInGroup, lastInGroupMap[portKey]))
+	}
+	result = append(result, hostMappings...)
+	return strings.Join(result, ", ")
+}
+
+type ByPrivatePort []types.Port
+
+func (r ByPrivatePort) Len() int           { return len(r) }
+func (r ByPrivatePort) Swap(i, j int)      { r[i], r[j] = r[j], r[i] }
+func (r ByPrivatePort) Less(i, j int) bool { return r[i].PrivatePort < r[j].PrivatePort }
+
+// TODO Rename to DisplayablePorts (remove "New") when engine.Table goes away
+func NewDisplayablePorts(ports []types.Port) string {
+	var (
+		result          = []string{}
+		hostMappings    = []string{}
+		firstInGroupMap map[string]int
+		lastInGroupMap  map[string]int
+	)
+	firstInGroupMap = make(map[string]int)
+	lastInGroupMap = make(map[string]int)
+	sort.Sort(ByPrivatePort(ports))
+	for _, port := range ports {
+		var (
+			current      = port.PrivatePort
+			portKey      = port.Type
+			firstInGroup int
+			lastInGroup  int
+		)
+		if port.IP != "" {
+			if port.PublicPort != current {
+				hostMappings = append(hostMappings, fmt.Sprintf("%s:%d->%d/%s", port.IP, port.PublicPort, port.PrivatePort, port.Type))
+				continue
+			}
+			portKey = fmt.Sprintf("%s/%s", port.IP, port.Type)
 		}
 		firstInGroup = firstInGroupMap[portKey]
 		lastInGroup = lastInGroupMap[portKey]
@@ -104,7 +163,7 @@ func FormGroup(key string, start, last int) string {
 func MatchesContentType(contentType, expectedType string) bool {
 	mimetype, _, err := mime.ParseMediaType(contentType)
 	if err != nil {
-		log.Errorf("Error parsing media type: %s error: %s", contentType, err.Error())
+		logrus.Errorf("Error parsing media type: %s error: %v", contentType, err)
 	}
 	return err == nil && mimetype == expectedType
 }

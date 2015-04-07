@@ -16,7 +16,7 @@ import (
 
 	"github.com/docker/libcontainer/label"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/autogen/dockerversion"
 	"github.com/docker/docker/daemon/execdriver"
@@ -25,21 +25,22 @@ import (
 	"github.com/docker/docker/daemon/graphdriver"
 	_ "github.com/docker/docker/daemon/graphdriver/vfs"
 	_ "github.com/docker/docker/daemon/networkdriver/bridge"
-	"github.com/docker/docker/daemon/networkdriver/portallocator"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
-	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/graphdb"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/namesgenerator"
-	"github.com/docker/docker/pkg/networkfs/resolvconf"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/parsers/kernel"
+	"github.com/docker/docker/pkg/pidfile"
+	"github.com/docker/docker/pkg/resolvconf"
+	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/docker/docker/pkg/truncindex"
+	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/trust"
 	"github.com/docker/docker/utils"
@@ -89,23 +90,25 @@ func (c *contStore) List() []*Container {
 }
 
 type Daemon struct {
-	ID             string
-	repository     string
-	sysInitPath    string
-	containers     *contStore
-	execCommands   *execStore
-	graph          *graph.Graph
-	repositories   *graph.TagStore
-	idIndex        *truncindex.TruncIndex
-	sysInfo        *sysinfo.SysInfo
-	volumes        *volumes.Repository
-	eng            *engine.Engine
-	config         *Config
-	containerGraph *graphdb.Database
-	driver         graphdriver.Driver
-	execDriver     execdriver.Driver
-	trustStore     *trust.TrustStore
-	statsCollector *statsCollector
+	ID               string
+	repository       string
+	sysInitPath      string
+	containers       *contStore
+	execCommands     *execStore
+	graph            *graph.Graph
+	repositories     *graph.TagStore
+	idIndex          *truncindex.TruncIndex
+	sysInfo          *sysinfo.SysInfo
+	volumes          *volumes.Repository
+	eng              *engine.Engine
+	config           *Config
+	containerGraph   *graphdb.Database
+	driver           graphdriver.Driver
+	execDriver       execdriver.Driver
+	trustStore       *trust.TrustStore
+	statsCollector   *statsCollector
+	defaultLogConfig runconfig.LogConfig
+	RegistryService  *registry.Service
 }
 
 // Install installs daemon capabilities to eng.
@@ -152,7 +155,7 @@ func (daemon *Daemon) Install(eng *engine.Engine) error {
 	}
 	// FIXME: this hack is necessary for legacy integration tests to access
 	// the daemon object.
-	eng.Hack_SetGlobalVar("httpapi.daemon", daemon)
+	eng.HackSetGlobalVar("httpapi.daemon", daemon)
 	return nil
 }
 
@@ -259,7 +262,7 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 	//        if so, then we need to restart monitor and init a new lock
 	// If the container is supposed to be running, make sure of it
 	if container.IsRunning() {
-		log.Debugf("killing old running container %s", container.ID)
+		logrus.Debugf("killing old running container %s", container.ID)
 
 		existingPid := container.Pid
 		container.SetStopped(&execdriver.ExitStatus{ExitCode: 0})
@@ -276,23 +279,23 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 			var err error
 			cmd.ProcessConfig.Process, err = os.FindProcess(existingPid)
 			if err != nil {
-				log.Debugf("cannot find existing process for %d", existingPid)
+				logrus.Debugf("cannot find existing process for %d", existingPid)
 			}
 			daemon.execDriver.Terminate(cmd)
 		}
 
 		if err := container.Unmount(); err != nil {
-			log.Debugf("unmount error %s", err)
+			logrus.Debugf("unmount error %s", err)
 		}
 		if err := container.ToDisk(); err != nil {
-			log.Debugf("saving stopped state to disk %s", err)
+			logrus.Debugf("saving stopped state to disk %s", err)
 		}
 
 		info := daemon.execDriver.Info(container.ID)
 		if !info.IsRunning() {
-			log.Debugf("Container %s was supposed to be running but is not.", container.ID)
+			logrus.Debugf("Container %s was supposed to be running but is not.", container.ID)
 
-			log.Debugf("Marking as stopped")
+			logrus.Debug("Marking as stopped")
 
 			container.SetStopped(&execdriver.ExitStatus{ExitCode: -127})
 			if err := container.ToDisk(); err != nil {
@@ -312,18 +315,9 @@ func (daemon *Daemon) ensureName(container *Container) error {
 		container.Name = name
 
 		if err := container.ToDisk(); err != nil {
-			log.Debugf("Error saving container name %s", err)
+			logrus.Debugf("Error saving container name %s", err)
 		}
 	}
-	return nil
-}
-
-func (daemon *Daemon) LogToDisk(src *broadcastwriter.BroadcastWriter, dst, stream string) error {
-	log, err := os.OpenFile(dst, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0600)
-	if err != nil {
-		return err
-	}
-	src.AddWriter(log, stream)
 	return nil
 }
 
@@ -335,7 +329,7 @@ func (daemon *Daemon) restore() error {
 	)
 
 	if !debug {
-		log.Infof("Loading containers: start.")
+		logrus.Info("Loading containers: start.")
 	}
 	dir, err := ioutil.ReadDir(daemon.repository)
 	if err != nil {
@@ -345,21 +339,21 @@ func (daemon *Daemon) restore() error {
 	for _, v := range dir {
 		id := v.Name()
 		container, err := daemon.load(id)
-		if !debug {
+		if !debug && logrus.GetLevel() == logrus.InfoLevel {
 			fmt.Print(".")
 		}
 		if err != nil {
-			log.Errorf("Failed to load container %v: %v", id, err)
+			logrus.Errorf("Failed to load container %v: %v", id, err)
 			continue
 		}
 
 		// Ignore the container if it does not support the current driver being used by the graph
 		if (container.Driver == "" && currentDriver == "aufs") || container.Driver == currentDriver {
-			log.Debugf("Loaded container %v", container.ID)
+			logrus.Debugf("Loaded container %v", container.ID)
 
 			containers[container.ID] = container
 		} else {
-			log.Debugf("Cannot load container %s because it was created with another graph driver.", container.ID)
+			logrus.Debugf("Cannot load container %s because it was created with another graph driver.", container.ID)
 		}
 	}
 
@@ -367,7 +361,7 @@ func (daemon *Daemon) restore() error {
 
 	if entities := daemon.containerGraph.List("/", -1); entities != nil {
 		for _, p := range entities.Paths() {
-			if !debug {
+			if !debug && logrus.GetLevel() == logrus.InfoLevel {
 				fmt.Print(".")
 			}
 
@@ -375,7 +369,7 @@ func (daemon *Daemon) restore() error {
 
 			if container, ok := containers[e.ID()]; ok {
 				if err := daemon.register(container, false); err != nil {
-					log.Debugf("Failed to register container %s: %s", container.ID, err)
+					logrus.Debugf("Failed to register container %s: %s", container.ID, err)
 				}
 
 				registeredContainers = append(registeredContainers, container)
@@ -391,11 +385,11 @@ func (daemon *Daemon) restore() error {
 		// Try to set the default name for a container if it exists prior to links
 		container.Name, err = daemon.generateNewName(container.ID)
 		if err != nil {
-			log.Debugf("Setting default id - %s", err)
+			logrus.Debugf("Setting default id - %s", err)
 		}
 
 		if err := daemon.register(container, false); err != nil {
-			log.Debugf("Failed to register container %s: %s", container.ID, err)
+			logrus.Debugf("Failed to register container %s: %s", container.ID, err)
 		}
 
 		registeredContainers = append(registeredContainers, container)
@@ -404,23 +398,25 @@ func (daemon *Daemon) restore() error {
 	// check the restart policy on the containers and restart any container with
 	// the restart policy of "always"
 	if daemon.config.AutoRestart {
-		log.Debugf("Restarting containers...")
+		logrus.Debug("Restarting containers...")
 
 		for _, container := range registeredContainers {
 			if container.hostConfig.RestartPolicy.Name == "always" ||
 				(container.hostConfig.RestartPolicy.Name == "on-failure" && container.ExitCode != 0) {
-				log.Debugf("Starting container %s", container.ID)
+				logrus.Debugf("Starting container %s", container.ID)
 
 				if err := container.Start(); err != nil {
-					log.Debugf("Failed to start container %s: %s", container.ID, err)
+					logrus.Debugf("Failed to start container %s: %s", container.ID, err)
 				}
 			}
 		}
 	}
 
 	if !debug {
-		fmt.Println()
-		log.Infof("Loading containers: done.")
+		if logrus.GetLevel() == logrus.InfoLevel {
+			fmt.Println()
+		}
+		logrus.Info("Loading containers: done.")
 	}
 
 	return nil
@@ -442,13 +438,12 @@ func (daemon *Daemon) setupResolvconfWatcher() error {
 			select {
 			case event := <-watcher.Events:
 				if event.Name == "/etc/resolv.conf" &&
-					(event.Op&fsnotify.Write == fsnotify.Write ||
-						event.Op&fsnotify.Create == fsnotify.Create) {
+					(event.Op&(fsnotify.Write|fsnotify.Create) != 0) {
 					// verify a real change happened before we go further--a file write may have happened
 					// without an actual change to the file
 					updatedResolvConf, newResolvConfHash, err := resolvconf.GetIfChanged()
 					if err != nil {
-						log.Debugf("Error retrieving updated host resolv.conf: %v", err)
+						logrus.Debugf("Error retrieving updated host resolv.conf: %v", err)
 					} else if updatedResolvConf != nil {
 						// because the new host resolv.conf might have localhost nameservers..
 						updatedResolvConf, modified := resolvconf.FilterResolvDns(updatedResolvConf, daemon.config.EnableIPv6)
@@ -456,22 +451,22 @@ func (daemon *Daemon) setupResolvconfWatcher() error {
 							// changes have occurred during localhost cleanup: generate an updated hash
 							newHash, err := utils.HashData(bytes.NewReader(updatedResolvConf))
 							if err != nil {
-								log.Debugf("Error generating hash of new resolv.conf: %v", err)
+								logrus.Debugf("Error generating hash of new resolv.conf: %v", err)
 							} else {
 								newResolvConfHash = newHash
 							}
 						}
-						log.Debugf("host network resolv.conf changed--walking container list for updates")
+						logrus.Debug("host network resolv.conf changed--walking container list for updates")
 						contList := daemon.containers.List()
 						for _, container := range contList {
 							if err := container.updateResolvConf(updatedResolvConf, newResolvConfHash); err != nil {
-								log.Debugf("Error on resolv.conf update check for container ID: %s: %v", container.ID, err)
+								logrus.Debugf("Error on resolv.conf update check for container ID: %s: %v", container.ID, err)
 							}
 						}
 					}
 				}
 			case err := <-watcher.Errors:
-				log.Debugf("host resolv.conf notify error: %v", err)
+				logrus.Debugf("host resolv.conf notify error: %v", err)
 			}
 		}
 	}()
@@ -514,7 +509,7 @@ func (daemon *Daemon) mergeAndVerifyConfig(config *runconfig.Config, img *image.
 func (daemon *Daemon) generateIdAndName(name string) (string, string, error) {
 	var (
 		err error
-		id  = common.GenerateRandomID()
+		id  = stringid.GenerateRandomID()
 	)
 
 	if name == "" {
@@ -559,7 +554,7 @@ func (daemon *Daemon) reserveName(id, name string) (string, error) {
 			nameAsKnownByUser := strings.TrimPrefix(name, "/")
 			return "", fmt.Errorf(
 				"Conflict. The name %q is already in use by container %s. You have to delete (or rename) that container to be able to reuse that name.", nameAsKnownByUser,
-				common.TruncateID(conflictingContainer.ID))
+				stringid.TruncateID(conflictingContainer.ID))
 		}
 	}
 	return name, nil
@@ -582,7 +577,7 @@ func (daemon *Daemon) generateNewName(id string) (string, error) {
 		return name, nil
 	}
 
-	name = "/" + common.TruncateID(id)
+	name = "/" + stringid.TruncateID(id)
 	if _, err := daemon.containerGraph.Set(name, id); err != nil {
 		return "", err
 	}
@@ -774,6 +769,13 @@ func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.
 				//An error from daemon.Get() means this name could not be found
 				return fmt.Errorf("Could not get container for %s", parts["name"])
 			}
+			for child.hostConfig.NetworkMode.IsContainer() {
+				parts := strings.SplitN(string(child.hostConfig.NetworkMode), ":", 2)
+				child, err = daemon.Get(parts[1])
+				if err != nil {
+					return fmt.Errorf("Could not get container for %s", parts[1])
+				}
+			}
 			if child.hostConfig.NetworkMode.IsHost() {
 				return runconfig.ErrConflictHostNetworkAndLinks
 			}
@@ -793,15 +795,15 @@ func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.
 }
 
 // FIXME: harmonize with NewGraph()
-func NewDaemon(config *Config, eng *engine.Engine) (*Daemon, error) {
-	daemon, err := NewDaemonFromDirectory(config, eng)
+func NewDaemon(config *Config, eng *engine.Engine, registryService *registry.Service) (*Daemon, error) {
+	daemon, err := NewDaemonFromDirectory(config, eng, registryService)
 	if err != nil {
 		return nil, err
 	}
 	return daemon, nil
 }
 
-func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error) {
+func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService *registry.Service) (*Daemon, error) {
 	if config.Mtu == 0 {
 		config.Mtu = getDefaultNetworkMtu()
 	}
@@ -820,12 +822,13 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	// Claim the pidfile first, to avoid any and all unexpected race conditions.
 	// Some of the init doesn't need a pidfile lock - but let's not try to be smart.
 	if config.Pidfile != "" {
-		if err := utils.CreatePidFile(config.Pidfile); err != nil {
+		file, err := pidfile.New(config.Pidfile)
+		if err != nil {
 			return nil, err
 		}
 		eng.OnShutdown(func() {
 			// Always release the pidfile last, just in case
-			utils.RemovePidFile(config.Pidfile)
+			file.Remove()
 		})
 	}
 
@@ -840,8 +843,8 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, err
 	}
 
-	// set up the TempDir to use a canonical path
-	tmp, err := utils.TempDir(config.Root)
+	// set up the tmpDir to use a canonical path
+	tmp, err := tempDir(config.Root)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to get the TempDir under %s: %s", config.Root, err)
 	}
@@ -850,9 +853,6 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, fmt.Errorf("Unable to get the full path to the TempDir (%s): %s", tmp, err)
 	}
 	os.Setenv("TMPDIR", realTmp)
-	if !config.EnableSelinuxSupport {
-		selinuxSetDisabled()
-	}
 
 	// get the canonical path to the Docker root directory
 	var realRoot string
@@ -876,13 +876,28 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	// Load storage driver
 	driver, err := graphdriver.New(config.Root, config.GraphOptions)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("error intializing graphdriver: %v", err)
 	}
-	log.Debugf("Using graph driver %s", driver)
+	logrus.Debugf("Using graph driver %s", driver)
+	// register cleanup for graph driver
+	eng.OnShutdown(func() {
+		if err := driver.Cleanup(); err != nil {
+			logrus.Errorf("Error during graph storage driver.Cleanup(): %v", err)
+		}
+	})
 
-	// As Docker on btrfs and SELinux are incompatible at present, error on both being enabled
-	if selinuxEnabled() && config.EnableSelinuxSupport && driver.String() == "btrfs" {
-		return nil, fmt.Errorf("SELinux is not supported with the BTRFS graph driver!")
+	if config.EnableSelinuxSupport {
+		if selinuxEnabled() {
+			// As Docker on btrfs and SELinux are incompatible at present, error on both being enabled
+			if driver.String() == "btrfs" {
+				return nil, fmt.Errorf("SELinux is not supported with the BTRFS graph driver")
+			}
+			logrus.Debug("SELinux enabled successfully")
+		} else {
+			logrus.Warn("Docker could not enable SELinux on the host system")
+		}
+	} else {
+		selinuxSetDisabled()
 	}
 
 	daemonRepo := path.Join(config.Root, "containers")
@@ -896,7 +911,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, err
 	}
 
-	log.Debugf("Creating images graph")
+	logrus.Debug("Creating images graph")
 	g, err := graph.NewGraph(path.Join(config.Root, "graph"), driver)
 	if err != nil {
 		return nil, err
@@ -917,8 +932,8 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, err
 	}
 
-	log.Debugf("Creating repository list")
-	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g, trustKey)
+	logrus.Debug("Creating repository list")
+	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g, trustKey, registryService)
 	if err != nil {
 		return nil, fmt.Errorf("Couldn't create Tag store: %s", err)
 	}
@@ -956,6 +971,12 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	if err != nil {
 		return nil, err
 	}
+	// register graph close on shutdown
+	eng.OnShutdown(func() {
+		if err := graph.Close(); err != nil {
+			logrus.Errorf("Error during container graph.Close(): %v", err)
+		}
+	})
 
 	localCopy := path.Join(config.Root, "init", fmt.Sprintf("dockerinit-%s", dockerversion.VERSION))
 	sysInitPath := utils.DockerInitPath(localCopy)
@@ -978,30 +999,40 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 	}
 
 	sysInfo := sysinfo.New(false)
-	ed, err := execdrivers.NewDriver(config.ExecDriver, config.Root, sysInitPath, sysInfo)
+	const runDir = "/var/run/docker"
+	ed, err := execdrivers.NewDriver(config.ExecDriver, runDir, config.Root, sysInitPath, sysInfo)
 	if err != nil {
 		return nil, err
 	}
 
 	daemon := &Daemon{
-		ID:             trustKey.PublicKey().KeyID(),
-		repository:     daemonRepo,
-		containers:     &contStore{s: make(map[string]*Container)},
-		execCommands:   newExecStore(),
-		graph:          g,
-		repositories:   repositories,
-		idIndex:        truncindex.NewTruncIndex([]string{}),
-		sysInfo:        sysInfo,
-		volumes:        volumes,
-		config:         config,
-		containerGraph: graph,
-		driver:         driver,
-		sysInitPath:    sysInitPath,
-		execDriver:     ed,
-		eng:            eng,
-		trustStore:     t,
-		statsCollector: newStatsCollector(1 * time.Second),
+		ID:               trustKey.PublicKey().KeyID(),
+		repository:       daemonRepo,
+		containers:       &contStore{s: make(map[string]*Container)},
+		execCommands:     newExecStore(),
+		graph:            g,
+		repositories:     repositories,
+		idIndex:          truncindex.NewTruncIndex([]string{}),
+		sysInfo:          sysInfo,
+		volumes:          volumes,
+		config:           config,
+		containerGraph:   graph,
+		driver:           driver,
+		sysInitPath:      sysInitPath,
+		execDriver:       ed,
+		eng:              eng,
+		trustStore:       t,
+		statsCollector:   newStatsCollector(1 * time.Second),
+		defaultLogConfig: config.LogConfig,
+		RegistryService:  registryService,
 	}
+
+	eng.OnShutdown(func() {
+		if err := daemon.shutdown(); err != nil {
+			logrus.Errorf("Error during daemon.shutdown(): %v", err)
+		}
+	})
+
 	if err := daemon.restore(); err != nil {
 		return nil, err
 	}
@@ -1011,44 +1042,25 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine) (*Daemon, error)
 		return nil, err
 	}
 
-	// Setup shutdown handlers
-	// FIXME: can these shutdown handlers be registered closer to their source?
-	eng.OnShutdown(func() {
-		// FIXME: if these cleanup steps can be called concurrently, register
-		// them as separate handlers to speed up total shutdown time
-		if err := daemon.shutdown(); err != nil {
-			log.Errorf("daemon.shutdown(): %s", err)
-		}
-		if err := portallocator.ReleaseAll(); err != nil {
-			log.Errorf("portallocator.ReleaseAll(): %s", err)
-		}
-		if err := daemon.driver.Cleanup(); err != nil {
-			log.Errorf("daemon.driver.Cleanup(): %s", err.Error())
-		}
-		if err := daemon.containerGraph.Close(); err != nil {
-			log.Errorf("daemon.containerGraph.Close(): %s", err.Error())
-		}
-	})
-
 	return daemon, nil
 }
 
 func (daemon *Daemon) shutdown() error {
 	group := sync.WaitGroup{}
-	log.Debugf("starting clean shutdown of all containers...")
+	logrus.Debug("starting clean shutdown of all containers...")
 	for _, container := range daemon.List() {
 		c := container
 		if c.IsRunning() {
-			log.Debugf("stopping %s", c.ID)
+			logrus.Debugf("stopping %s", c.ID)
 			group.Add(1)
 
 			go func() {
 				defer group.Done()
 				if err := c.KillSig(15); err != nil {
-					log.Debugf("kill 15 error for %s - %s", c.ID, err)
+					logrus.Debugf("kill 15 error for %s - %s", c.ID, err)
 				}
 				c.WaitStop(-1 * time.Second)
-				log.Debugf("container stopped %s", c.ID)
+				logrus.Debugf("container stopped %s", c.ID)
 			}()
 		}
 	}
@@ -1221,6 +1233,16 @@ func (daemon *Daemon) ImageGetCached(imgID string, config *runconfig.Config) (*i
 	return match, nil
 }
 
+// tempDir returns the default directory to use for temporary files.
+func tempDir(rootDir string) (string, error) {
+	var tmpDir string
+	if tmpDir = os.Getenv("DOCKER_TMPDIR"); tmpDir == "" {
+		tmpDir = filepath.Join(rootDir, "tmp")
+	}
+	err := os.MkdirAll(tmpDir, 0700)
+	return tmpDir, err
+}
+
 func checkKernel() error {
 	// Check for unsupported kernel versions
 	// FIXME: it would be cleaner to not test for specific versions, but rather
@@ -1230,11 +1252,11 @@ func checkKernel() error {
 	// the circumstances of pre-3.8 crashes are clearer.
 	// For details see http://github.com/docker/docker/issues/407
 	if k, err := kernel.GetKernelVersion(); err != nil {
-		log.Infof("WARNING: %s", err)
+		logrus.Warnf("%s", err)
 	} else {
 		if kernel.CompareKernelVersion(k, &kernel.KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0}) < 0 {
 			if os.Getenv("DOCKER_NOWARN_KERNEL_VERSION") == "" {
-				log.Infof("WARNING: You are running linux kernel version %s, which might be unstable running docker. Please upgrade your kernel to 3.8.0.", k.String())
+				logrus.Warnf("You are running linux kernel version %s, which might be unstable running docker. Please upgrade your kernel to 3.8.0.", k.String())
 			}
 		}
 	}

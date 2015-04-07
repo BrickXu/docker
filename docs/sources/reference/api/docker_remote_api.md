@@ -30,13 +30,22 @@ page_keywords: API, Docker, rcli, REST, documentation
    Client applications need to take this into account to ensure
    they will not break when talking to newer Docker daemons.
 
-The current version of the API is v1.18
+The current version of the API is v1.19
 
 Calling `/info` is the same as calling
-`/v1.18/info`.
+`/v1.19/info`.
 
 You can still call an old version of the API using
-`/v1.17/info`.
+`/v1.18/info`.
+
+## v1.19
+
+### Full Documentation
+
+[*Docker Remote API v1.19*](/reference/api/docker_remote_api_v1.19/)
+
+### What's new
+
 
 ## v1.18
 
@@ -57,11 +66,33 @@ This endpoint now returns `Os`, `Arch` and `KernelVersion`.
 **New!**
 You can set ulimit settings to be used within the container.
 
-`Get /info`
+`GET /info`
 
 **New!**
-Add return value `HttpProxy`,`HttpsProxy` and `NoProxy` to this entrypoint.
+This endpoint now returns `SystemTime`, `HttpProxy`,`HttpsProxy` and `NoProxy`.
 
+`GET /images/json`
+
+**New!**
+Added a `RepoDigests` field to include image digest information.
+
+`POST /build`
+
+**New!**
+Builds can now set resource constraints for all containers created for the build.
+
+**New!**
+(`CgroupParent`) can be passed in the host config to setup container cgroups under a specific cgroup.
+
+`POST /build`
+
+**New!**
+Closing the HTTP request will now cause the build to be canceled.
+
+`POST /containers/(id)/exec`
+
+**New!**
+Add `Warnings` field to response.
 
 ## v1.17
 
@@ -71,15 +102,32 @@ Add return value `HttpProxy`,`HttpsProxy` and `NoProxy` to this entrypoint.
 
 ### What's new
 
+The build supports `LABEL` command. Use this to add metadata
+to an image. For example you could add data describing the content of an image.
+
+`LABEL "com.example.vendor"="ACME Incorporated"`
+
+**New!**
 `POST /containers/(id)/attach` and `POST /exec/(id)/start`
 
 **New!**
 Docker client now hints potential proxies about connection hijacking using HTTP Upgrade headers.
 
+`POST /containers/create`
+
+**New!**
+You can set labels on container create describing the container.
+
+`GET /containers/json`
+
+**New!**
+The endpoint returns the labels associated with the containers (`Labels`).
+
 `GET /containers/(id)/json`
 
 **New!**
 This endpoint now returns the list current execs associated with the container (`ExecIDs`).
+This endpoint now returns the container labels (`Config.Labels`).
 
 `POST /containers/(id)/rename`
 
@@ -97,6 +145,12 @@ root filesystem as read only.
 
 **New!**
 This endpoint returns a live stream of a container's resource usage statistics.
+
+`GET /images/json`
+
+**New!**
+This endpoint now returns the labels associated with each image (`Labels`).
+
 
 ## v1.16
 

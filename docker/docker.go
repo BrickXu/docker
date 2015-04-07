@@ -8,12 +8,13 @@ import (
 	"os"
 	"strings"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/client"
 	"github.com/docker/docker/autogen/dockerversion"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/reexec"
+	"github.com/docker/docker/pkg/term"
 	"github.com/docker/docker/utils"
 )
 
@@ -29,6 +30,11 @@ func main() {
 		return
 	}
 
+	// Set terminal emulation based on platform as required.
+	stdin, stdout, stderr := term.StdStreams()
+
+	initLogging(stderr)
+
 	flag.Parse()
 	// FIXME: validate daemon flags here
 
@@ -38,20 +44,20 @@ func main() {
 	}
 
 	if *flLogLevel != "" {
-		lvl, err := log.ParseLevel(*flLogLevel)
+		lvl, err := logrus.ParseLevel(*flLogLevel)
 		if err != nil {
-			log.Fatalf("Unable to parse logging level: %s", *flLogLevel)
+			logrus.Fatalf("Unable to parse logging level: %s", *flLogLevel)
 		}
-		initLogging(lvl)
+		setLogLevel(lvl)
 	} else {
-		initLogging(log.InfoLevel)
+		setLogLevel(logrus.InfoLevel)
 	}
 
 	// -D, --debug, -l/--log-level=debug processing
 	// When/if -D is removed this block can be deleted
 	if *flDebug {
 		os.Setenv("DEBUG", "1")
-		initLogging(log.DebugLevel)
+		setLogLevel(logrus.DebugLevel)
 	}
 
 	if len(flHosts) == 0 {
@@ -62,7 +68,7 @@ func main() {
 		}
 		defaultHost, err := api.ValidateHost(defaultHost)
 		if err != nil {
-			log.Fatal(err)
+			logrus.Fatal(err)
 		}
 		flHosts = append(flHosts, defaultHost)
 	}
@@ -79,7 +85,7 @@ func main() {
 	}
 
 	if len(flHosts) > 1 {
-		log.Fatal("Please specify only one -H")
+		logrus.Fatal("Please specify only one -H")
 	}
 	protoAddrParts := strings.SplitN(flHosts[0], "://", 2)
 
@@ -100,7 +106,7 @@ func main() {
 		certPool := x509.NewCertPool()
 		file, err := ioutil.ReadFile(*flCa)
 		if err != nil {
-			log.Fatalf("Couldn't read ca cert %s: %s", *flCa, err)
+			logrus.Fatalf("Couldn't read ca cert %s: %s", *flCa, err)
 		}
 		certPool.AppendCertsFromPEM(file)
 		tlsConfig.RootCAs = certPool
@@ -115,7 +121,7 @@ func main() {
 			*flTls = true
 			cert, err := tls.LoadX509KeyPair(*flCert, *flKey)
 			if err != nil {
-				log.Fatalf("Couldn't load X509 key pair: %q. Make sure the key is encrypted", err)
+				logrus.Fatalf("Couldn't load X509 key pair: %q. Make sure the key is encrypted", err)
 			}
 			tlsConfig.Certificates = []tls.Certificate{cert}
 		}
@@ -124,19 +130,19 @@ func main() {
 	}
 
 	if *flTls || *flTlsVerify {
-		cli = client.NewDockerCli(os.Stdin, os.Stdout, os.Stderr, *flTrustKey, protoAddrParts[0], protoAddrParts[1], &tlsConfig)
+		cli = client.NewDockerCli(stdin, stdout, stderr, *flTrustKey, protoAddrParts[0], protoAddrParts[1], &tlsConfig)
 	} else {
-		cli = client.NewDockerCli(os.Stdin, os.Stdout, os.Stderr, *flTrustKey, protoAddrParts[0], protoAddrParts[1], nil)
+		cli = client.NewDockerCli(stdin, stdout, stderr, *flTrustKey, protoAddrParts[0], protoAddrParts[1], nil)
 	}
 
 	if err := cli.Cmd(flag.Args()...); err != nil {
 		if sterr, ok := err.(*utils.StatusError); ok {
 			if sterr.Status != "" {
-				log.Println(sterr.Status)
+				logrus.Println(sterr.Status)
 			}
 			os.Exit(sterr.StatusCode)
 		}
-		log.Fatal(err)
+		logrus.Fatal(err)
 	}
 }
 

@@ -16,7 +16,7 @@ func TestRmiWithContainerFails(t *testing.T) {
 		t.Fatalf("failed to create a container: %s, %v", out, err)
 	}
 
-	cleanedContainerID := stripTrailingCharacters(out)
+	cleanedContainerID := strings.TrimSpace(out)
 
 	// try to delete the image
 	runCmd = exec.Command(dockerBinary, "rmi", "busybox")
@@ -36,7 +36,7 @@ func TestRmiWithContainerFails(t *testing.T) {
 
 	deleteContainer(cleanedContainerID)
 
-	logDone("rmi- container using image while rmi, should not remove image name")
+	logDone("rmi - container using image while rmi, should not remove image name")
 }
 
 func TestRmiTag(t *testing.T) {
@@ -74,7 +74,7 @@ func TestRmiTag(t *testing.T) {
 		}
 
 	}
-	logDone("rmi - tag,rmi- tagging the same images multiple times then removing tags")
+	logDone("rmi - tag,rmi - tagging the same images multiple times then removing tags")
 }
 
 func TestRmiTagWithExistingContainers(t *testing.T) {
@@ -169,5 +169,5 @@ func TestRmiBlank(t *testing.T) {
 	if strings.Contains(out, "No such image") {
 		t.Fatalf("Wrong error message generated: %s", out)
 	}
-	logDone("rmi- blank image name")
+	logDone("rmi - blank image name")
 }

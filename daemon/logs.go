@@ -9,16 +9,16 @@ import (
 	"strconv"
 	"sync"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/pkg/jsonlog"
 	"github.com/docker/docker/pkg/tailfile"
 	"github.com/docker/docker/pkg/timeutils"
 )
 
-func (daemon *Daemon) ContainerLogs(job *engine.Job) engine.Status {
+func (daemon *Daemon) ContainerLogs(job *engine.Job) error {
 	if len(job.Args) != 1 {
-		return job.Errorf("Usage: %s CONTAINER\n", job.Name)
+		return fmt.Errorf("Usage: %s CONTAINER\n", job.Name)
 	}
 
 	var (
@@ -32,7 +32,7 @@ func (daemon *Daemon) ContainerLogs(job *engine.Job) engine.Status {
 		format string
 	)
 	if !(stdout || stderr) {
-		return job.Errorf("You must choose at least one stream")
+		return fmt.Errorf("You must choose at least one stream")
 	}
 	if times {
 		format = timeutils.RFC3339NanoFixed
@@ -42,36 +42,39 @@ func (daemon *Daemon) ContainerLogs(job *engine.Job) engine.Status {
 	}
 	container, err := daemon.Get(name)
 	if err != nil {
-		return job.Error(err)
+		return err
+	}
+	if container.LogDriverType() != "json-file" {
+		return fmt.Errorf("\"logs\" endpoint is supported only for \"json-file\" logging driver")
 	}
 	cLog, err := container.ReadLog("json")
 	if err != nil && os.IsNotExist(err) {
 		// Legacy logs
-		log.Debugf("Old logs format")
+		logrus.Debugf("Old logs format")
 		if stdout {
 			cLog, err := container.ReadLog("stdout")
 			if err != nil {
-				log.Errorf("Error reading logs (stdout): %s", err)
+				logrus.Errorf("Error reading logs (stdout): %s", err)
 			} else if _, err := io.Copy(job.Stdout, cLog); err != nil {
-				log.Errorf("Error streaming logs (stdout): %s", err)
+				logrus.Errorf("Error streaming logs (stdout): %s", err)
 			}
 		}
 		if stderr {
 			cLog, err := container.ReadLog("stderr")
 			if err != nil {
-				log.Errorf("Error reading logs (stderr): %s", err)
+				logrus.Errorf("Error reading logs (stderr): %s", err)
 			} else if _, err := io.Copy(job.Stderr, cLog); err != nil {
-				log.Errorf("Error streaming logs (stderr): %s", err)
+				logrus.Errorf("Error streaming logs (stderr): %s", err)
 			}
 		}
 	} else if err != nil {
-		log.Errorf("Error reading logs (json): %s", err)
+		logrus.Errorf("Error reading logs (json): %s", err)
 	} else {
 		if tail != "all" {
 			var err error
 			lines, err = strconv.Atoi(tail)
 			if err != nil {
-				log.Errorf("Failed to parse tail %s, error: %v, show all logs", tail, err)
+				logrus.Errorf("Failed to parse tail %s, error: %v, show all logs", tail, err)
 				lines = -1
 			}
 		}
@@ -80,7 +83,7 @@ func (daemon *Daemon) ContainerLogs(job *engine.Job) engine.Status {
 				f := cLog.(*os.File)
 				ls, err := tailfile.TailFile(f, lines)
 				if err != nil {
-					return job.Error(err)
+					return err
 				}
 				tmp := bytes.NewBuffer([]byte{})
 				for _, l := range ls {
@@ -94,7 +97,7 @@ func (daemon *Daemon) ContainerLogs(job *engine.Job) engine.Status {
 				if err := dec.Decode(l); err == io.EOF {
 					break
 				} else if err != nil {
-					log.Errorf("Error streaming logs: %s", err)
+					logrus.Errorf("Error streaming logs: %s", err)
 					break
 				}
 				logLine := l.Log
@@ -140,10 +143,10 @@ func (daemon *Daemon) ContainerLogs(job *engine.Job) engine.Status {
 
 		for err := range errors {
 			if err != nil {
-				log.Errorf("%s", err)
+				logrus.Errorf("%s", err)
 			}
 		}
 
 	}
-	return engine.StatusOK
+	return nil
 }

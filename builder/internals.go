@@ -19,20 +19,22 @@ import (
 	"syscall"
 	"time"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/builder/parser"
 	"github.com/docker/docker/daemon"
 	imagepkg "github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/chrootarchive"
-	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/ioutils"
+	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/parsers"
+	"github.com/docker/docker/pkg/progressreader"
+	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/pkg/tarsum"
 	"github.com/docker/docker/pkg/urlutil"
-	"github.com/docker/docker/registry"
+	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
 )
 
@@ -268,7 +270,15 @@ func calcCopyInfo(b *Builder, cmdName string, cInfos *[]*copyInfo, origPath stri
 		}
 
 		// Download and dump result to tmp file
-		if _, err := io.Copy(tmpFile, utils.ProgressReader(resp.Body, int(resp.ContentLength), b.OutOld, b.StreamFormatter, true, "", "Downloading")); err != nil {
+		if _, err := io.Copy(tmpFile, progressreader.New(progressreader.Config{
+			In:        resp.Body,
+			Out:       b.OutOld,
+			Formatter: b.StreamFormatter,
+			Size:      int(resp.ContentLength),
+			NewLines:  true,
+			ID:        "",
+			Action:    "Downloading",
+		})); err != nil {
 			tmpFile.Close()
 			return err
 		}
@@ -428,7 +438,7 @@ func (b *Builder) pullImage(name string) (*imagepkg.Image, error) {
 	pullRegistryAuth := b.AuthConfig
 	if len(b.AuthConfigFile.Configs) > 0 {
 		// The request came with a full auth config file, we prefer to use that
-		repoInfo, err := registry.ResolveRepositoryInfo(job, remote)
+		repoInfo, err := b.Daemon.RegistryService.ResolveRepository(remote)
 		if err != nil {
 			return nil, err
 		}
@@ -511,13 +521,13 @@ func (b *Builder) probeCache() (bool, error) {
 		return false, err
 	}
 	if cache == nil {
-		log.Debugf("[BUILDER] Cache miss")
+		logrus.Debugf("[BUILDER] Cache miss")
 		b.cacheBusted = true
 		return false, nil
 	}
 
 	fmt.Fprintf(b.OutStream, " ---> Using cache\n")
-	log.Debugf("[BUILDER] Use cached version")
+	logrus.Debugf("[BUILDER] Use cached version")
 	b.image = cache.ID
 	return true, nil
 }
@@ -528,10 +538,17 @@ func (b *Builder) create() (*daemon.Container, error) {
 	}
 	b.Config.Image = b.image
 
+	hostConfig := &runconfig.HostConfig{
+		CpuShares:  b.cpuShares,
+		CpusetCpus: b.cpuSetCpus,
+		Memory:     b.memory,
+		MemorySwap: b.memorySwap,
+	}
+
 	config := *b.Config
 
 	// Create the container
-	c, warnings, err := b.Daemon.Create(b.Config, nil, "")
+	c, warnings, err := b.Daemon.Create(b.Config, hostConfig, "")
 	if err != nil {
 		return nil, err
 	}
@@ -540,7 +557,7 @@ func (b *Builder) create() (*daemon.Container, error) {
 	}
 
 	b.TmpContainers[c.ID] = struct{}{}
-	fmt.Fprintf(b.OutStream, " ---> Running in %s\n", common.TruncateID(c.ID))
+	fmt.Fprintf(b.OutStream, " ---> Running in %s\n", stringid.TruncateID(c.ID))
 
 	if len(config.Cmd) > 0 {
 		// override the entry point that may have been picked up from the base image
@@ -564,6 +581,17 @@ func (b *Builder) run(c *daemon.Container) error {
 		return err
 	}
 
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-b.cancelled:
+			logrus.Debugln("Build cancelled, killing container:", c.ID)
+			c.Kill()
+		case <-finished:
+		}
+	}()
+
 	if b.Verbose {
 		// Block on reading output from container, stop on err or chan closed
 		if err := <-errCh; err != nil {
@@ -573,7 +601,7 @@ func (b *Builder) run(c *daemon.Container) error {
 
 	// Wait for it to finish
 	if ret, _ := c.WaitStop(-1 * time.Second); ret != 0 {
-		err := &utils.JSONError{
+		err := &jsonmessage.JSONError{
 			Message: fmt.Sprintf("The command %v returned a non-zero code: %d", b.Config.Cmd, ret),
 			Code:    ret,
 		}
@@ -659,7 +687,7 @@ func (b *Builder) addContext(container *daemon.Container, orig, dest string, dec
 		if err := chrootarchive.UntarPath(origPath, tarDest); err == nil {
 			return nil
 		} else if err != io.EOF {
-			log.Debugf("Couldn't untar %s to %s: %s", origPath, tarDest, err)
+			logrus.Debugf("Couldn't untar %s to %s: %s", origPath, tarDest, err)
 		}
 	}
 
@@ -725,11 +753,11 @@ func (b *Builder) clearTmp() {
 		}
 
 		if err := b.Daemon.Rm(tmp); err != nil {
-			fmt.Fprintf(b.OutStream, "Error removing intermediate container %s: %s\n", common.TruncateID(c), err.Error())
+			fmt.Fprintf(b.OutStream, "Error removing intermediate container %s: %v\n", stringid.TruncateID(c), err)
 			return
 		}
 		b.Daemon.DeleteVolumes(tmp.VolumePaths())
 		delete(b.TmpContainers, c)
-		fmt.Fprintf(b.OutStream, "Removing intermediate container %s\n", common.TruncateID(c))
+		fmt.Fprintf(b.OutStream, "Removing intermediate container %s\n", stringid.TruncateID(c))
 	}
 }

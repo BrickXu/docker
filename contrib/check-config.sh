@@ -138,7 +138,7 @@ fi
 flags=(
 	NAMESPACES {NET,PID,IPC,UTS}_NS
 	DEVPTS_MULTIPLE_INSTANCES
-	CGROUPS CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_SCHED
+	CGROUPS CGROUP_CPUACCT CGROUP_DEVICE CGROUP_FREEZER CGROUP_SCHED CPUSETS
 	MACVLAN VETH BRIDGE
 	NF_NAT_IPV4 IP_NF_FILTER IP_NF_TARGET_MASQUERADE
 	NETFILTER_XT_MATCH_{ADDRTYPE,CONNTRACK}
@@ -151,8 +151,14 @@ check_flags "${flags[@]}"
 echo
 
 echo 'Optional Features:'
+{
+	check_flags MEMCG_SWAP 
+	check_flags MEMCG_SWAP_ENABLED
+	if  is_set MEMCG_SWAP && ! is_set MEMCG_SWAP_ENABLED; then
+		echo "    $(wrap_color '(note that cgroup swap accounting is not enabled in your kernel config, you can enable it by setting boot option "swapaccount=1")' bold black)"
+	fi
+}
 flags=(
-	MEMCG_SWAP
 	RESOURCE_COUNTERS
 	CGROUP_PERF
 )

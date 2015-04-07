@@ -14,23 +14,28 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/libcontainer"
+	"github.com/docker/libcontainer/configs"
 	"github.com/docker/libcontainer/devices"
 	"github.com/docker/libcontainer/label"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/execdriver"
+	"github.com/docker/docker/daemon/logger"
+	"github.com/docker/docker/daemon/logger/jsonfilelog"
+	"github.com/docker/docker/daemon/logger/syslog"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/links"
 	"github.com/docker/docker/nat"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
-	"github.com/docker/docker/pkg/common"
 	"github.com/docker/docker/pkg/directory"
+	"github.com/docker/docker/pkg/etchosts"
 	"github.com/docker/docker/pkg/ioutils"
-	"github.com/docker/docker/pkg/networkfs/etchosts"
-	"github.com/docker/docker/pkg/networkfs/resolvconf"
 	"github.com/docker/docker/pkg/promise"
+	"github.com/docker/docker/pkg/resolvconf"
+	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/ulimit"
 	"github.com/docker/docker/runconfig"
@@ -96,9 +101,12 @@ type Container struct {
 	VolumesRW  map[string]bool
 	hostConfig *runconfig.HostConfig
 
-	activeLinks        map[string]*links.Link
-	monitor            *containerMonitor
-	execCommands       *execStore
+	activeLinks  map[string]*links.Link
+	monitor      *containerMonitor
+	execCommands *execStore
+	// logDriver for closing
+	logDriver          logger.Logger
+	logCopier          *logger.Copier
 	AppliedVolumesFrom map[string]struct{}
 }
 
@@ -193,7 +201,7 @@ func (container *Container) WriteHostConfig() error {
 func (container *Container) LogEvent(action string) {
 	d := container.daemon
 	if err := d.eng.Job("log", action, container.ID, d.Repositories().ImageName(container.ImageID)).Run(); err != nil {
-		log.Errorf("Error logging event %s for %s: %s", action, container.ID, err)
+		logrus.Errorf("Error logging event %s for %s: %s", action, container.ID, err)
 	}
 }
 
@@ -205,6 +213,45 @@ func (container *Container) getResourcePath(path string) (string, error) {
 func (container *Container) getRootResourcePath(path string) (string, error) {
 	cleanPath := filepath.Join("/", path)
 	return symlink.FollowSymlinkInScope(filepath.Join(container.root, cleanPath), container.root)
+}
+
+func getDevicesFromPath(deviceMapping runconfig.DeviceMapping) (devs []*configs.Device, err error) {
+	device, err := devices.DeviceFromPath(deviceMapping.PathOnHost, deviceMapping.CgroupPermissions)
+	// if there was no error, return the device
+	if err == nil {
+		device.Path = deviceMapping.PathInContainer
+		return append(devs, device), nil
+	}
+
+	// if the device is not a device node
+	// try to see if it's a directory holding many devices
+	if err == devices.ErrNotADevice {
+
+		// check if it is a directory
+		if src, e := os.Stat(deviceMapping.PathOnHost); e == nil && src.IsDir() {
+
+			// mount the internal devices recursively
+			filepath.Walk(deviceMapping.PathOnHost, func(dpath string, f os.FileInfo, e error) error {
+				childDevice, e := devices.DeviceFromPath(dpath, deviceMapping.CgroupPermissions)
+				if e != nil {
+					// ignore the device
+					return nil
+				}
+
+				// add the device to userSpecified devices
+				childDevice.Path = strings.Replace(dpath, deviceMapping.PathOnHost, deviceMapping.PathInContainer, 1)
+				devs = append(devs, childDevice)
+
+				return nil
+			})
+		}
+	}
+
+	if len(devs) > 0 {
+		return devs, nil
+	}
+
+	return devs, fmt.Errorf("error gathering device information while adding custom device %q: %s", deviceMapping.PathOnHost, err)
 }
 
 func populateCommand(c *Container, env []string) error {
@@ -259,18 +306,18 @@ func populateCommand(c *Container, env []string) error {
 	pid.HostPid = c.hostConfig.PidMode.IsHost()
 
 	// Build lists of devices allowed and created within the container.
-	userSpecifiedDevices := make([]*devices.Device, len(c.hostConfig.Devices))
-	for i, deviceMapping := range c.hostConfig.Devices {
-		device, err := devices.GetDevice(deviceMapping.PathOnHost, deviceMapping.CgroupPermissions)
+	var userSpecifiedDevices []*configs.Device
+	for _, deviceMapping := range c.hostConfig.Devices {
+		devs, err := getDevicesFromPath(deviceMapping)
 		if err != nil {
-			return fmt.Errorf("error gathering device information while adding custom device %q: %s", deviceMapping.PathOnHost, err)
+			return err
 		}
-		device.Path = deviceMapping.PathInContainer
-		userSpecifiedDevices[i] = device
-	}
-	allowedDevices := append(devices.DefaultAllowedDevices, userSpecifiedDevices...)
 
-	autoCreatedDevices := append(devices.DefaultAutoCreatedDevices, userSpecifiedDevices...)
+		userSpecifiedDevices = append(userSpecifiedDevices, devs...)
+	}
+	allowedDevices := append(configs.DefaultAllowedDevices, userSpecifiedDevices...)
+
+	autoCreatedDevices := append(configs.DefaultAutoCreatedDevices, userSpecifiedDevices...)
 
 	// TODO: this can be removed after lxc-conf is fully deprecated
 	lxcConfig, err := mergeLxcConfIntoOptions(c.hostConfig)
@@ -301,10 +348,10 @@ func populateCommand(c *Container, env []string) error {
 	}
 
 	resources := &execdriver.Resources{
-		Memory:     c.Config.Memory,
-		MemorySwap: c.Config.MemorySwap,
-		CpuShares:  c.Config.CpuShares,
-		Cpuset:     c.Config.Cpuset,
+		Memory:     c.hostConfig.Memory,
+		MemorySwap: c.hostConfig.MemorySwap,
+		CpuShares:  c.hostConfig.CpuShares,
+		CpusetCpus: c.hostConfig.CpusetCpus,
 		Rlimits:    rlimits,
 	}
 
@@ -338,6 +385,7 @@ func populateCommand(c *Container, env []string) error {
 		MountLabel:         c.GetMountLabel(),
 		LxcConfig:          lxcConfig,
 		AppArmorProfile:    c.AppArmorProfile,
+		CgroupParent:       c.hostConfig.CgroupParent,
 	}
 
 	return nil
@@ -349,6 +397,10 @@ func (container *Container) Start() (err error) {
 
 	if container.Running {
 		return nil
+	}
+
+	if container.removalInProgress || container.Dead {
+		return fmt.Errorf("Container is marked for removal and cannot be started.")
 	}
 
 	// if we encounter an error during start we need to ensure that any other
@@ -650,7 +702,7 @@ func (container *Container) cleanup() {
 	}
 
 	if err := container.Unmount(); err != nil {
-		log.Errorf("%v: Failed to umount filesystem: %v", container.ID, err)
+		logrus.Errorf("%v: Failed to umount filesystem: %v", container.ID, err)
 	}
 
 	for _, eConfig := range container.execCommands.s {
@@ -659,7 +711,7 @@ func (container *Container) cleanup() {
 }
 
 func (container *Container) KillSig(sig int) error {
-	log.Debugf("Sending %d to %s", sig, container.ID)
+	logrus.Debugf("Sending %d to %s", sig, container.ID)
 	container.Lock()
 	defer container.Unlock()
 
@@ -690,7 +742,7 @@ func (container *Container) KillSig(sig int) error {
 func (container *Container) killPossiblyDeadProcess(sig int) error {
 	err := container.KillSig(sig)
 	if err == syscall.ESRCH {
-		log.Debugf("Cannot kill process (pid=%d) with signal %d: no such process.", container.GetPid(), sig)
+		logrus.Debugf("Cannot kill process (pid=%d) with signal %d: no such process.", container.GetPid(), sig)
 		return nil
 	}
 	return err
@@ -730,12 +782,12 @@ func (container *Container) Kill() error {
 	if _, err := container.WaitStop(10 * time.Second); err != nil {
 		// Ensure that we don't kill ourselves
 		if pid := container.GetPid(); pid != 0 {
-			log.Infof("Container %s failed to exit within 10 seconds of kill - trying direct SIGKILL", common.TruncateID(container.ID))
+			logrus.Infof("Container %s failed to exit within 10 seconds of kill - trying direct SIGKILL", stringid.TruncateID(container.ID))
 			if err := syscall.Kill(pid, 9); err != nil {
 				if err != syscall.ESRCH {
 					return err
 				}
-				log.Debugf("Cannot kill process (pid=%d) with signal 9: no such process.", pid)
+				logrus.Debugf("Cannot kill process (pid=%d) with signal 9: no such process.", pid)
 			}
 		}
 	}
@@ -751,7 +803,7 @@ func (container *Container) Stop(seconds int) error {
 
 	// 1. Send a SIGTERM
 	if err := container.killPossiblyDeadProcess(15); err != nil {
-		log.Infof("Failed to send SIGTERM to the process, force killing")
+		logrus.Infof("Failed to send SIGTERM to the process, force killing")
 		if err := container.killPossiblyDeadProcess(9); err != nil {
 			return err
 		}
@@ -759,7 +811,7 @@ func (container *Container) Stop(seconds int) error {
 
 	// 2. Wait for the process to exit on its own
 	if _, err := container.WaitStop(time.Duration(seconds) * time.Second); err != nil {
-		log.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", container.ID, seconds)
+		logrus.Infof("Container %v failed to exit within %d seconds of SIGTERM - using the force", container.ID, seconds)
 		// 3. If it doesn't, then send SIGKILL
 		if err := container.Kill(); err != nil {
 			container.WaitStop(-1 * time.Second)
@@ -895,7 +947,7 @@ func (container *Container) GetSize() (int64, int64) {
 	)
 
 	if err := container.Mount(); err != nil {
-		log.Errorf("Warning: failed to compute size of container rootfs %s: %s", container.ID, err)
+		logrus.Errorf("Failed to compute size of container rootfs %s: %s", container.ID, err)
 		return sizeRw, sizeRootfs
 	}
 	defer container.Unmount()
@@ -903,7 +955,7 @@ func (container *Container) GetSize() (int64, int64) {
 	initID := fmt.Sprintf("%s-init", container.ID)
 	sizeRw, err = driver.DiffSize(container.ID, initID)
 	if err != nil {
-		log.Errorf("Warning: driver %s couldn't return diff size of container %s: %s", driver, container.ID, err)
+		logrus.Errorf("Driver %s couldn't return diff size of container %s: %s", driver, container.ID, err)
 		// FIXME: GetSize should return an error. Not changing it now in case
 		// there is a side-effect.
 		sizeRw = -1
@@ -933,6 +985,17 @@ func (container *Container) Copy(resource string) (io.ReadCloser, error) {
 		if len(mnt.MountToPath) > 0 && strings.HasPrefix(resource, mnt.MountToPath[1:]) {
 			return mnt.Export(resource)
 		}
+	}
+
+	// Check if this is a special one (resolv.conf, hostname, ..)
+	if resource == "etc/resolv.conf" {
+		basePath = container.ResolvConfPath
+	}
+	if resource == "etc/hostname" {
+		basePath = container.HostnamePath
+	}
+	if resource == "etc/hosts" {
+		basePath = container.HostsPath
 	}
 
 	stat, err := os.Stat(basePath)
@@ -972,7 +1035,7 @@ func (container *Container) Exposes(p nat.Port) bool {
 	return exists
 }
 
-func (container *Container) GetPtyMaster() (*os.File, error) {
+func (container *Container) GetPtyMaster() (libcontainer.Console, error) {
 	ttyConsole, ok := container.command.ProcessConfig.Terminal.(execdriver.TtyTerminal)
 	if !ok {
 		return nil, ErrNoTTY
@@ -998,7 +1061,7 @@ func (container *Container) DisableLink(name string) {
 		if link, exists := container.activeLinks[name]; exists {
 			link.Disable()
 		} else {
-			log.Debugf("Could not find active link for %s", name)
+			logrus.Debugf("Could not find active link for %s", name)
 		}
 	}
 }
@@ -1008,7 +1071,7 @@ func (container *Container) setupContainerDns() error {
 		// check if this is an existing container that needs DNS update:
 		if container.UpdateDns {
 			// read the host's resolv.conf, get the hash and call updateResolvConf
-			log.Debugf("Check container (%s) for update to resolv.conf - UpdateDns flag was set", container.ID)
+			logrus.Debugf("Check container (%s) for update to resolv.conf - UpdateDns flag was set", container.ID)
 			latestResolvConf, latestHash := resolvconf.GetLastModified()
 
 			// clean container resolv.conf re: localhost nameservers and IPv6 NS (if IPv6 disabled)
@@ -1124,7 +1187,7 @@ func (container *Container) updateResolvConf(updatedResolvConf []byte, newResolv
 	//if the user has not modified the resolv.conf of the container since we wrote it last
 	//we will replace it with the updated resolv.conf from the host
 	if string(hashBytes) == curHash {
-		log.Debugf("replacing %q with updated host resolv.conf", container.ResolvConfPath)
+		logrus.Debugf("replacing %q with updated host resolv.conf", container.ResolvConfPath)
 
 		// for atomic updates to these files, use temporary files with os.Rename:
 		dir := path.Dir(container.ResolvConfPath)
@@ -1163,13 +1226,13 @@ func (container *Container) updateParentsHosts() error {
 
 		c, err := container.daemon.Get(ref.ParentID)
 		if err != nil {
-			log.Error(err)
+			logrus.Error(err)
 		}
 
 		if c != nil && !container.daemon.config.DisableNetwork && container.hostConfig.NetworkMode.IsPrivate() {
-			log.Debugf("Update /etc/hosts of %s for alias %s with ip %s", c.ID, ref.Name, container.NetworkSettings.IPAddress)
+			logrus.Debugf("Update /etc/hosts of %s for alias %s with ip %s", c.ID, ref.Name, container.NetworkSettings.IPAddress)
 			if err := etchosts.Update(c.HostsPath, container.NetworkSettings.IPAddress, ref.Name); err != nil {
-				log.Errorf("Failed to update /etc/hosts in parent container %s for alias %s: %v", c.ID, ref.Name, err)
+				logrus.Errorf("Failed to update /etc/hosts in parent container %s for alias %s: %v", c.ID, ref.Name, err)
 			}
 		}
 	}
@@ -1215,6 +1278,7 @@ func (container *Container) initializeNetworking() error {
 		if err != nil {
 			return err
 		}
+		container.HostnamePath = nc.HostnamePath
 		container.HostsPath = nc.HostsPath
 		container.ResolvConfPath = nc.ResolvConfPath
 		container.Config.Hostname = nc.Config.Hostname
@@ -1234,15 +1298,15 @@ func (container *Container) initializeNetworking() error {
 // Make sure the config is compatible with the current kernel
 func (container *Container) verifyDaemonSettings() {
 	if container.Config.Memory > 0 && !container.daemon.sysInfo.MemoryLimit {
-		log.Infof("WARNING: Your kernel does not support memory limit capabilities. Limitation discarded.")
+		logrus.Warnf("Your kernel does not support memory limit capabilities. Limitation discarded.")
 		container.Config.Memory = 0
 	}
 	if container.Config.Memory > 0 && !container.daemon.sysInfo.SwapLimit {
-		log.Infof("WARNING: Your kernel does not support swap limit capabilities. Limitation discarded.")
+		logrus.Warnf("Your kernel does not support swap limit capabilities. Limitation discarded.")
 		container.Config.MemorySwap = -1
 	}
 	if container.daemon.sysInfo.IPv4ForwardingDisabled {
-		log.Infof("WARNING: IPv4 forwarding is disabled. Networking will not work")
+		logrus.Warnf("IPv4 forwarding is disabled. Networking will not work")
 	}
 }
 
@@ -1353,21 +1417,43 @@ func (container *Container) setupWorkingDirectory() error {
 	return nil
 }
 
-func (container *Container) startLoggingToDisk() error {
-	// Setup logging of stdout and stderr to disk
-	logPath, err := container.logPath("json")
+func (container *Container) startLogging() error {
+	cfg := container.hostConfig.LogConfig
+	if cfg.Type == "" {
+		cfg = container.daemon.defaultLogConfig
+	}
+	var l logger.Logger
+	switch cfg.Type {
+	case "json-file":
+		pth, err := container.logPath("json")
+		if err != nil {
+			return err
+		}
+
+		dl, err := jsonfilelog.New(pth)
+		if err != nil {
+			return err
+		}
+		l = dl
+	case "syslog":
+		dl, err := syslog.New(container.ID[:12])
+		if err != nil {
+			return err
+		}
+		l = dl
+	case "none":
+		return nil
+	default:
+		return fmt.Errorf("Unknown logging driver: %s", cfg.Type)
+	}
+
+	copier, err := logger.NewCopier(container.ID, map[string]io.Reader{"stdout": container.StdoutPipe(), "stderr": container.StderrPipe()}, l)
 	if err != nil {
 		return err
 	}
-	container.LogPath = logPath
-
-	if err := container.daemon.LogToDisk(container.stdout, container.LogPath, "stdout"); err != nil {
-		return err
-	}
-
-	if err := container.daemon.LogToDisk(container.stderr, container.LogPath, "stderr"); err != nil {
-		return err
-	}
+	container.logCopier = copier
+	copier.Run()
+	container.logDriver = l
 
 	return nil
 }
@@ -1467,4 +1553,13 @@ func (container *Container) getNetworkedContainer() (*Container, error) {
 
 func (container *Container) Stats() (*execdriver.ResourceStats, error) {
 	return container.daemon.Stats(container)
+}
+
+func (c *Container) LogDriverType() string {
+	c.Lock()
+	defer c.Unlock()
+	if c.hostConfig.LogConfig.Type == "" {
+		return c.daemon.defaultLogConfig.Type
+	}
+	return c.hostConfig.LogConfig.Type
 }

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/docker/docker/pkg/stringutils"
 	"github.com/docker/docker/vendor/src/code.google.com/p/go/src/pkg/archive/tar"
 )
 
@@ -40,6 +40,18 @@ func processExitCode(err error) (exitCode int) {
 		}
 	}
 	return
+}
+
+func IsKilled(err error) bool {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		sys := exitErr.ProcessState.Sys()
+		status, ok := sys.(syscall.WaitStatus)
+		if !ok {
+			return false
+		}
+		return status.Signaled() && status.Signal() == os.Kill
+	}
+	return false
 }
 
 func runCommandWithOutput(cmd *exec.Cmd) (output string, exitCode int, err error) {
@@ -154,11 +166,7 @@ func runCommandPipelineWithOutput(cmds ...*exec.Cmd) (output string, exitCode in
 }
 
 func logDone(message string) {
-	fmt.Printf("[PASSED]: %s\n", message)
-}
-
-func stripTrailingCharacters(target string) string {
-	return strings.TrimSpace(target)
+	fmt.Printf("[PASSED]: %.69s\n", message)
 }
 
 func unmarshalJSON(data []byte, result interface{}) error {
@@ -289,21 +297,10 @@ func copyWithCP(source, target string) error {
 	return nil
 }
 
-func makeRandomString(n int) string {
-	// make a really long string
-	letters := []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-	b := make([]byte, n)
-	r := rand.New(rand.NewSource(time.Now().UTC().UnixNano()))
-	for i := range b {
-		b[i] = letters[r.Intn(len(letters))]
-	}
-	return string(b)
-}
-
 // randomUnixTmpDirPath provides a temporary unix path with rand string appended.
 // does not create or checks if it exists.
 func randomUnixTmpDirPath(s string) string {
-	return path.Join("/tmp", fmt.Sprintf("%s.%s", s, makeRandomString(10)))
+	return path.Join("/tmp", fmt.Sprintf("%s.%s", s, stringutils.GenerateRandomAlphaOnlyString(10)))
 }
 
 // Reads chunkSize bytes from reader after every interval.
@@ -327,4 +324,18 @@ func consumeWithSpeed(reader io.Reader, chunkSize int, interval time.Duration, s
 			time.Sleep(interval)
 		}
 	}
+}
+
+// Parses 'procCgroupData', which is output of '/proc/<pid>/cgroup', and returns
+// a map which cgroup name as key and path as value.
+func parseCgroupPaths(procCgroupData string) map[string]string {
+	cgroupPaths := map[string]string{}
+	for _, line := range strings.Split(procCgroupData, "\n") {
+		parts := strings.Split(line, ":")
+		if len(parts) != 3 {
+			continue
+		}
+		cgroupPaths[parts[1]] = parts[2]
+	}
+	return cgroupPaths
 }

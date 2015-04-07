@@ -2,12 +2,13 @@ package graph
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
 	"path"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/parsers"
@@ -19,20 +20,20 @@ import (
 // uncompressed tar ball.
 // name is the set of tags to export.
 // out is the writer where the images are written to.
-func (s *TagStore) CmdImageExport(job *engine.Job) engine.Status {
+func (s *TagStore) CmdImageExport(job *engine.Job) error {
 	if len(job.Args) < 1 {
-		return job.Errorf("Usage: %s IMAGE [IMAGE...]\n", job.Name)
+		return fmt.Errorf("Usage: %s IMAGE [IMAGE...]\n", job.Name)
 	}
 	// get image json
 	tempdir, err := ioutil.TempDir("", "docker-export-")
 	if err != nil {
-		return job.Error(err)
+		return err
 	}
 	defer os.RemoveAll(tempdir)
 
 	rootRepoMap := map[string]Repository{}
 	addKey := func(name string, tag string, id string) {
-		log.Debugf("add key [%s:%s]", name, tag)
+		logrus.Debugf("add key [%s:%s]", name, tag)
 		if repo, ok := rootRepoMap[name]; !ok {
 			rootRepoMap[name] = Repository{tag: id}
 		} else {
@@ -41,20 +42,20 @@ func (s *TagStore) CmdImageExport(job *engine.Job) engine.Status {
 	}
 	for _, name := range job.Args {
 		name = registry.NormalizeLocalName(name)
-		log.Debugf("Serializing %s", name)
+		logrus.Debugf("Serializing %s", name)
 		rootRepo := s.Repositories[name]
 		if rootRepo != nil {
 			// this is a base repo name, like 'busybox'
 			for tag, id := range rootRepo {
 				addKey(name, tag, id)
 				if err := s.exportImage(job.Eng, id, tempdir); err != nil {
-					return job.Error(err)
+					return err
 				}
 			}
 		} else {
 			img, err := s.LookupImage(name)
 			if err != nil {
-				return job.Error(err)
+				return err
 			}
 
 			if img != nil {
@@ -67,39 +68,39 @@ func (s *TagStore) CmdImageExport(job *engine.Job) engine.Status {
 					addKey(repoName, repoTag, img.ID)
 				}
 				if err := s.exportImage(job.Eng, img.ID, tempdir); err != nil {
-					return job.Error(err)
+					return err
 				}
 
 			} else {
 				// this must be an ID that didn't get looked up just right?
 				if err := s.exportImage(job.Eng, name, tempdir); err != nil {
-					return job.Error(err)
+					return err
 				}
 			}
 		}
-		log.Debugf("End Serializing %s", name)
+		logrus.Debugf("End Serializing %s", name)
 	}
 	// write repositories, if there is something to write
 	if len(rootRepoMap) > 0 {
 		rootRepoJson, _ := json.Marshal(rootRepoMap)
 		if err := ioutil.WriteFile(path.Join(tempdir, "repositories"), rootRepoJson, os.FileMode(0644)); err != nil {
-			return job.Error(err)
+			return err
 		}
 	} else {
-		log.Debugf("There were no repositories to write")
+		logrus.Debugf("There were no repositories to write")
 	}
 
 	fs, err := archive.Tar(tempdir, archive.Uncompressed)
 	if err != nil {
-		return job.Error(err)
+		return err
 	}
 	defer fs.Close()
 
 	if _, err := io.Copy(job.Stdout, fs); err != nil {
-		return job.Error(err)
+		return err
 	}
-	log.Debugf("End export job: %s", job.Name)
-	return engine.StatusOK
+	logrus.Debugf("End export job: %s", job.Name)
+	return nil
 }
 
 // FIXME: this should be a top-level function, not a class method

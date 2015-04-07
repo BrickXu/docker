@@ -150,7 +150,7 @@ func getContainer(eng *engine.Engine, id string, t Fataler) *daemon.Container {
 }
 
 func mkDaemonFromEngine(eng *engine.Engine, t Fataler) *daemon.Daemon {
-	iDaemon := eng.Hack_GetGlobalVar("httpapi.daemon")
+	iDaemon := eng.HackGetGlobalVar("httpapi.daemon")
 	if iDaemon == nil {
 		panic("Legacy daemon field not set in engine")
 	}
@@ -177,10 +177,6 @@ func newTestEngine(t Fataler, autorestart bool, root string) *engine.Engine {
 	if err := builtins.Register(eng); err != nil {
 		t.Fatal(err)
 	}
-	// load registry service
-	if err := registry.NewService(nil).Install(eng); err != nil {
-		t.Fatal(err)
-	}
 
 	// (This is manually copied and modified from main() until we have a more generic plugin system)
 	cfg := &daemon.Config{
@@ -191,8 +187,9 @@ func newTestEngine(t Fataler, autorestart bool, root string) *engine.Engine {
 		// otherwise NewDaemon will fail because of conflicting settings.
 		InterContainerCommunication: true,
 		TrustKeyPath:                filepath.Join(root, "key.json"),
+		LogConfig:                   runconfig.LogConfig{Type: "json-file"},
 	}
-	d, err := daemon.NewDaemon(cfg, eng)
+	d, err := daemon.NewDaemon(cfg, eng, registry.NewService(nil))
 	if err != nil {
 		t.Fatal(err)
 	}

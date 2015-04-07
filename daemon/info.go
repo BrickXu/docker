@@ -3,8 +3,9 @@ package daemon
 import (
 	"os"
 	"runtime"
+	"time"
 
-	log "github.com/Sirupsen/logrus"
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/autogen/dockerversion"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/pkg/parsers/kernel"
@@ -14,7 +15,7 @@ import (
 	"github.com/docker/docker/utils"
 )
 
-func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
+func (daemon *Daemon) CmdInfo(job *engine.Job) error {
 	images, _ := daemon.Graph().Map()
 	var imgcount int
 	if images == nil {
@@ -32,7 +33,7 @@ func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
 		operatingSystem = s
 	}
 	if inContainer, err := operatingsystem.IsContainerized(); err != nil {
-		log.Errorf("Could not determine if daemon is containerized: %v", err)
+		logrus.Errorf("Could not determine if daemon is containerized: %v", err)
 		operatingSystem += " (error determining if containerized)"
 	} else if inContainer {
 		operatingSystem += " (containerized)"
@@ -40,7 +41,7 @@ func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
 
 	meminfo, err := system.ReadMemInfo()
 	if err != nil {
-		log.Errorf("Could not read system memory info: %v", err)
+		logrus.Errorf("Could not read system memory info: %v", err)
 	}
 
 	// if we still have the original dockerinit binary from before we copied it locally, let's return the path to that, since that's more intuitive (the copied path is trivial to derive by hand given VERSION)
@@ -53,16 +54,7 @@ func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
 	cjob := job.Eng.Job("subscribers_count")
 	env, _ := cjob.Stdout.AddEnv()
 	if err := cjob.Run(); err != nil {
-		return job.Error(err)
-	}
-	registryJob := job.Eng.Job("registry_config")
-	registryEnv, _ := registryJob.Stdout.AddEnv()
-	if err := registryJob.Run(); err != nil {
-		return job.Error(err)
-	}
-	registryConfig := registry.ServiceConfig{}
-	if err := registryEnv.GetJson("config", &registryConfig); err != nil {
-		return job.Error(err)
+		return err
 	}
 	v := &engine.Env{}
 	v.SetJson("ID", daemon.ID)
@@ -76,25 +68,27 @@ func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
 	v.SetBool("Debug", os.Getenv("DEBUG") != "")
 	v.SetInt("NFd", utils.GetTotalUsedFds())
 	v.SetInt("NGoroutines", runtime.NumGoroutine())
+	v.Set("SystemTime", time.Now().Format(time.RFC3339Nano))
 	v.Set("ExecutionDriver", daemon.ExecutionDriver().Name())
+	v.Set("LoggingDriver", daemon.defaultLogConfig.Type)
 	v.SetInt("NEventsListener", env.GetInt("count"))
 	v.Set("KernelVersion", kernelVersion)
 	v.Set("OperatingSystem", operatingSystem)
 	v.Set("IndexServerAddress", registry.IndexServerAddress())
-	v.SetJson("RegistryConfig", registryConfig)
+	v.SetJson("RegistryConfig", daemon.RegistryService.Config)
 	v.Set("InitSha1", dockerversion.INITSHA1)
 	v.Set("InitPath", initPath)
 	v.SetInt("NCPU", runtime.NumCPU())
 	v.SetInt64("MemTotal", meminfo.MemTotal)
 	v.Set("DockerRootDir", daemon.Config().Root)
-	if http_proxy := os.Getenv("http_proxy"); http_proxy != "" {
-		v.Set("HttpProxy", http_proxy)
+	if httpProxy := os.Getenv("http_proxy"); httpProxy != "" {
+		v.Set("HttpProxy", httpProxy)
 	}
-	if https_proxy := os.Getenv("https_proxy"); https_proxy != "" {
-		v.Set("HttpsProxy", https_proxy)
+	if httpsProxy := os.Getenv("https_proxy"); httpsProxy != "" {
+		v.Set("HttpsProxy", httpsProxy)
 	}
-	if no_proxy := os.Getenv("no_proxy"); no_proxy != "" {
-		v.Set("NoProxy", no_proxy)
+	if noProxy := os.Getenv("no_proxy"); noProxy != "" {
+		v.Set("NoProxy", noProxy)
 	}
 
 	if hostname, err := os.Hostname(); err == nil {
@@ -102,7 +96,7 @@ func (daemon *Daemon) CmdInfo(job *engine.Job) engine.Status {
 	}
 	v.SetList("Labels", daemon.Config().Labels)
 	if _, err := v.WriteTo(job.Stdout); err != nil {
-		return job.Error(err)
+		return err
 	}
-	return engine.StatusOK
+	return nil
 }

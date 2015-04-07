@@ -217,7 +217,7 @@ We recommend announcing the release candidate on:
 - In a comment on the pull request to notify subscribed people on GitHub
 - The [docker-dev](https://groups.google.com/forum/#!forum/docker-dev) group
 - The [docker-maintainers](https://groups.google.com/a/dockerproject.org/forum/#!forum/maintainers) group
-- Any social media that can get bring some attention to the release cabdidate
+- Any social media that can bring some attention to the release candidate
 
 ### 7. Iterate on successive release candidates
 
@@ -364,7 +364,17 @@ echo "https://github.com/$GITHUBUSER/docker/compare/docker:master...$GITHUBUSER:
 Again, get two maintainers to validate, then merge, then push that pretty
 blue button to delete your branch.
 
-### 13. Rejoice and Evangelize!
+### 13. Update the API docs and VERSION files
+
+Now that version X.Y.Z is out, time to start working on the next! Update the
+content of the `VERSION` file to be the next minor (incrementing Y) and add the
+`-dev` suffix. For example, after 1.5.0 release, the `VERSION` file gets
+updated to `1.6.0-dev` (as in "1.6.0 in the making").
+
+Also create a new entry in `docs/sources/reference/api/` by copying the latest
+and bumping the version number (in both the file's name and content).
+
+### 14. Rejoice and Evangelize!
 
 Congratulations! You're done.
 
