@@ -30,9 +30,14 @@ var (
 	DefaultDataLoopbackSize     int64  = 100 * 1024 * 1024 * 1024
 	DefaultMetaDataLoopbackSize int64  = 2 * 1024 * 1024 * 1024
 	DefaultBaseFsSize           uint64 = 10 * 1024 * 1024 * 1024
-	DefaultThinpBlockSize       uint32 = 128      // 64K = 128 512b sectors
+	DefaultThinpBlockSize       uint32 = 128 // 64K = 128 512b sectors
+	DefaultUdevSyncOverride     bool   = false
 	MaxDeviceId                 int    = 0xffffff // 24 bit, pool limit
 	DeviceIdMapSz               int    = (MaxDeviceId + 1) / 8
+	// We retry device removal so many a times that even error messages
+	// will fill up console during normal operation. So only log Fatal
+	// messages by default.
+	DMLogLevel int = devicemapper.LogLevelFatal
 )
 
 const deviceSetMetaFile string = "deviceset-metadata"
@@ -83,20 +88,21 @@ type DeviceSet struct {
 	deviceIdMap   []byte
 
 	// Options
-	dataLoopbackSize     int64
-	metaDataLoopbackSize int64
-	baseFsSize           uint64
-	filesystem           string
-	mountOptions         string
-	mkfsArgs             []string
-	dataDevice           string // block or loop dev
-	dataLoopFile         string // loopback file, if used
-	metadataDevice       string // block or loop dev
-	metadataLoopFile     string // loopback file, if used
-	doBlkDiscard         bool
-	thinpBlockSize       uint32
-	thinPoolDevice       string
-	Transaction          `json:"-"`
+	dataLoopbackSize      int64
+	metaDataLoopbackSize  int64
+	baseFsSize            uint64
+	filesystem            string
+	mountOptions          string
+	mkfsArgs              []string
+	dataDevice            string // block or loop dev
+	dataLoopFile          string // loopback file, if used
+	metadataDevice        string // block or loop dev
+	metadataLoopFile      string // loopback file, if used
+	doBlkDiscard          bool
+	thinpBlockSize        uint32
+	thinPoolDevice        string
+	Transaction           `json:"-"`
+	overrideUdevSyncCheck bool
 }
 
 type DiskUsage struct {
@@ -723,14 +729,22 @@ func setCloseOnExec(name string) {
 }
 
 func (devices *DeviceSet) DMLog(level int, file string, line int, dmError int, message string) {
-	if level >= devicemapper.LogLevelDebug {
-		// (vbatts) libdm debug is very verbose. If you're debugging libdm, you can
-		// comment out this check yourself
-		level = devicemapper.LogLevelInfo
+	// By default libdm sends us all the messages including debug ones.
+	// We need to filter out messages here and figure out which one
+	// should be printed.
+	if level > DMLogLevel {
+		return
 	}
 
 	// FIXME(vbatts) push this back into ./pkg/devicemapper/
-	logrus.Debugf("libdevmapper(%d): %s:%d (%d) %s", level, file, line, dmError, message)
+	if level <= devicemapper.LogLevelErr {
+		logrus.Errorf("libdevmapper(%d): %s:%d (%d) %s", level, file, line, dmError, message)
+	} else if level <= devicemapper.LogLevelInfo {
+		logrus.Infof("libdevmapper(%d): %s:%d (%d) %s", level, file, line, dmError, message)
+	} else {
+		// FIXME(vbatts) push this back into ./pkg/devicemapper/
+		logrus.Debugf("libdevmapper(%d): %s:%d (%d) %s", level, file, line, dmError, message)
+	}
 }
 
 func major(device uint64) uint64 {
@@ -947,11 +961,6 @@ func (devices *DeviceSet) closeTransaction() error {
 }
 
 func (devices *DeviceSet) initDevmapper(doInit bool) error {
-	if os.Getenv("DEBUG") != "" {
-		devicemapper.LogInitVerbose(devicemapper.LogLevelDebug)
-	} else {
-		devicemapper.LogInitVerbose(devicemapper.LogLevelWarn)
-	}
 	// give ourselves to libdm as a log handler
 	devicemapper.LogInit(devices)
 
@@ -963,9 +972,11 @@ func (devices *DeviceSet) initDevmapper(doInit bool) error {
 
 	// https://github.com/docker/docker/issues/4036
 	if supported := devicemapper.UdevSetSyncSupport(true); !supported {
-		logrus.Warnf("Udev sync is not supported. This will lead to unexpected behavior, data loss and errors")
+		logrus.Errorf("Udev sync is not supported. This will lead to unexpected behavior, data loss and errors. For more information, see https://docs.docker.com/reference/commandline/cli/#daemon-storage-driver-option")
+		if !devices.overrideUdevSyncCheck {
+			return graphdriver.ErrNotSupported
+		}
 	}
-	logrus.Debugf("devicemapper: udev sync support: %v", devicemapper.UdevSyncSupported())
 
 	if err := os.MkdirAll(devices.metadataDir(), 0700); err != nil && !os.IsExist(err) {
 		return err
@@ -1150,7 +1161,7 @@ func (devices *DeviceSet) deleteDevice(info *DevInfo) error {
 
 	devinfo, _ := devicemapper.GetInfo(info.Name())
 	if devinfo != nil && devinfo.Exists != 0 {
-		if err := devices.removeDeviceAndWait(info.Name()); err != nil {
+		if err := devices.removeDevice(info.Name()); err != nil {
 			logrus.Debugf("Error removing device: %s", err)
 			return err
 		}
@@ -1218,18 +1229,12 @@ func (devices *DeviceSet) deactivateDevice(info *DevInfo) error {
 	logrus.Debugf("[devmapper] deactivateDevice(%s)", info.Hash)
 	defer logrus.Debugf("[devmapper] deactivateDevice END(%s)", info.Hash)
 
-	// Wait for the unmount to be effective,
-	// by watching the value of Info.OpenCount for the device
-	if err := devices.waitClose(info); err != nil {
-		logrus.Errorf("Error waiting for device %s to close: %s", info.Hash, err)
-	}
-
 	devinfo, err := devicemapper.GetInfo(info.Name())
 	if err != nil {
 		return err
 	}
 	if devinfo.Exists != 0 {
-		if err := devices.removeDeviceAndWait(info.Name()); err != nil {
+		if err := devices.removeDevice(info.Name()); err != nil {
 			return err
 		}
 	}
@@ -1237,12 +1242,14 @@ func (devices *DeviceSet) deactivateDevice(info *DevInfo) error {
 	return nil
 }
 
-// Issues the underlying dm remove operation and then waits
-// for it to finish.
-func (devices *DeviceSet) removeDeviceAndWait(devname string) error {
+// Issues the underlying dm remove operation.
+func (devices *DeviceSet) removeDevice(devname string) error {
 	var err error
 
-	for i := 0; i < 1000; i++ {
+	logrus.Debugf("[devmapper] removeDevice START(%s)", devname)
+	defer logrus.Debugf("[devmapper] removeDevice END(%s)", devname)
+
+	for i := 0; i < 200; i++ {
 		err = devicemapper.RemoveDevice(devname)
 		if err == nil {
 			break
@@ -1254,74 +1261,11 @@ func (devices *DeviceSet) removeDeviceAndWait(devname string) error {
 		// If we see EBUSY it may be a transient error,
 		// sleep a bit a retry a few times.
 		devices.Unlock()
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 		devices.Lock()
 	}
-	if err != nil {
-		return err
-	}
 
-	if err := devices.waitRemove(devname); err != nil {
-		return err
-	}
-	return nil
-}
-
-// waitRemove blocks until either:
-// a) the device registered at <device_set_prefix>-<hash> is removed,
-// or b) the 10 second timeout expires.
-func (devices *DeviceSet) waitRemove(devname string) error {
-	logrus.Debugf("[deviceset %s] waitRemove(%s)", devices.devicePrefix, devname)
-	defer logrus.Debugf("[deviceset %s] waitRemove(%s) END", devices.devicePrefix, devname)
-	i := 0
-	for ; i < 1000; i++ {
-		devinfo, err := devicemapper.GetInfo(devname)
-		if err != nil {
-			// If there is an error we assume the device doesn't exist.
-			// The error might actually be something else, but we can't differentiate.
-			return nil
-		}
-		if i%100 == 0 {
-			logrus.Debugf("Waiting for removal of %s: exists=%d", devname, devinfo.Exists)
-		}
-		if devinfo.Exists == 0 {
-			break
-		}
-
-		devices.Unlock()
-		time.Sleep(10 * time.Millisecond)
-		devices.Lock()
-	}
-	if i == 1000 {
-		return fmt.Errorf("Timeout while waiting for device %s to be removed", devname)
-	}
-	return nil
-}
-
-// waitClose blocks until either:
-// a) the device registered at <device_set_prefix>-<hash> is closed,
-// or b) the 10 second timeout expires.
-func (devices *DeviceSet) waitClose(info *DevInfo) error {
-	i := 0
-	for ; i < 1000; i++ {
-		devinfo, err := devicemapper.GetInfo(info.Name())
-		if err != nil {
-			return err
-		}
-		if i%100 == 0 {
-			logrus.Debugf("Waiting for unmount of %s: opencount=%d", info.Hash, devinfo.OpenCount)
-		}
-		if devinfo.OpenCount == 0 {
-			break
-		}
-		devices.Unlock()
-		time.Sleep(10 * time.Millisecond)
-		devices.Lock()
-	}
-	if i == 1000 {
-		return fmt.Errorf("Timeout while waiting for device %s to close", info.Hash)
-	}
-	return nil
+	return err
 }
 
 func (devices *DeviceSet) Shutdown() error {
@@ -1656,15 +1600,16 @@ func NewDeviceSet(root string, doInit bool, options []string) (*DeviceSet, error
 	devicemapper.SetDevDir("/dev")
 
 	devices := &DeviceSet{
-		root:                 root,
-		MetaData:             MetaData{Devices: make(map[string]*DevInfo)},
-		dataLoopbackSize:     DefaultDataLoopbackSize,
-		metaDataLoopbackSize: DefaultMetaDataLoopbackSize,
-		baseFsSize:           DefaultBaseFsSize,
-		filesystem:           "ext4",
-		doBlkDiscard:         true,
-		thinpBlockSize:       DefaultThinpBlockSize,
-		deviceIdMap:          make([]byte, DeviceIdMapSz),
+		root:                  root,
+		MetaData:              MetaData{Devices: make(map[string]*DevInfo)},
+		dataLoopbackSize:      DefaultDataLoopbackSize,
+		metaDataLoopbackSize:  DefaultMetaDataLoopbackSize,
+		baseFsSize:            DefaultBaseFsSize,
+		overrideUdevSyncCheck: DefaultUdevSyncOverride,
+		filesystem:            "ext4",
+		doBlkDiscard:          true,
+		thinpBlockSize:        DefaultThinpBlockSize,
+		deviceIdMap:           make([]byte, DeviceIdMapSz),
 	}
 
 	foundBlkDiscard := false
@@ -1721,6 +1666,11 @@ func NewDeviceSet(root string, doInit bool, options []string) (*DeviceSet, error
 			}
 			// convert to 512b sectors
 			devices.thinpBlockSize = uint32(size) >> 9
+		case "dm.override_udev_sync_check":
+			devices.overrideUdevSyncCheck, err = strconv.ParseBool(val)
+			if err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("Unknown option %s\n", key)
 		}

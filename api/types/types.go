@@ -1,5 +1,7 @@
 package types
 
+import "github.com/docker/docker/pkg/version"
+
 // ContainerCreateResponse contains the information returned to a client on the
 // creation of a new container.
 type ContainerCreateResponse struct {
@@ -49,6 +51,7 @@ type ImageHistory struct {
 	CreatedBy string
 	Tags      []string
 	Size      int64
+	Comment   string
 }
 
 // DELETE "/images/{name:.*}"
@@ -69,6 +72,15 @@ type Image struct {
 	Labels      map[string]string
 }
 
+type LegacyImage struct {
+	ID          string `json:"Id"`
+	Repository  string
+	Tag         string
+	Created     int
+	Size        int
+	VirtualSize int
+}
+
 // GET  "/containers/json"
 type Port struct {
 	IP          string
@@ -79,13 +91,68 @@ type Port struct {
 
 type Container struct {
 	ID         string            `json:"Id"`
-	Names      []string          `json:,omitempty"`
-	Image      string            `json:,omitempty"`
-	Command    string            `json:,omitempty"`
-	Created    int               `json:,omitempty"`
-	Ports      []Port            `json:,omitempty"`
-	SizeRw     int               `json:,omitempty"`
-	SizeRootFs int               `json:,omitempty"`
-	Labels     map[string]string `json:,omitempty"`
-	Status     string            `json:,omitempty"`
+	Names      []string          `json:",omitempty"`
+	Image      string            `json:",omitempty"`
+	Command    string            `json:",omitempty"`
+	Created    int               `json:",omitempty"`
+	Ports      []Port            `json:",omitempty"`
+	SizeRw     int               `json:",omitempty"`
+	SizeRootFs int               `json:",omitempty"`
+	Labels     map[string]string `json:",omitempty"`
+	Status     string            `json:",omitempty"`
+}
+
+// POST "/containers/"+containerID+"/copy"
+type CopyConfig struct {
+	Resource string
+}
+
+// GET "/containers/{name:.*}/top"
+type ContainerProcessList struct {
+	Processes [][]string
+	Titles    []string
+}
+
+type Version struct {
+	Version       string
+	ApiVersion    version.Version
+	GitCommit     string
+	GoVersion     string
+	Os            string
+	Arch          string
+	KernelVersion string `json:",omitempty"`
+}
+
+// GET "/info"
+type Info struct {
+	ID                 string
+	Containers         int
+	Images             int
+	Driver             string
+	DriverStatus       [][2]string
+	MemoryLimit        bool
+	SwapLimit          bool
+	CpuCfsQuota        bool
+	IPv4Forwarding     bool
+	Debug              bool
+	NFd                int
+	NGoroutines        int
+	SystemTime         string
+	ExecutionDriver    string
+	LoggingDriver      string
+	NEventsListener    int
+	KernelVersion      string
+	OperatingSystem    string
+	IndexServerAddress string
+	RegistryConfig     interface{}
+	InitSha1           string
+	InitPath           string
+	NCPU               int
+	MemTotal           int64
+	DockerRootDir      string
+	HttpProxy          string
+	HttpsProxy         string
+	NoProxy            string
+	Name               string
+	Labels             []string
 }

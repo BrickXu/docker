@@ -13,7 +13,6 @@ import (
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/chrootarchive"
-	"github.com/docker/docker/utils"
 )
 
 // Loads a set of images into the repository. This is the complementary of ImageExport.
@@ -81,7 +80,7 @@ func (s *TagStore) CmdLoad(job *engine.Job) error {
 }
 
 func (s *TagStore) recursiveLoad(eng *engine.Engine, address, tmpImageDir string) error {
-	if err := eng.Job("image_get", address).Run(); err != nil {
+	if _, err := s.LookupImage(address); err != nil {
 		logrus.Debugf("Loading %s", address)
 
 		imageJson, err := ioutil.ReadFile(path.Join(tmpImageDir, "repo", address, "json"))
@@ -100,7 +99,7 @@ func (s *TagStore) recursiveLoad(eng *engine.Engine, address, tmpImageDir string
 			logrus.Debugf("Error unmarshalling json", err)
 			return err
 		}
-		if err := utils.ValidateID(img.ID); err != nil {
+		if err := image.ValidateID(img.ID); err != nil {
 			logrus.Debugf("Error validating ID: %s", err)
 			return err
 		}

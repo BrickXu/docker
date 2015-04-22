@@ -48,6 +48,35 @@ These Go environment variables are case-insensitive. See the
 [Go specification](http://golang.org/pkg/net/http/) for details on these
 variables.
 
+## Configuration Files
+
+The Docker command line stores its configuration files in a directory called
+`.docker` within your `HOME` directory. Docker manages most of the files in
+`.docker` and you should not modify them. However, you *can modify* the
+`.docker/config.json` file to control certain aspects of how the `docker`
+command behaves.
+
+Currently, you can modify the `docker` command behavior using environment 
+variables or command-line options. You can also use options within 
+`config.json` to modify some of the same behavior.  When using these 
+mechanisms, you must keep in mind the order of precedence among them. Command 
+line options override environment variables and environment variables override 
+properties you specify in a `config.json` file.
+
+The `config.json` file stores a JSON encoding of a single `HttpHeaders`
+property. The property specifies a set of headers to include in all
+messages sent from the Docker client to the daemon. Docker does not try to
+interpret or understand these header; it simply puts them into the messages.
+Docker does not allow these headers to change any headers it sets for itself.
+
+Following is a sample `config.json` file:
+
+    {
+      "HttpHeaders: {
+        "MyHeader": "MyValue"
+      }
+    }
+
 ## Help
 To list the help on any command just execute the command, followed by the `--help` option.
 
@@ -84,13 +113,19 @@ be set to the non-default value by explicitly setting them to `false`:
 
 ### Multi
 
-Options like `-a=[]` indicate they can be specified multiple times:
+You can specify options like `-a=[]` multiple times in a single command line,
+for example in these commands:
 
-    $ docker run -a stdin -a stdout -a stderr -i -t ubuntu /bin/bash
+    $ docker run -a stdin -a stdout -i -t ubuntu /bin/bash
+    $ docker run -a stdin -a stdout -a stderr ubuntu /bin/ls
 
-Sometimes this can use a more complex value string, as for `-v`:
+Sometimes, multiple options can call for a more complex value string as for `-v`:
 
     $ docker run -v /host:/container example/mysql
+
+> **Note**:
+> Do not use the `-t` and `-a stderr` options together due to limitations
+> in the `pty` implementation. All `stderr` in `pty` mode simply goes to `stdout`.
 
 ### Strings and Integers
 
@@ -110,6 +145,8 @@ expect an integer, and they can only be specified once.
       --bip=""                               Specify network bridge IP
       -D, --debug=false                      Enable debug mode
       -d, --daemon=false                     Enable daemon mode
+      --default-gateway=""                   Container default gateway IPv4 address
+      --default-gateway-v6=""                Container default gateway IPv6 address
       --dns=[]                               DNS server to use
       --dns-search=[]                        DNS search domains to use
       -e, --exec-driver="native"             Exec driver to use
@@ -128,7 +165,7 @@ expect an integer, and they can only be specified once.
       --ipv6=false                           Enable IPv6 networking
       -l, --log-level="info"                 Set the logging level
       --label=[]                             Set key=value labels to the daemon
-      --log-driver="json-file"               Container's logging driver (json-file/none)
+      --log-driver="json-file"               Default driver for container logs
       --mtu=0                                Set the containers network MTU
       -p, --pidfile="/var/run/docker.pid"    Path to use for daemon PID file
       --registry-mirror=[]                   Preferred Docker registry mirror
@@ -370,6 +407,41 @@ Currently supported options are:
 
         $ docker -d --storage-opt dm.blkdiscard=false
 
+ *  `dm.override_udev_sync_check`
+
+    Overrides the `udev` synchronization checks between `devicemapper` and `udev`.
+    `udev` is the device manager for the Linux kernel.
+
+    To view the `udev` sync support of a Docker daemon that is using the
+    `devicemapper` driver, run:
+
+        $ docker info
+	[...]
+	 Udev Sync Supported: true
+	[...]
+
+    When `udev` sync support is `true`, then `devicemapper` and udev can
+    coordinate the activation and deactivation of devices for containers.
+
+    When `udev` sync support is `false`, a race condition occurs between
+    the`devicemapper` and `udev` during create and cleanup. The race condition
+    results in errors and failures. (For information on these failures, see
+    [docker#4036](https://github.com/docker/docker/issues/4036))
+
+    To allow the `docker` daemon to start, regardless of `udev` sync not being
+    supported, set `dm.override_udev_sync_check` to true:
+
+        $ docker -d --storage-opt dm.override_udev_sync_check=true
+
+    When this value is `true`, the  `devicemapper` continues and simply warns
+    you the errors are happening.
+
+    > **Note**: The ideal is to pursue a `docker` daemon and environment that
+    > does support synchronizing with `udev`. For further discussion on this
+    > topic, see [docker#4036](https://github.com/docker/docker/issues/4036).
+    > Otherwise, set this flag for migrating existing Docker daemons to a
+    > daemon with a supported environment.
+
 ### Docker exec-driver option
 
 The Docker daemon uses a specifically built `libcontainer` execution driver as its
@@ -475,10 +547,16 @@ interactively.  You can attach to the same contained process multiple times
 simultaneously, screen sharing style, or quickly view the progress of your
 daemonized process.
 
-You can detach from the container (and leave it running) with `CTRL-p CTRL-q`
-(for a quiet exit) or `CTRL-c` which will send a `SIGKILL` to the container.
-When you are attached to a container, and exit its main process, the process's
-exit code will be returned to the client.
+You can detach from the container and leave it running with `CTRL-p
+CTRL-q` (for a quiet exit) or with `CTRL-c` if `--sig-proxy` is false.
+
+If `--sig-proxy` is true (the default),`CTRL-c` sends a `SIGINT`
+to the container.
+
+>**Note**: A process running as PID 1 inside a container is treated
+>specially by Linux: it ignores any signal with the default action.
+>So, the process will not terminate on `SIGINT` or `SIGTERM` unless it is
+>coded to do so.
 
 It is forbidden to redirect the standard input of a `docker attach` command while
 attaching to a tty-enabled container (i.e.: launched with `-t`).
@@ -550,6 +628,7 @@ is returned by the `docker attach` command to its caller too:
       --memory-swap=""         Total memory (memory + swap), `-1` to disable swap
       -c, --cpu-shares         CPU Shares (relative weight)
       --cpuset-cpus=""         CPUs in which to allow execution, e.g. `0-3`, `0,1`
+      --cpuset-mems=""         MEMs in which to allow execution, e.g. `0-3`, `0,1`
 
 Builds Docker images from a Dockerfile and a "context". A build's context is
 the files located in the specified `PATH` or `URL`.  The build process can
@@ -791,7 +870,8 @@ If this behavior is undesired, set the 'p' option to false.
 
 The `--change` option will apply `Dockerfile` instructions to the image
 that is created.
-Supported `Dockerfile` instructions: `ADD`|`CMD`|`ENTRYPOINT`|`ENV`|`EXPOSE`|`FROM`|`MAINTAINER`|`RUN`|`USER`|`LABEL`|`VOLUME`|`WORKDIR`|`COPY`
+Supported `Dockerfile` instructions:
+`CMD`|`ENTRYPOINT`|`ENV`|`EXPOSE`|`ONBUILD`|`USER`|`VOLUME`|`WORKDIR`
 
 #### Commit a container
 
@@ -845,6 +925,8 @@ Creates a new container.
       --cgroup-parent=""         Optional parent cgroup for the container
       --cidfile=""               Write the container ID to the file
       --cpuset-cpus=""           CPUs in which to allow execution (0-3, 0,1)
+      --cpuset-mems=""           Memory nodes (MEMs) in which to allow execution (0-3, 0,1)
+      --cpu-quota=0              Limit the CPU CFS (Completely Fair Scheduler) quota
       --device=[]                Add a host device to the container
       --dns=[]                   Set custom DNS servers
       --dns-search=[]            Set custom DNS search domains
@@ -1073,7 +1155,9 @@ You'll need two shells for this example.
 
       -d, --detach=false         Detached mode: run command in the background
       -i, --interactive=false    Keep STDIN open even if not attached
+      --privileged=false         Give extended privileges to the command
       -t, --tty=false            Allocate a pseudo-TTY
+      -u, --user=                Username or UID (format: <name|uid>[:<group|gid>])
 
 The `docker exec` command runs a new command in a running container.
 
@@ -1140,19 +1224,30 @@ This will create a new Bash session in the container `ubuntu_bash`.
 
     Show the history of an image
 
+      -H, --human=true     Print sizes and dates in human readable format
       --no-trunc=false     Don't truncate output
       -q, --quiet=false    Only show numeric IDs
 
 To see how the `docker:latest` image was built:
 
     $ docker history docker
-    IMAGE                                                              CREATED             CREATED BY                                                                                                                                                 SIZE
-    3e23a5875458790b7a806f95f7ec0d0b2a5c1659bfc899c89f939f6d5b8f7094   8 days ago          /bin/sh -c #(nop) ENV LC_ALL=C.UTF-8                                                                                                                       0 B
-    8578938dd17054dce7993d21de79e96a037400e8d28e15e7290fea4f65128a36   8 days ago          /bin/sh -c dpkg-reconfigure locales &&    locale-gen C.UTF-8 &&    /usr/sbin/update-locale LANG=C.UTF-8                                                    1.245 MB
-    be51b77efb42f67a5e96437b3e102f81e0a1399038f77bf28cea0ed23a65cf60   8 days ago          /bin/sh -c apt-get update && apt-get install -y    git    libxml2-dev    python    build-essential    make    gcc    python-dev    locales    python-pip   338.3 MB
-    4b137612be55ca69776c7f30c2d2dd0aa2e7d72059820abf3e25b629f887a084   6 weeks ago         /bin/sh -c #(nop) ADD jessie.tar.xz in /                                                                                                                   121 MB
-    750d58736b4b6cc0f9a9abe8f258cef269e3e9dceced1146503522be9f985ada   6 weeks ago         /bin/sh -c #(nop) MAINTAINER Tianon Gravi <admwiggin@gmail.com> - mkimage-debootstrap.sh -t jessie.tar.xz jessie http://http.debian.net/debian             0 B
-    511136ea3c5a64f264b78b5433614aec563103b4d4702f3ba7d4d2698e22c158   9 months ago                                                                                                                                                                   0 B
+    IMAGE               CREATED             CREATED BY                                      SIZE                COMMENT
+    3e23a5875458        8 days ago          /bin/sh -c #(nop) ENV LC_ALL=C.UTF-8            0 B
+    8578938dd170        8 days ago          /bin/sh -c dpkg-reconfigure locales &&    loc   1.245 MB
+    be51b77efb42        8 days ago          /bin/sh -c apt-get update && apt-get install    338.3 MB
+    4b137612be55        6 weeks ago         /bin/sh -c #(nop) ADD jessie.tar.xz in /        121 MB
+    750d58736b4b        6 weeks ago         /bin/sh -c #(nop) MAINTAINER Tianon Gravi <ad   0 B
+    511136ea3c5a        9 months ago                                                        0 B                 Imported from -
+
+To see how the `docker:apache` image was added to a container's base image:
+
+    $ docker history docker:scm
+    IMAGE               CREATED             CREATED BY                                      SIZE                COMMENT
+    2ac9d1098bf1        3 months ago        /bin/bash                                       241.4 MB            Added Apache to Fedora base image
+    88b42ffd1f7c        5 months ago        /bin/sh -c #(nop) ADD file:1fd8d7f9f6557cafc7   373.7 MB            
+    c69cab00d6ef        5 months ago        /bin/sh -c #(nop) MAINTAINER Lokesh Mandvekar   0 B                 
+    511136ea3c5a        19 months ago                                                       0 B                 Imported from -
+
 
 ## images
 
@@ -1286,8 +1381,8 @@ the `-` parameter to take the data from `STDIN`.
 
 The `--change` option will apply `Dockerfile` instructions to the image
 that is created.
-Supported `Dockerfile` instructions: `CMD`, `ENTRYPOINT`, `ENV`, `EXPOSE`,
-`ONBUILD`, `USER`, `VOLUME`, `WORKDIR`
+Supported `Dockerfile` instructions:
+`CMD`|`ENTRYPOINT`|`ENV`|`EXPOSE`|`ONBUILD`|`USER`|`VOLUME`|`WORKDIR`
 
 #### Examples
 
@@ -1743,6 +1838,21 @@ before the image is removed.
     Untagged: test:latest
     Deleted: fd484f19954f4920da7ff372b5067f5b7ddb2fd3830cecd17b96ea9e286ba5b8
 
+If you use the `-f` flag and specify the image's short or long ID, then this
+command untags and removes all images that match the specified ID.
+
+    $ docker images
+    REPOSITORY                TAG                 IMAGE ID            CREATED             SIZE
+    test1                     latest              fd484f19954f        23 seconds ago      7 B (virtual 4.964 MB)
+    test                      latest              fd484f19954f        23 seconds ago      7 B (virtual 4.964 MB)
+    test2                     latest              fd484f19954f        23 seconds ago      7 B (virtual 4.964 MB)
+
+    $ docker rmi -f fd484f19954f
+    Untagged: test1:latest
+    Untagged: test:latest
+    Untagged: test2:latest
+    Deleted: fd484f19954f4920da7ff372b5067f5b7ddb2fd3830cecd17b96ea9e286ba5b8
+
 An image pulled by digest has no tag associated with it:
 
     $ docker images --digests
@@ -1770,6 +1880,8 @@ To remove an image using its digest:
       --cap-drop=[]              Drop Linux capabilities
       --cidfile=""               Write the container ID to the file
       --cpuset-cpus=""           CPUs in which to allow execution (0-3, 0,1)
+      --cpuset-mems=""           Memory nodes (MEMs) in which to allow execution (0-3, 0,1)
+      --cpu-quota=0              Limit the CPU CFS (Completely Fair Scheduler) quota
       -d, --detach=false         Run container in background and print container ID
       --device=[]                Add a host device to the container
       --dns=[]                   Set custom DNS servers
@@ -2269,8 +2381,8 @@ Running `docker stats` on multiple containers
 
     $ docker stats redis1 redis2
     CONTAINER           CPU %               MEM USAGE/LIMIT     MEM %               NET I/O
-    redis1              0.07%               796 KiB/64 MiB      1.21%               788 B/648 B
-    redis2              0.07%               2.746 MiB/64 MiB    4.29%               1.266 KiB/648 B
+    redis1              0.07%               796 KB/64 MB        1.21%               788 B/648 B
+    redis2              0.07%               2.746 MB/64 MB      4.29%               1.266 KB/648 B
 
 
 The `docker stats` command will only return a live stream of data for running

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"text/template"
@@ -20,25 +21,38 @@ import (
 	"github.com/docker/docker/registry"
 )
 
+// DockerCli represents the docker command line client.
+// Instances of the client can be returned from NewDockerCli.
 type DockerCli struct {
-	proto      string
-	addr       string
+	// proto holds the client protocol i.e. unix.
+	proto string
+	// addr holds the client address.
+	addr string
+	// configFile holds the configuration file (instance of registry.ConfigFile).
 	configFile *registry.ConfigFile
-	in         io.ReadCloser
-	out        io.Writer
-	err        io.Writer
-	keyFile    string
-	tlsConfig  *tls.Config
-	scheme     string
-	// inFd holds file descriptor of the client's STDIN, if it's a valid file
+	// in holds the input stream and closer (io.ReadCloser) for the client.
+	in io.ReadCloser
+	// out holds the output stream (io.Writer) for the client.
+	out io.Writer
+	// err holds the error stream (io.Writer) for the client.
+	err io.Writer
+	// keyFile holds the key file as a string.
+	keyFile string
+	// tlsConfig holds the TLS configuration for the client, and will
+	// set the scheme to https in NewDockerCli if present.
+	tlsConfig *tls.Config
+	// scheme holds the scheme of the client i.e. https.
+	scheme string
+	// inFd holds the file descriptor of the client's STDIN (if valid).
 	inFd uintptr
-	// outFd holds file descriptor of the client's STDOUT, if it's a valid file
+	// outFd holds file descriptor of the client's STDOUT (if valid).
 	outFd uintptr
-	// isTerminalIn describes if client's STDIN is a TTY
+	// isTerminalIn indicates whether the client's STDIN is a TTY
 	isTerminalIn bool
-	// isTerminalOut describes if client's STDOUT is a TTY
+	// isTerminalOut dindicates whether the client's STDOUT is a TTY
 	isTerminalOut bool
-	transport     *http.Transport
+	// transport holds the client transport instance.
+	transport *http.Transport
 }
 
 var funcMap = template.FuncMap{
@@ -107,14 +121,6 @@ func (cli *DockerCli) Subcmd(name, signature, description string, exitOnError bo
 	return flags
 }
 
-func (cli *DockerCli) LoadConfigFile() (err error) {
-	cli.configFile, err = registry.LoadConfig(homedir.Get())
-	if err != nil {
-		fmt.Fprintf(cli.err, "WARNING: %s\n", err)
-	}
-	return err
-}
-
 func (cli *DockerCli) CheckTtyInput(attachStdin, ttyMode bool) error {
 	// In order to attach to a container tty, input stream for the client must
 	// be a tty itself: redirecting or piping the client standard input is
@@ -125,6 +131,10 @@ func (cli *DockerCli) CheckTtyInput(attachStdin, ttyMode bool) error {
 	return nil
 }
 
+// NewDockerCli returns a DockerCli instance with IO output and error streams set by in, out and err.
+// The key file, protocol (i.e. unix) and address are passed in as strings, along with the tls.Config. If the tls.Config
+// is set the client scheme will be set to https.
+// The client will be given a 32-second timeout (see https://github.com/docker/docker/pull/8035).
 func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, addr string, tlsConfig *tls.Config) *DockerCli {
 	var (
 		inFd          uintptr
@@ -149,15 +159,15 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, a
 		err = out
 	}
 
-	// The transport is created here for reuse during the client session
+	// The transport is created here for reuse during the client session.
 	tr := &http.Transport{
 		TLSClientConfig: tlsConfig,
 	}
 
-	// Why 32? See issue 8035
+	// Why 32? See https://github.com/docker/docker/pull/8035.
 	timeout := 32 * time.Second
 	if proto == "unix" {
-		// no need in compressing for local communications
+		// No need for compression in local communications.
 		tr.DisableCompression = true
 		tr.Dial = func(_, _ string) (net.Conn, error) {
 			return net.DialTimeout(proto, addr, timeout)
@@ -167,9 +177,15 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, keyFile string, proto, a
 		tr.Dial = (&net.Dialer{Timeout: timeout}).Dial
 	}
 
+	configFile, e := registry.LoadConfig(filepath.Join(homedir.Get(), ".docker"))
+	if e != nil {
+		fmt.Fprintf(err, "WARNING: Error loading config file:%v\n", e)
+	}
+
 	return &DockerCli{
 		proto:         proto,
 		addr:          addr,
+		configFile:    configFile,
 		in:            in,
 		out:           out,
 		err:           err,

@@ -111,6 +111,11 @@ as you'll see in later examples.  Specifying `-t` is forbidden when the client
 standard output is redirected or piped, such as in:
 `echo test | docker run -i busybox cat`.
 
+>**Note**: A process running as PID 1 inside a container is treated
+>specially by Linux: it ignores any signal with the default action.
+>So, the process will not terminate on `SIGINT` or `SIGTERM` unless it is
+>coded to do so.
+
 ## Container identification
 
 ### Name (--name)
@@ -281,7 +286,7 @@ when sharing the host's network stack.
 
 Compared to the default `bridge` mode, the `host` mode gives *significantly*
 better networking performance since it uses the host's native networking stack
-wheras the bridge has to go through one level of virtualizaion through the
+whereas the bridge has to go through one level of virtualization through the
 docker daemon. It is recommended to run containers in this mode when their
 networking performance is critical, for example, a production Load Balancer
 or a High Performance Web Server.
@@ -469,6 +474,8 @@ container:
     -memory-swap="": Total memory limit (memory + swap, format: <number><optional unit>, where unit = b, k, m or g)
     -c, --cpu-shares=0: CPU shares (relative weight)
     --cpuset-cpus="": CPUs in which to allow execution (0-3, 0,1)
+    --cpuset-mems="": Memory nodes (MEMs) in which to allow execution (0-3, 0,1). Only effective on NUMA systems.
+    --cpu-quota=0: Limit the CPU CFS (Completely Fair Scheduler) quota
 
 ### Memory constraints
 
@@ -562,7 +569,7 @@ the number of containers running on the system.
 For example, consider three containers, one has a cpu-share of 1024 and
 two others have a cpu-share setting of 512. When processes in all three
 containers attempt to use 100% of CPU, the first container would receive
-50% of the total CPU time. If you add a fouth container with a cpu-share
+50% of the total CPU time. If you add a fourth container with a cpu-share
 of 1024, the first container only gets 33% of the CPU. The remaining containers
 receive 16.5%, 16.5% and 33% of the CPU.
 
@@ -593,6 +600,30 @@ This means processes in container can be executed on cpu 1 and cpu 3.
     $ docker run -ti --cpuset-cpus="0-2" ubuntu:14.04 /bin/bash
 
 This means processes in container can be executed on cpu 0, cpu 1 and cpu 2.
+
+We can set mems in which to allow execution for containers. Only effective
+on NUMA systems.
+
+Examples:
+
+    $ docker run -ti --cpuset-mems="1,3" ubuntu:14.04 /bin/bash
+
+This example restricts the processes in the container to only use memory from
+memory nodes 1 and 3.
+
+    $ docker run -ti --cpuset-mems="0-2" ubuntu:14.04 /bin/bash
+
+This example restricts the processes in the container to only use memory from
+memory nodes 0, 1 and 2.
+
+### CPU quota constraint
+
+The `--cpu-quota` flag limits the container's CPU usage. The default 0 value
+allows the container to take 100% of a CPU resource (1 CPU). The CFS (Completely Fair
+Scheduler) handles resource allocation for executing processes and is default
+Linux Scheduler used by the kernel. Set this value to 50000 to limit the container
+to 50% of a CPU resource. For multiple CPUs, adjust the `--cpu-quota` as necessary.
+For more information, see the [CFS documentation on bandwidth limiting](https://www.kernel.org/doc/Documentation/scheduler/sched-bwc.txt).
 
 ## Runtime privilege, Linux capabilities, and LXC configuration
 

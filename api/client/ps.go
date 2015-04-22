@@ -15,8 +15,8 @@ import (
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/parsers/filters"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/docker/pkg/stringutils"
 	"github.com/docker/docker/pkg/units"
-	"github.com/docker/docker/utils"
 )
 
 // CmdPs outputs a list of Docker containers.
@@ -135,7 +135,7 @@ func (cli *DockerCli) CmdPs(args ...string) error {
 		)
 
 		if !*noTrunc {
-			command = utils.Trunc(command, 20)
+			command = stringutils.Truncate(command, 20)
 
 			// only display the default name for the container with notrunc is passed
 			for _, name := range names {
@@ -153,7 +153,7 @@ func (cli *DockerCli) CmdPs(args ...string) error {
 
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s ago\t%s\t%s\t%s\t", ID, image, command,
 			units.HumanDuration(time.Now().UTC().Sub(time.Unix(int64(container.Created), 0))),
-			container.Status, api.NewDisplayablePorts(container.Ports), strings.Join(names, ","))
+			container.Status, api.DisplayablePorts(container.Ports), strings.Join(names, ","))
 
 		if *size {
 			if container.SizeRootFs > 0 {

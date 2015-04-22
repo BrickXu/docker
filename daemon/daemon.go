@@ -19,17 +19,20 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/autogen/dockerversion"
+	"github.com/docker/docker/daemon/events"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/execdriver/execdrivers"
 	"github.com/docker/docker/daemon/execdriver/lxc"
 	"github.com/docker/docker/daemon/graphdriver"
 	_ "github.com/docker/docker/daemon/graphdriver/vfs"
-	_ "github.com/docker/docker/daemon/networkdriver/bridge"
+	"github.com/docker/docker/daemon/network"
+	"github.com/docker/docker/daemon/networkdriver/bridge"
 	"github.com/docker/docker/engine"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/broadcastwriter"
+	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/graphdb"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/namesgenerator"
@@ -105,52 +108,24 @@ type Daemon struct {
 	containerGraph   *graphdb.Database
 	driver           graphdriver.Driver
 	execDriver       execdriver.Driver
-	trustStore       *trust.TrustStore
 	statsCollector   *statsCollector
 	defaultLogConfig runconfig.LogConfig
 	RegistryService  *registry.Service
+	EventsService    *events.Events
 }
 
 // Install installs daemon capabilities to eng.
 func (daemon *Daemon) Install(eng *engine.Engine) error {
-	// FIXME: remove ImageDelete's dependency on Daemon, then move to graph/
 	for name, method := range map[string]engine.Handler{
-		"attach":            daemon.ContainerAttach,
-		"commit":            daemon.ContainerCommit,
-		"container_changes": daemon.ContainerChanges,
-		"container_copy":    daemon.ContainerCopy,
-		"container_rename":  daemon.ContainerRename,
 		"container_inspect": daemon.ContainerInspect,
-		"container_stats":   daemon.ContainerStats,
-		"containers":        daemon.Containers,
-		"create":            daemon.ContainerCreate,
-		"rm":                daemon.ContainerRm,
-		"export":            daemon.ContainerExport,
-		"info":              daemon.CmdInfo,
-		"kill":              daemon.ContainerKill,
-		"logs":              daemon.ContainerLogs,
-		"pause":             daemon.ContainerPause,
-		"resize":            daemon.ContainerResize,
-		"restart":           daemon.ContainerRestart,
-		"start":             daemon.ContainerStart,
-		"stop":              daemon.ContainerStop,
-		"top":               daemon.ContainerTop,
-		"unpause":           daemon.ContainerUnpause,
-		"wait":              daemon.ContainerWait,
-		"image_delete":      daemon.ImageDelete, // FIXME: see above
 		"execCreate":        daemon.ContainerExecCreate,
 		"execStart":         daemon.ContainerExecStart,
-		"execResize":        daemon.ContainerExecResize,
-		"execInspect":       daemon.ContainerExecInspect,
 	} {
 		if err := eng.Register(name, method); err != nil {
 			return err
 		}
 	}
 	if err := daemon.Repositories().Install(eng); err != nil {
-		return err
-	}
-	if err := daemon.trustStore.Install(eng); err != nil {
 		return err
 	}
 	// FIXME: this hack is necessary for legacy integration tests to access
@@ -214,8 +189,6 @@ func (daemon *Daemon) load(id string) (*Container, error) {
 	if container.ID != id {
 		return container, fmt.Errorf("Container %s is stored at %s", container.ID, id)
 	}
-
-	container.readHostConfig()
 
 	return container, nil
 }
@@ -290,19 +263,8 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 		if err := container.ToDisk(); err != nil {
 			logrus.Debugf("saving stopped state to disk %s", err)
 		}
-
-		info := daemon.execDriver.Info(container.ID)
-		if !info.IsRunning() {
-			logrus.Debugf("Container %s was supposed to be running but is not.", container.ID)
-
-			logrus.Debug("Marking as stopped")
-
-			container.SetStopped(&execdriver.ExitStatus{ExitCode: -127})
-			if err := container.ToDisk(); err != nil {
-				return err
-			}
-		}
 	}
+
 	return nil
 }
 
@@ -446,10 +408,10 @@ func (daemon *Daemon) setupResolvconfWatcher() error {
 						logrus.Debugf("Error retrieving updated host resolv.conf: %v", err)
 					} else if updatedResolvConf != nil {
 						// because the new host resolv.conf might have localhost nameservers..
-						updatedResolvConf, modified := resolvconf.FilterResolvDns(updatedResolvConf, daemon.config.EnableIPv6)
+						updatedResolvConf, modified := resolvconf.FilterResolvDns(updatedResolvConf, daemon.config.Bridge.EnableIPv6)
 						if modified {
 							// changes have occurred during localhost cleanup: generate an updated hash
-							newHash, err := utils.HashData(bytes.NewReader(updatedResolvConf))
+							newHash, err := ioutils.HashData(bytes.NewReader(updatedResolvConf))
 							if err != nil {
 								logrus.Debugf("Error generating hash of new resolv.conf: %v", err)
 							} else {
@@ -500,7 +462,7 @@ func (daemon *Daemon) mergeAndVerifyConfig(config *runconfig.Config, img *image.
 			return nil, err
 		}
 	}
-	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+	if config.Entrypoint.Len() == 0 && config.Cmd.Len() == 0 {
 		return nil, fmt.Errorf("No command specified")
 	}
 	return warnings, nil
@@ -592,17 +554,20 @@ func (daemon *Daemon) generateHostname(id string, config *runconfig.Config) {
 	}
 }
 
-func (daemon *Daemon) getEntrypointAndArgs(configEntrypoint, configCmd []string) (string, []string) {
+func (daemon *Daemon) getEntrypointAndArgs(configEntrypoint *runconfig.Entrypoint, configCmd *runconfig.Command) (string, []string) {
 	var (
 		entrypoint string
 		args       []string
 	)
-	if len(configEntrypoint) != 0 {
-		entrypoint = configEntrypoint[0]
-		args = append(configEntrypoint[1:], configCmd...)
+
+	cmdSlice := configCmd.Slice()
+	if configEntrypoint.Len() != 0 {
+		eSlice := configEntrypoint.Slice()
+		entrypoint = eSlice[0]
+		args = append(eSlice[1:], cmdSlice...)
 	} else {
-		entrypoint = configCmd[0]
-		args = configCmd[1:]
+		entrypoint = cmdSlice[0]
+		args = cmdSlice[1:]
 	}
 	return entrypoint, args
 }
@@ -654,7 +619,7 @@ func (daemon *Daemon) newContainer(name string, config *runconfig.Config, imgID 
 		Config:          config,
 		hostConfig:      &runconfig.HostConfig{},
 		ImageID:         imgID,
-		NetworkSettings: &NetworkSettings{},
+		NetworkSettings: &network.Settings{},
 		Name:            name,
 		Driver:          daemon.driver.String(),
 		ExecDriver:      daemon.execDriver.Name(),
@@ -808,16 +773,16 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService 
 		config.Mtu = getDefaultNetworkMtu()
 	}
 	// Check for mutually incompatible config options
-	if config.BridgeIface != "" && config.BridgeIP != "" {
+	if config.Bridge.Iface != "" && config.Bridge.IP != "" {
 		return nil, fmt.Errorf("You specified -b & --bip, mutually exclusive options. Please specify only one.")
 	}
-	if !config.EnableIptables && !config.InterContainerCommunication {
+	if !config.Bridge.EnableIptables && !config.Bridge.InterContainerCommunication {
 		return nil, fmt.Errorf("You specified --iptables=false with --icc=false. ICC uses iptables to function. Please set --icc or --iptables to true.")
 	}
-	if !config.EnableIptables && config.EnableIpMasq {
-		config.EnableIpMasq = false
+	if !config.Bridge.EnableIptables && config.Bridge.EnableIpMasq {
+		config.Bridge.EnableIpMasq = false
 	}
-	config.DisableNetwork = config.BridgeIface == disableNetworkBridge
+	config.DisableNetwork = config.Bridge.Iface == disableNetworkBridge
 
 	// Claim the pidfile first, to avoid any and all unexpected race conditions.
 	// Some of the init doesn't need a pidfile lock - but let's not try to be smart.
@@ -848,7 +813,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService 
 	if err != nil {
 		return nil, fmt.Errorf("Unable to get the TempDir under %s: %s", config.Root, err)
 	}
-	realTmp, err := utils.ReadSymlinkedDirectory(tmp)
+	realTmp, err := fileutils.ReadSymlinkedDirectory(tmp)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to get the full path to the TempDir (%s): %s", tmp, err)
 	}
@@ -859,7 +824,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService 
 	if _, err := os.Stat(config.Root); err != nil && os.IsNotExist(err) {
 		realRoot = config.Root
 	} else {
-		realRoot, err = utils.ReadSymlinkedDirectory(config.Root)
+		realRoot, err = fileutils.ReadSymlinkedDirectory(config.Root)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to get the full path to root (%s): %s", config.Root, err)
 		}
@@ -932,37 +897,32 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService 
 		return nil, err
 	}
 
-	logrus.Debug("Creating repository list")
-	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), g, trustKey, registryService)
-	if err != nil {
-		return nil, fmt.Errorf("Couldn't create Tag store: %s", err)
-	}
-
 	trustDir := path.Join(config.Root, "trust")
 	if err := os.MkdirAll(trustDir, 0700); err != nil && !os.IsExist(err) {
 		return nil, err
 	}
-	t, err := trust.NewTrustStore(trustDir)
+	trustService, err := trust.NewTrustStore(trustDir)
 	if err != nil {
 		return nil, fmt.Errorf("could not create trust store: %s", err)
 	}
 
+	eventsService := events.New()
+	logrus.Debug("Creating repository list")
+	tagCfg := &graph.TagStoreConfig{
+		Graph:    g,
+		Key:      trustKey,
+		Registry: registryService,
+		Events:   eventsService,
+		Trust:    trustService,
+	}
+	repositories, err := graph.NewTagStore(path.Join(config.Root, "repositories-"+driver.String()), tagCfg)
+	if err != nil {
+		return nil, fmt.Errorf("Couldn't create Tag store: %s", err)
+	}
+
 	if !config.DisableNetwork {
-		job := eng.Job("init_networkdriver")
-
-		job.SetenvBool("EnableIptables", config.EnableIptables)
-		job.SetenvBool("InterContainerCommunication", config.InterContainerCommunication)
-		job.SetenvBool("EnableIpForward", config.EnableIpForward)
-		job.SetenvBool("EnableIpMasq", config.EnableIpMasq)
-		job.SetenvBool("EnableIPv6", config.EnableIPv6)
-		job.Setenv("BridgeIface", config.BridgeIface)
-		job.Setenv("BridgeIP", config.BridgeIP)
-		job.Setenv("FixedCIDR", config.FixedCIDR)
-		job.Setenv("FixedCIDRv6", config.FixedCIDRv6)
-		job.Setenv("DefaultBindingIP", config.DefaultIp.String())
-
-		if err := job.Run(); err != nil {
-			return nil, err
+		if err := bridge.InitDriver(&config.Bridge); err != nil {
+			return nil, fmt.Errorf("Error initializing Bridge: %v", err)
 		}
 	}
 
@@ -981,7 +941,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService 
 	localCopy := path.Join(config.Root, "init", fmt.Sprintf("dockerinit-%s", dockerversion.VERSION))
 	sysInitPath := utils.DockerInitPath(localCopy)
 	if sysInitPath == "" {
-		return nil, fmt.Errorf("Could not locate dockerinit: This usually means docker was built incorrectly. See http://docs.docker.com/contributing/devenvironment for official build instructions.")
+		return nil, fmt.Errorf("Could not locate dockerinit: This usually means docker was built incorrectly. See https://docs.docker.com/contributing/devenvironment for official build instructions.")
 	}
 
 	if sysInitPath != localCopy {
@@ -989,7 +949,7 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService 
 		if err := os.Mkdir(path.Dir(localCopy), 0700); err != nil && !os.IsExist(err) {
 			return nil, err
 		}
-		if _, err := utils.CopyFile(sysInitPath, localCopy); err != nil {
+		if _, err := fileutils.CopyFile(sysInitPath, localCopy); err != nil {
 			return nil, err
 		}
 		if err := os.Chmod(localCopy, 0700); err != nil {
@@ -1021,10 +981,10 @@ func NewDaemonFromDirectory(config *Config, eng *engine.Engine, registryService 
 		sysInitPath:      sysInitPath,
 		execDriver:       ed,
 		eng:              eng,
-		trustStore:       t,
 		statsCollector:   newStatsCollector(1 * time.Second),
 		defaultLogConfig: config.LogConfig,
 		RegistryService:  registryService,
+		EventsService:    eventsService,
 	}
 
 	eng.OnShutdown(func() {
@@ -1250,7 +1210,7 @@ func checkKernel() error {
 	// Unfortunately we can't test for the feature "does not cause a kernel panic"
 	// without actually causing a kernel panic, so we need this workaround until
 	// the circumstances of pre-3.8 crashes are clearer.
-	// For details see http://github.com/docker/docker/issues/407
+	// For details see https://github.com/docker/docker/issues/407
 	if k, err := kernel.GetKernelVersion(); err != nil {
 		logrus.Warnf("%s", err)
 	} else {
@@ -1261,4 +1221,39 @@ func checkKernel() error {
 		}
 	}
 	return nil
+}
+
+func (daemon *Daemon) verifyHostConfig(hostConfig *runconfig.HostConfig) ([]string, error) {
+	var warnings []string
+
+	if hostConfig == nil {
+		return warnings, nil
+	}
+
+	if hostConfig.LxcConf.Len() > 0 && !strings.Contains(daemon.ExecutionDriver().Name(), "lxc") {
+		return warnings, fmt.Errorf("Cannot use --lxc-conf with execdriver: %s", daemon.ExecutionDriver().Name())
+	}
+	if hostConfig.Memory != 0 && hostConfig.Memory < 4194304 {
+		return warnings, fmt.Errorf("Minimum memory limit allowed is 4MB")
+	}
+	if hostConfig.Memory > 0 && !daemon.SystemConfig().MemoryLimit {
+		warnings = append(warnings, "Your kernel does not support memory limit capabilities. Limitation discarded.")
+		hostConfig.Memory = 0
+	}
+	if hostConfig.Memory > 0 && hostConfig.MemorySwap != -1 && !daemon.SystemConfig().SwapLimit {
+		warnings = append(warnings, "Your kernel does not support swap limit capabilities, memory limited without swap.")
+		hostConfig.MemorySwap = -1
+	}
+	if hostConfig.Memory > 0 && hostConfig.MemorySwap > 0 && hostConfig.MemorySwap < hostConfig.Memory {
+		return warnings, fmt.Errorf("Minimum memoryswap limit should be larger than memory limit, see usage.")
+	}
+	if hostConfig.Memory == 0 && hostConfig.MemorySwap > 0 {
+		return warnings, fmt.Errorf("You should always set the Memory limit when using Memoryswap limit, see usage.")
+	}
+	if hostConfig.CpuQuota > 0 && !daemon.SystemConfig().CpuCfsQuota {
+		warnings = append(warnings, "Your kernel does not support CPU cfs quota. Quota discarded.")
+		hostConfig.CpuQuota = 0
+	}
+
+	return warnings, nil
 }

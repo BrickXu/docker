@@ -132,12 +132,15 @@ func (d *Daemon) ContainerExecCreate(job *engine.Job) error {
 		return err
 	}
 
-	entrypoint, args := d.getEntrypointAndArgs(nil, config.Cmd)
+	cmd := runconfig.NewCommand(config.Cmd...)
+	entrypoint, args := d.getEntrypointAndArgs(runconfig.NewEntrypoint(), cmd)
 
 	processConfig := execdriver.ProcessConfig{
 		Tty:        config.Tty,
 		Entrypoint: entrypoint,
 		Arguments:  args,
+		User:       config.User,
+		Privileged: config.Privileged,
 	}
 
 	execConfig := &execConfig{
@@ -218,7 +221,7 @@ func (d *Daemon) ContainerExecStart(job *engine.Job) error {
 		execConfig.StreamConfig.stdinPipe = ioutils.NopWriteCloser(ioutil.Discard) // Silently drop stdin
 	}
 
-	attachErr := d.Attach(&execConfig.StreamConfig, execConfig.OpenStdin, true, execConfig.ProcessConfig.Tty, cStdin, cStdout, cStderr)
+	attachErr := attach(&execConfig.StreamConfig, execConfig.OpenStdin, true, execConfig.ProcessConfig.Tty, cStdin, cStdout, cStderr)
 
 	execErr := make(chan error)
 
