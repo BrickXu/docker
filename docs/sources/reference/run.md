@@ -156,7 +156,7 @@ Images using the v2 or later image format have a content-addressable identifier
 called a digest. As long as the input used to generate the image is unchanged,
 the digest value is predictable and referenceable.
 
-## PID Settings (--pid)
+## PID settings (--pid)
     --pid=""  : Set the PID (Process) Namespace mode for the container,
            'host': use the host's PID namespace inside the container
 
@@ -177,7 +177,7 @@ within the container.
 This command would allow you to use `strace` inside the container on pid 1234 on
 the host.
 
-## IPC Settings (--ipc)
+## IPC settings (--ipc)
 
     --ipc=""  : Set the IPC mode for the container,
                  'container:<name|id>': reuses another container's IPC namespace
@@ -380,7 +380,7 @@ This means the daemon will wait for 100 ms, then 200 ms, 400, 800, 1600,
 and so on until either the `on-failure` limit is hit, or when you `docker stop`
 or `docker rm -f` the container.
 
-If a container is succesfully restarted (the container is started and runs
+If a container is successfully restarted (the container is started and runs
 for at least 10 seconds), the delay is reset to its default value of 100 ms.
 
 You can specify the maximum amount of times Docker will try to restart the
@@ -465,6 +465,13 @@ Note:
 
 You would have to write policy defining a `svirt_apache_t` type.
 
+## Specifying custom cgroups
+
+Using the `--cgroup-parent` flag, you can pass a specific cgroup to run a
+container in. This allows you to create and manage cgroups on their own. You can
+define custom resources for those cgroups and put containers under a common
+parent group.
+
 ## Runtime constraints on resources
 
 The operator can also adjust the performance parameters of the
@@ -476,6 +483,7 @@ container:
     --cpuset-cpus="": CPUs in which to allow execution (0-3, 0,1)
     --cpuset-mems="": Memory nodes (MEMs) in which to allow execution (0-3, 0,1). Only effective on NUMA systems.
     --cpu-quota=0: Limit the CPU CFS (Completely Fair Scheduler) quota
+    --oom-kill-disable=true|false: Whether to disable OOM Killer for the container or not.
 
 ### Memory constraints
 
@@ -551,6 +559,27 @@ would be 2*300M, so processes can use 300M swap memory as well.
 
 We set both memory and swap memory, so the processes in the container can use
 300M memory and 700M swap memory.
+
+By default, Docker kills processes in a container if an out-of-memory (OOM)
+error occurs. To change this behaviour, use the `--oom-kill-disable` option.
+Only disable the OOM killer on containers where you have also set the
+`-m/--memory` option. If the `-m` flag is not set, this can result in the host
+running out of memory and require killing the host's system processes to free
+memory.
+
+Examples:
+
+The following example limits the memory to 100M and disables the OOM killer for
+this container:
+
+    $ docker run -ti -m 100M --oom-kill-disable ubuntu:14.04 /bin/bash
+
+The following example, illustrates a dangerous way to use the flag:
+
+    $ docker run -ti --oom-kill-disable ubuntu:14.04 /bin/bash
+
+The container has unlimited memory which can cause the host to run out memory
+and require killing system processes to free memory.
 
 ### CPU share constraint
 
@@ -787,6 +816,10 @@ command is available only for this logging driver
 
 Syslog logging driver for Docker. Writes log messages to syslog. `docker logs`
 command is not available for this logging driver
+
+#### Logging driver: journald
+
+Journald logging driver for Docker. Writes log messages to journald; the container id will be stored in the journal's `CONTAINER_ID` field. `docker logs` command is not available for this logging driver.  For detailed information on working with this logging driver, see [the journald logging driver](reference/logging/journald) reference documentation.
 
 ## Overriding Dockerfile image defaults
 

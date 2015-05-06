@@ -15,7 +15,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"text/template"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 
 func (s *DockerSuite) TestBuildJSONEmptyRun(c *check.C) {
 	name := "testbuildjsonemptyrun"
-	defer deleteImages(name)
 
 	_, err := buildImage(
 		name,
@@ -45,7 +43,6 @@ func (s *DockerSuite) TestBuildJSONEmptyRun(c *check.C) {
 
 func (s *DockerSuite) TestBuildEmptyWhitespace(c *check.C) {
 	name := "testbuildemptywhitespace"
-	defer deleteImages(name)
 
 	_, err := buildImage(
 		name,
@@ -65,7 +62,6 @@ func (s *DockerSuite) TestBuildEmptyWhitespace(c *check.C) {
 
 func (s *DockerSuite) TestBuildShCmdJSONEntrypoint(c *check.C) {
 	name := "testbuildshcmdjsonentrypoint"
-	defer deleteImages(name)
 
 	_, err := buildImage(
 		name,
@@ -99,7 +95,6 @@ func (s *DockerSuite) TestBuildShCmdJSONEntrypoint(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvironmentReplacementUser(c *check.C) {
 	name := "testbuildenvironmentreplacement"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
   FROM scratch
@@ -123,7 +118,6 @@ func (s *DockerSuite) TestBuildEnvironmentReplacementUser(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvironmentReplacementVolume(c *check.C) {
 	name := "testbuildenvironmentreplacement"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
   FROM scratch
@@ -153,7 +147,6 @@ func (s *DockerSuite) TestBuildEnvironmentReplacementVolume(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvironmentReplacementExpose(c *check.C) {
 	name := "testbuildenvironmentreplacement"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
   FROM scratch
@@ -183,7 +176,6 @@ func (s *DockerSuite) TestBuildEnvironmentReplacementExpose(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvironmentReplacementWorkdir(c *check.C) {
 	name := "testbuildenvironmentreplacement"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
   FROM busybox
@@ -200,7 +192,6 @@ func (s *DockerSuite) TestBuildEnvironmentReplacementWorkdir(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvironmentReplacementAddCopy(c *check.C) {
 	name := "testbuildenvironmentreplacement"
-	defer deleteImages(name)
 
 	ctx, err := fakeContext(`
   FROM scratch
@@ -235,8 +226,6 @@ func (s *DockerSuite) TestBuildEnvironmentReplacementAddCopy(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvironmentReplacementEnv(c *check.C) {
 	name := "testbuildenvironmentreplacement"
-
-	defer deleteImages(name)
 
 	_, err := buildImage(name,
 		`
@@ -304,8 +293,6 @@ func (s *DockerSuite) TestBuildEnvironmentReplacementEnv(c *check.C) {
 
 func (s *DockerSuite) TestBuildHandleEscapes(c *check.C) {
 	name := "testbuildhandleescapes"
-
-	defer deleteImages(name)
 
 	_, err := buildImage(name,
 		`
@@ -395,8 +382,6 @@ func (s *DockerSuite) TestBuildOnBuildLowercase(c *check.C) {
 	name := "testbuildonbuildlowercase"
 	name2 := "testbuildonbuildlowercase2"
 
-	defer deleteImages(name, name2)
-
 	_, err := buildImage(name,
 		`
   FROM busybox
@@ -427,7 +412,6 @@ func (s *DockerSuite) TestBuildOnBuildLowercase(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvEscapes(c *check.C) {
 	name := "testbuildenvescapes"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`
     FROM busybox
@@ -450,7 +434,6 @@ func (s *DockerSuite) TestBuildEnvEscapes(c *check.C) {
 
 func (s *DockerSuite) TestBuildEnvOverwrite(c *check.C) {
 	name := "testbuildenvoverwrite"
-	defer deleteImages(name)
 
 	_, err := buildImage(name,
 		`
@@ -478,8 +461,6 @@ func (s *DockerSuite) TestBuildEnvOverwrite(c *check.C) {
 
 func (s *DockerSuite) TestBuildOnBuildForbiddenMaintainerInSourceImage(c *check.C) {
 	name := "testbuildonbuildforbiddenmaintainerinsourceimage"
-	defer deleteImages("onbuild")
-	defer deleteImages(name)
 
 	createCmd := exec.Command(dockerBinary, "create", "busybox", "true")
 	out, _, _, err := runCommandWithStdoutStderr(createCmd)
@@ -510,8 +491,6 @@ func (s *DockerSuite) TestBuildOnBuildForbiddenMaintainerInSourceImage(c *check.
 
 func (s *DockerSuite) TestBuildOnBuildForbiddenFromInSourceImage(c *check.C) {
 	name := "testbuildonbuildforbiddenfrominsourceimage"
-	defer deleteImages("onbuild")
-	defer deleteImages(name)
 
 	createCmd := exec.Command(dockerBinary, "create", "busybox", "true")
 	out, _, _, err := runCommandWithStdoutStderr(createCmd)
@@ -542,8 +521,6 @@ func (s *DockerSuite) TestBuildOnBuildForbiddenFromInSourceImage(c *check.C) {
 
 func (s *DockerSuite) TestBuildOnBuildForbiddenChainedInSourceImage(c *check.C) {
 	name := "testbuildonbuildforbiddenchainedinsourceimage"
-	defer deleteImages("onbuild")
-	defer deleteImages(name)
 
 	createCmd := exec.Command(dockerBinary, "create", "busybox", "true")
 	out, _, _, err := runCommandWithStdoutStderr(createCmd)
@@ -575,9 +552,6 @@ func (s *DockerSuite) TestBuildOnBuildForbiddenChainedInSourceImage(c *check.C) 
 func (s *DockerSuite) TestBuildOnBuildCmdEntrypointJSON(c *check.C) {
 	name1 := "onbuildcmd"
 	name2 := "onbuildgenerated"
-
-	defer deleteImages(name2)
-	defer deleteImages(name1)
 
 	_, err := buildImage(name1, `
 FROM busybox
@@ -611,9 +585,6 @@ func (s *DockerSuite) TestBuildOnBuildEntrypointJSON(c *check.C) {
 	name1 := "onbuildcmd"
 	name2 := "onbuildgenerated"
 
-	defer deleteImages(name2)
-	defer deleteImages(name1)
-
 	_, err := buildImage(name1, `
 FROM busybox
 ONBUILD ENTRYPOINT ["echo"]`,
@@ -642,7 +613,6 @@ ONBUILD ENTRYPOINT ["echo"]`,
 
 func (s *DockerSuite) TestBuildCacheADD(c *check.C) {
 	name := "testbuildtwoimageswithadd"
-	defer deleteImages(name)
 	server, err := fakeStorage(map[string]string{
 		"robots.txt": "hello",
 		"index.html": "world",
@@ -677,7 +647,6 @@ func (s *DockerSuite) TestBuildCacheADD(c *check.C) {
 
 func (s *DockerSuite) TestBuildLastModified(c *check.C) {
 	name := "testbuildlastmodified"
-	defer deleteImages(name)
 
 	server, err := fakeStorage(map[string]string{
 		"file": "hello",
@@ -743,7 +712,6 @@ RUN ls -le /file`
 
 func (s *DockerSuite) TestBuildSixtySteps(c *check.C) {
 	name := "foobuildsixtysteps"
-	defer deleteImages(name)
 	ctx, err := fakeContext("FROM scratch\n"+strings.Repeat("ADD foo /\n", 60),
 		map[string]string{
 			"foo": "test1",
@@ -760,7 +728,6 @@ func (s *DockerSuite) TestBuildSixtySteps(c *check.C) {
 
 func (s *DockerSuite) TestBuildAddSingleFileToRoot(c *check.C) {
 	name := "testaddimg"
-	defer deleteImages(name)
 	ctx, err := fakeContext(fmt.Sprintf(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -786,7 +753,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`, expecte
 // Issue #3960: "ADD src ." hangs
 func (s *DockerSuite) TestBuildAddSingleFileToWorkdir(c *check.C) {
 	name := "testaddsinglefiletoworkdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 ADD test_file .`,
 		map[string]string{
@@ -797,23 +763,22 @@ ADD test_file .`,
 	}
 	defer ctx.Close()
 
-	done := make(chan struct{})
+	errChan := make(chan error)
 	go func() {
-		if _, err := buildImageFromContext(name, ctx, true); err != nil {
-			c.Fatal(err)
-		}
-		close(done)
+		_, err := buildImageFromContext(name, ctx, true)
+		errChan <- err
+		close(errChan)
 	}()
 	select {
 	case <-time.After(5 * time.Second):
 		c.Fatal("Build with adding to workdir timed out")
-	case <-done:
+	case err := <-errChan:
+		c.Assert(err, check.IsNil)
 	}
 }
 
 func (s *DockerSuite) TestBuildAddSingleFileToExistDir(c *check.C) {
 	name := "testaddsinglefiletoexistdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -847,7 +812,6 @@ func (s *DockerSuite) TestBuildCopyAddMultipleFiles(c *check.C) {
 	defer server.Close()
 
 	name := "testcopymultiplefilestofile"
-	defer deleteImages(name)
 	ctx, err := fakeContext(fmt.Sprintf(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -884,7 +848,6 @@ RUN [ $(ls -l /exists/exists_file | awk '{print $3":"$4}') = 'dockerio:dockerio'
 
 func (s *DockerSuite) TestBuildAddMultipleFilesToFile(c *check.C) {
 	name := "testaddmultiplefilestofile"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 	ADD file1.txt file2.txt test
 	`,
@@ -906,7 +869,6 @@ func (s *DockerSuite) TestBuildAddMultipleFilesToFile(c *check.C) {
 
 func (s *DockerSuite) TestBuildJSONAddMultipleFilesToFile(c *check.C) {
 	name := "testjsonaddmultiplefilestofile"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 	ADD ["file1.txt", "file2.txt", "test"]
 	`,
@@ -928,7 +890,6 @@ func (s *DockerSuite) TestBuildJSONAddMultipleFilesToFile(c *check.C) {
 
 func (s *DockerSuite) TestBuildAddMultipleFilesToFileWild(c *check.C) {
 	name := "testaddmultiplefilestofilewild"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 	ADD file*.txt test
 	`,
@@ -950,7 +911,6 @@ func (s *DockerSuite) TestBuildAddMultipleFilesToFileWild(c *check.C) {
 
 func (s *DockerSuite) TestBuildJSONAddMultipleFilesToFileWild(c *check.C) {
 	name := "testjsonaddmultiplefilestofilewild"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 	ADD ["file*.txt", "test"]
 	`,
@@ -972,7 +932,6 @@ func (s *DockerSuite) TestBuildJSONAddMultipleFilesToFileWild(c *check.C) {
 
 func (s *DockerSuite) TestBuildCopyMultipleFilesToFile(c *check.C) {
 	name := "testcopymultiplefilestofile"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 	COPY file1.txt file2.txt test
 	`,
@@ -994,7 +953,6 @@ func (s *DockerSuite) TestBuildCopyMultipleFilesToFile(c *check.C) {
 
 func (s *DockerSuite) TestBuildJSONCopyMultipleFilesToFile(c *check.C) {
 	name := "testjsoncopymultiplefilestofile"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 	COPY ["file1.txt", "file2.txt", "test"]
 	`,
@@ -1016,7 +974,6 @@ func (s *DockerSuite) TestBuildJSONCopyMultipleFilesToFile(c *check.C) {
 
 func (s *DockerSuite) TestBuildAddFileWithWhitespace(c *check.C) {
 	name := "testaddfilewithwhitespace"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN mkdir "/test dir"
 RUN mkdir "/test_dir"
@@ -1052,7 +1009,6 @@ RUN [ $(cat "/test dir/test_file6") = 'test6' ]`,
 
 func (s *DockerSuite) TestBuildCopyFileWithWhitespace(c *check.C) {
 	name := "testcopyfilewithwhitespace"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN mkdir "/test dir"
 RUN mkdir "/test_dir"
@@ -1088,7 +1044,6 @@ RUN [ $(cat "/test dir/test_file6") = 'test6' ]`,
 
 func (s *DockerSuite) TestBuildAddMultipleFilesToFileWithWhitespace(c *check.C) {
 	name := "testaddmultiplefilestofilewithwhitespace"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 	ADD [ "test file1", "test file2", "test" ]
     `,
@@ -1110,7 +1065,6 @@ func (s *DockerSuite) TestBuildAddMultipleFilesToFileWithWhitespace(c *check.C) 
 
 func (s *DockerSuite) TestBuildCopyMultipleFilesToFileWithWhitespace(c *check.C) {
 	name := "testcopymultiplefilestofilewithwhitespace"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 	COPY [ "test file1", "test file2", "test" ]
         `,
@@ -1132,7 +1086,6 @@ func (s *DockerSuite) TestBuildCopyMultipleFilesToFileWithWhitespace(c *check.C)
 
 func (s *DockerSuite) TestBuildCopyWildcard(c *check.C) {
 	name := "testcopywildcard"
-	defer deleteImages(name)
 	server, err := fakeStorage(map[string]string{
 		"robots.txt": "hello",
 		"index.html": "world",
@@ -1183,7 +1136,6 @@ func (s *DockerSuite) TestBuildCopyWildcard(c *check.C) {
 
 func (s *DockerSuite) TestBuildCopyWildcardNoFind(c *check.C) {
 	name := "testcopywildcardnofind"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 	COPY file*.txt /tmp/
 	`, nil)
@@ -1204,7 +1156,6 @@ func (s *DockerSuite) TestBuildCopyWildcardNoFind(c *check.C) {
 
 func (s *DockerSuite) TestBuildCopyWildcardCache(c *check.C) {
 	name := "testcopywildcardcache"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 	COPY file1.txt /tmp/`,
 		map[string]string{
@@ -1238,7 +1189,6 @@ func (s *DockerSuite) TestBuildCopyWildcardCache(c *check.C) {
 
 func (s *DockerSuite) TestBuildAddSingleFileToNonExistingDir(c *check.C) {
 	name := "testaddsinglefiletononexistingdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1264,7 +1214,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`,
 
 func (s *DockerSuite) TestBuildAddDirContentToRoot(c *check.C) {
 	name := "testadddircontenttoroot"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1288,7 +1237,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`,
 
 func (s *DockerSuite) TestBuildAddDirContentToExistingDir(c *check.C) {
 	name := "testadddircontenttoexistingdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1314,7 +1262,6 @@ RUN [ $(ls -l /exists/test_file | awk '{print $3":"$4}') = 'root:root' ]`,
 
 func (s *DockerSuite) TestBuildAddWholeDirToRoot(c *check.C) {
 	name := "testaddwholedirtoroot"
-	defer deleteImages(name)
 	ctx, err := fakeContext(fmt.Sprintf(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1342,7 +1289,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`, expecte
 // Testing #5941
 func (s *DockerSuite) TestBuildAddEtcToRoot(c *check.C) {
 	name := "testaddetctoroot"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 ADD . /`,
 		map[string]string{
@@ -1361,7 +1307,6 @@ ADD . /`,
 // Testing #9401
 func (s *DockerSuite) TestBuildAddPreservesFilesSpecialBits(c *check.C) {
 	name := "testaddpreservesfilesspecialbits"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 ADD suidbin /usr/bin/suidbin
 RUN chmod 4755 /usr/bin/suidbin
@@ -1384,7 +1329,6 @@ RUN [ $(ls -l /usr/bin/suidbin | awk '{print $1}') = '-rwsr-xr-x' ]`,
 
 func (s *DockerSuite) TestBuildCopySingleFileToRoot(c *check.C) {
 	name := "testcopysinglefiletoroot"
-	defer deleteImages(name)
 	ctx, err := fakeContext(fmt.Sprintf(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1410,7 +1354,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`, expecte
 // Issue #3960: "ADD src ." hangs - adapted for COPY
 func (s *DockerSuite) TestBuildCopySingleFileToWorkdir(c *check.C) {
 	name := "testcopysinglefiletoworkdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 COPY test_file .`,
 		map[string]string{
@@ -1421,23 +1364,22 @@ COPY test_file .`,
 	}
 	defer ctx.Close()
 
-	done := make(chan struct{})
+	errChan := make(chan error)
 	go func() {
-		if _, err := buildImageFromContext(name, ctx, true); err != nil {
-			c.Fatal(err)
-		}
-		close(done)
+		_, err := buildImageFromContext(name, ctx, true)
+		errChan <- err
+		close(errChan)
 	}()
 	select {
 	case <-time.After(5 * time.Second):
 		c.Fatal("Build with adding to workdir timed out")
-	case <-done:
+	case err := <-errChan:
+		c.Assert(err, check.IsNil)
 	}
 }
 
 func (s *DockerSuite) TestBuildCopySingleFileToExistDir(c *check.C) {
 	name := "testcopysinglefiletoexistdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1463,7 +1405,6 @@ RUN [ $(ls -l /exists/exists_file | awk '{print $3":"$4}') = 'dockerio:dockerio'
 
 func (s *DockerSuite) TestBuildCopySingleFileToNonExistDir(c *check.C) {
 	name := "testcopysinglefiletononexistdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1488,7 +1429,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`,
 
 func (s *DockerSuite) TestBuildCopyDirContentToRoot(c *check.C) {
 	name := "testcopydircontenttoroot"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1512,7 +1452,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`,
 
 func (s *DockerSuite) TestBuildCopyDirContentToExistDir(c *check.C) {
 	name := "testcopydircontenttoexistdir"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1538,7 +1477,6 @@ RUN [ $(ls -l /exists/test_file | awk '{print $3":"$4}') = 'root:root' ]`,
 
 func (s *DockerSuite) TestBuildCopyWholeDirToRoot(c *check.C) {
 	name := "testcopywholedirtoroot"
-	defer deleteImages(name)
 	ctx, err := fakeContext(fmt.Sprintf(`FROM busybox
 RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
 RUN echo 'dockerio:x:1001:' >> /etc/group
@@ -1565,7 +1503,6 @@ RUN [ $(ls -l /exists | awk '{print $3":"$4}') = 'dockerio:dockerio' ]`, expecte
 
 func (s *DockerSuite) TestBuildCopyEtcToRoot(c *check.C) {
 	name := "testcopyetctoroot"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
 COPY . /`,
 		map[string]string{
@@ -1583,7 +1520,6 @@ COPY . /`,
 
 func (s *DockerSuite) TestBuildCopyDisallowRemote(c *check.C) {
 	name := "testcopydisallowremote"
-	defer deleteImages(name)
 	_, out, err := buildImageWithOut(name, `FROM scratch
 COPY https://index.docker.io/robots.txt /`,
 		true)
@@ -1604,7 +1540,6 @@ func (s *DockerSuite) TestBuildAddBadLinks(c *check.C) {
 	var (
 		name = "test-link-absolute"
 	)
-	defer deleteImages(name)
 	ctx, err := fakeContext(dockerfile, nil)
 	if err != nil {
 		c.Fatal(err)
@@ -1692,7 +1627,6 @@ func (s *DockerSuite) TestBuildAddBadLinksVolume(c *check.C) {
 		name       = "test-link-absolute-volume"
 		dockerfile = ""
 	)
-	defer deleteImages(name)
 
 	tempDir, err := ioutil.TempDir("", "test-link-absolute-volume-temp-")
 	if err != nil {
@@ -1737,7 +1671,6 @@ func (s *DockerSuite) TestBuildWithInaccessibleFilesInContext(c *check.C) {
 
 	{
 		name := "testbuildinaccessiblefiles"
-		defer deleteImages(name)
 		ctx, err := fakeContext("FROM scratch\nADD . /foo/", map[string]string{"fileWithoutReadAccess": "foo"})
 		if err != nil {
 			c.Fatal(err)
@@ -1770,7 +1703,6 @@ func (s *DockerSuite) TestBuildWithInaccessibleFilesInContext(c *check.C) {
 	}
 	{
 		name := "testbuildinaccessibledirectory"
-		defer deleteImages(name)
 		ctx, err := fakeContext("FROM scratch\nADD . /foo/", map[string]string{"directoryWeCantStat/bar": "foo"})
 		if err != nil {
 			c.Fatal(err)
@@ -1809,7 +1741,6 @@ func (s *DockerSuite) TestBuildWithInaccessibleFilesInContext(c *check.C) {
 	}
 	{
 		name := "testlinksok"
-		defer deleteImages(name)
 		ctx, err := fakeContext("FROM scratch\nADD . /foo/", nil)
 		if err != nil {
 			c.Fatal(err)
@@ -1829,7 +1760,6 @@ func (s *DockerSuite) TestBuildWithInaccessibleFilesInContext(c *check.C) {
 	}
 	{
 		name := "testbuildignoredinaccessible"
-		defer deleteImages(name)
 		ctx, err := fakeContext("FROM scratch\nADD . /foo/",
 			map[string]string{
 				"directoryWeCantStat/bar": "foo",
@@ -1867,7 +1797,6 @@ func (s *DockerSuite) TestBuildForceRm(c *check.C) {
 		c.Fatalf("failed to get the container count: %s", err)
 	}
 	name := "testbuildforcerm"
-	defer deleteImages(name)
 	ctx, err := fakeContext("FROM scratch\nRUN true\nRUN thiswillfail", nil)
 	if err != nil {
 		c.Fatal(err)
@@ -1899,11 +1828,7 @@ func (s *DockerSuite) TestBuildForceRm(c *check.C) {
 // * When docker events sees container start, close the "docker build" command
 // * Wait for docker events to emit a dying event.
 func (s *DockerSuite) TestBuildCancelationKillsSleep(c *check.C) {
-	var wg sync.WaitGroup
-	defer wg.Wait()
-
 	name := "testbuildcancelation"
-	defer deleteImages(name)
 
 	// (Note: one year, will never finish)
 	ctx, err := fakeContext("FROM busybox\nRUN sleep 31536000", nil)
@@ -1920,26 +1845,21 @@ func (s *DockerSuite) TestBuildCancelationKillsSleep(c *check.C) {
 	containerID := make(chan string)
 
 	startEpoch := daemonTime(c).Unix()
+	// Watch for events since epoch.
+	eventsCmd := exec.Command(
+		dockerBinary, "events",
+		"--since", strconv.FormatInt(startEpoch, 10))
+	stdout, err := eventsCmd.StdoutPipe()
+	if err != nil {
+		c.Fatal(err)
+	}
+	if err := eventsCmd.Start(); err != nil {
+		c.Fatal(err)
+	}
+	defer eventsCmd.Process.Kill()
 
-	wg.Add(1)
 	// Goroutine responsible for watching start/die events from `docker events`
 	go func() {
-		defer wg.Done()
-		// Watch for events since epoch.
-		eventsCmd := exec.Command(
-			dockerBinary, "events",
-			"--since", strconv.FormatInt(startEpoch, 10))
-		stdout, err := eventsCmd.StdoutPipe()
-		err = eventsCmd.Start()
-		if err != nil {
-			c.Fatalf("failed to start 'docker events': %s", err)
-		}
-
-		go func() {
-			<-finish
-			eventsCmd.Process.Kill()
-		}()
-
 		cid := <-containerID
 
 		matchStart := regexp.MustCompile(cid + `(.*) start$`)
@@ -1957,19 +1877,13 @@ func (s *DockerSuite) TestBuildCancelationKillsSleep(c *check.C) {
 				close(eventDie)
 			}
 		}
-
-		err = eventsCmd.Wait()
-		if err != nil && !IsKilled(err) {
-			c.Fatalf("docker events had bad exit status: %s", err)
-		}
 	}()
 
 	buildCmd := exec.Command(dockerBinary, "build", "-t", name, ".")
 	buildCmd.Dir = ctx.Dir
 
 	stdoutBuild, err := buildCmd.StdoutPipe()
-	err = buildCmd.Start()
-	if err != nil {
+	if err := buildCmd.Start(); err != nil {
 		c.Fatalf("failed to run build: %s", err)
 	}
 
@@ -1994,14 +1908,12 @@ func (s *DockerSuite) TestBuildCancelationKillsSleep(c *check.C) {
 
 	// Send a kill to the `docker build` command.
 	// Causes the underlying build to be cancelled due to socket close.
-	err = buildCmd.Process.Kill()
-	if err != nil {
+	if err := buildCmd.Process.Kill(); err != nil {
 		c.Fatalf("error killing build command: %s", err)
 	}
 
 	// Get the exit status of `docker build`, check it exited because killed.
-	err = buildCmd.Wait()
-	if err != nil && !IsKilled(err) {
+	if err := buildCmd.Wait(); err != nil && !IsKilled(err) {
 		c.Fatalf("wait failed during build run: %T %s", err, err)
 	}
 
@@ -2018,7 +1930,6 @@ func (s *DockerSuite) TestBuildCancelationKillsSleep(c *check.C) {
 
 func (s *DockerSuite) TestBuildRm(c *check.C) {
 	name := "testbuildrm"
-	defer deleteImages(name)
 	ctx, err := fakeContext("FROM scratch\nADD foo /\nADD foo /", map[string]string{"foo": "bar"})
 	if err != nil {
 		c.Fatal(err)
@@ -2090,7 +2001,6 @@ func (s *DockerSuite) TestBuildRm(c *check.C) {
 		if containerCountBefore == containerCountAfter {
 			c.Fatalf("--rm=false should have left containers behind")
 		}
-		deleteAllContainers()
 		deleteImages(name)
 
 	}
@@ -2113,7 +2023,6 @@ func (s *DockerSuite) TestBuildWithVolumes(c *check.C) {
 			"/test8]": emptyMap,
 		}
 	)
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM scratch
 		VOLUME /test1
@@ -2147,7 +2056,6 @@ func (s *DockerSuite) TestBuildWithVolumes(c *check.C) {
 func (s *DockerSuite) TestBuildMaintainer(c *check.C) {
 	name := "testbuildmaintainer"
 	expected := "dockerio"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM scratch
         MAINTAINER dockerio`,
@@ -2167,7 +2075,6 @@ func (s *DockerSuite) TestBuildMaintainer(c *check.C) {
 func (s *DockerSuite) TestBuildUser(c *check.C) {
 	name := "testbuilduser"
 	expected := "dockerio"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		RUN echo 'dockerio:x:1001:1001::/bin:/bin/false' >> /etc/passwd
@@ -2189,7 +2096,6 @@ func (s *DockerSuite) TestBuildUser(c *check.C) {
 func (s *DockerSuite) TestBuildRelativeWorkdir(c *check.C) {
 	name := "testbuildrelativeworkdir"
 	expected := "/test2/test3"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		RUN [ "$PWD" = '/' ]
@@ -2215,7 +2121,6 @@ func (s *DockerSuite) TestBuildRelativeWorkdir(c *check.C) {
 func (s *DockerSuite) TestBuildWorkdirWithEnvVariables(c *check.C) {
 	name := "testbuildworkdirwithenvvariables"
 	expected := "/test1/test2"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		ENV DIRPATH /test1
@@ -2237,7 +2142,6 @@ func (s *DockerSuite) TestBuildWorkdirWithEnvVariables(c *check.C) {
 
 func (s *DockerSuite) TestBuildRelativeCopy(c *check.C) {
 	name := "testbuildrelativecopy"
-	defer deleteImages(name)
 	dockerfile := `
 		FROM busybox
 			WORKDIR /test1
@@ -2277,7 +2181,6 @@ func (s *DockerSuite) TestBuildRelativeCopy(c *check.C) {
 func (s *DockerSuite) TestBuildEnv(c *check.C) {
 	name := "testbuildenv"
 	expected := "[PATH=/test:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin PORT=2375]"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		ENV PATH /test:$PATH
@@ -2300,7 +2203,6 @@ func (s *DockerSuite) TestBuildContextCleanup(c *check.C) {
 	testRequires(c, SameHostDaemon)
 
 	name := "testbuildcontextcleanup"
-	defer deleteImages(name)
 	entries, err := ioutil.ReadDir("/var/lib/docker/tmp")
 	if err != nil {
 		c.Fatalf("failed to list contents of tmp dir: %s", err)
@@ -2326,7 +2228,6 @@ func (s *DockerSuite) TestBuildContextCleanupFailedBuild(c *check.C) {
 	testRequires(c, SameHostDaemon)
 
 	name := "testbuildcontextcleanup"
-	defer deleteImages(name)
 	entries, err := ioutil.ReadDir("/var/lib/docker/tmp")
 	if err != nil {
 		c.Fatalf("failed to list contents of tmp dir: %s", err)
@@ -2350,8 +2251,7 @@ func (s *DockerSuite) TestBuildContextCleanupFailedBuild(c *check.C) {
 
 func (s *DockerSuite) TestBuildCmd(c *check.C) {
 	name := "testbuildcmd"
-	expected := "[/bin/echo Hello World]"
-	defer deleteImages(name)
+	expected := "{[/bin/echo Hello World]}"
 	_, err := buildImage(name,
 		`FROM scratch
         CMD ["/bin/echo", "Hello World"]`,
@@ -2370,8 +2270,7 @@ func (s *DockerSuite) TestBuildCmd(c *check.C) {
 
 func (s *DockerSuite) TestBuildExpose(c *check.C) {
 	name := "testbuildexpose"
-	expected := "map[2375/tcp:map[]]"
-	defer deleteImages(name)
+	expected := "map[2375/tcp:{}]"
 	_, err := buildImage(name,
 		`FROM scratch
         EXPOSE 2375`,
@@ -2414,7 +2313,6 @@ func (s *DockerSuite) TestBuildExposeMorePorts(c *check.C) {
 	tmpl.Execute(buf, portList)
 
 	name := "testbuildexpose"
-	defer deleteImages(name)
 	_, err := buildImage(name, buf.String(), true)
 	if err != nil {
 		c.Fatal(err)
@@ -2459,7 +2357,6 @@ func (s *DockerSuite) TestBuildExposeOrder(c *check.C) {
 
 	id1 := buildID("testbuildexpose1", "80 2375")
 	id2 := buildID("testbuildexpose2", "2375 80")
-	defer deleteImages("testbuildexpose1", "testbuildexpose2")
 	if id1 != id2 {
 		c.Errorf("EXPOSE should invalidate the cache only when ports actually changed")
 	}
@@ -2467,8 +2364,7 @@ func (s *DockerSuite) TestBuildExposeOrder(c *check.C) {
 
 func (s *DockerSuite) TestBuildExposeUpperCaseProto(c *check.C) {
 	name := "testbuildexposeuppercaseproto"
-	expected := "map[5678/udp:map[]]"
-	defer deleteImages(name)
+	expected := "map[5678/udp:{}]"
 	_, err := buildImage(name,
 		`FROM scratch
         EXPOSE 5678/UDP`,
@@ -2488,8 +2384,7 @@ func (s *DockerSuite) TestBuildExposeUpperCaseProto(c *check.C) {
 func (s *DockerSuite) TestBuildExposeHostPort(c *check.C) {
 	// start building docker file with ip:hostPort:containerPort
 	name := "testbuildexpose"
-	expected := "map[5678/tcp:map[]]"
-	defer deleteImages(name)
+	expected := "map[5678/tcp:{}]"
 	_, out, err := buildImageWithOut(name,
 		`FROM scratch
         EXPOSE 192.168.1.2:2375:5678`,
@@ -2514,7 +2409,6 @@ func (s *DockerSuite) TestBuildExposeHostPort(c *check.C) {
 func (s *DockerSuite) TestBuildEmptyEntrypointInheritance(c *check.C) {
 	name := "testbuildentrypointinheritance"
 	name2 := "testbuildentrypointinheritance2"
-	defer deleteImages(name, name2)
 
 	_, err := buildImage(name,
 		`FROM busybox
@@ -2528,7 +2422,7 @@ func (s *DockerSuite) TestBuildEmptyEntrypointInheritance(c *check.C) {
 		c.Fatal(err)
 	}
 
-	expected := "[/bin/echo]"
+	expected := "{[/bin/echo]}"
 	if res != expected {
 		c.Fatalf("Entrypoint %s, expected %s", res, expected)
 	}
@@ -2545,7 +2439,7 @@ func (s *DockerSuite) TestBuildEmptyEntrypointInheritance(c *check.C) {
 		c.Fatal(err)
 	}
 
-	expected = "[]"
+	expected = "{[]}"
 
 	if res != expected {
 		c.Fatalf("Entrypoint %s, expected %s", res, expected)
@@ -2555,8 +2449,7 @@ func (s *DockerSuite) TestBuildEmptyEntrypointInheritance(c *check.C) {
 
 func (s *DockerSuite) TestBuildEmptyEntrypoint(c *check.C) {
 	name := "testbuildentrypoint"
-	defer deleteImages(name)
-	expected := "[]"
+	expected := "{[]}"
 
 	_, err := buildImage(name,
 		`FROM busybox
@@ -2577,8 +2470,7 @@ func (s *DockerSuite) TestBuildEmptyEntrypoint(c *check.C) {
 
 func (s *DockerSuite) TestBuildEntrypoint(c *check.C) {
 	name := "testbuildentrypoint"
-	expected := "[/bin/echo]"
-	defer deleteImages(name)
+	expected := "{[/bin/echo]}"
 	_, err := buildImage(name,
 		`FROM scratch
         ENTRYPOINT ["/bin/echo"]`,
@@ -2618,7 +2510,6 @@ func (s *DockerSuite) TestBuildOnBuildLimitedInheritence(c *check.C) {
 		if err != nil {
 			c.Fatalf("build failed to complete: %s, %v", out1, err)
 		}
-		defer deleteImages(name1)
 	}
 	{
 		name2 := "testonbuildtrigger2"
@@ -2635,7 +2526,6 @@ func (s *DockerSuite) TestBuildOnBuildLimitedInheritence(c *check.C) {
 		if err != nil {
 			c.Fatalf("build failed to complete: %s, %v", out2, err)
 		}
-		defer deleteImages(name2)
 	}
 	{
 		name3 := "testonbuildtrigger3"
@@ -2653,7 +2543,6 @@ func (s *DockerSuite) TestBuildOnBuildLimitedInheritence(c *check.C) {
 			c.Fatalf("build failed to complete: %s, %v", out3, err)
 		}
 
-		defer deleteImages(name3)
 	}
 
 	// ONBUILD should be run in second build.
@@ -2670,7 +2559,6 @@ func (s *DockerSuite) TestBuildOnBuildLimitedInheritence(c *check.C) {
 
 func (s *DockerSuite) TestBuildWithCache(c *check.C) {
 	name := "testbuildwithcache"
-	defer deleteImages(name)
 	id1, err := buildImage(name,
 		`FROM scratch
 		MAINTAINER dockerio
@@ -2697,7 +2585,6 @@ func (s *DockerSuite) TestBuildWithCache(c *check.C) {
 func (s *DockerSuite) TestBuildWithoutCache(c *check.C) {
 	name := "testbuildwithoutcache"
 	name2 := "testbuildwithoutcache2"
-	defer deleteImages(name, name2)
 	id1, err := buildImage(name,
 		`FROM scratch
 		MAINTAINER dockerio
@@ -2724,8 +2611,6 @@ func (s *DockerSuite) TestBuildWithoutCache(c *check.C) {
 
 func (s *DockerSuite) TestBuildConditionalCache(c *check.C) {
 	name := "testbuildconditionalcache"
-	name2 := "testbuildconditionalcache2"
-	defer deleteImages(name, name2)
 
 	dockerfile := `
 		FROM busybox
@@ -2762,13 +2647,11 @@ func (s *DockerSuite) TestBuildConditionalCache(c *check.C) {
 	if id3 != id2 {
 		c.Fatal("Should have used the cache")
 	}
-
 }
 
 func (s *DockerSuite) TestBuildADDLocalFileWithCache(c *check.C) {
 	name := "testbuildaddlocalfilewithcache"
 	name2 := "testbuildaddlocalfilewithcache2"
-	defer deleteImages(name, name2)
 	dockerfile := `
 		FROM busybox
         MAINTAINER dockerio
@@ -2797,7 +2680,6 @@ func (s *DockerSuite) TestBuildADDLocalFileWithCache(c *check.C) {
 func (s *DockerSuite) TestBuildADDMultipleLocalFileWithCache(c *check.C) {
 	name := "testbuildaddmultiplelocalfilewithcache"
 	name2 := "testbuildaddmultiplelocalfilewithcache2"
-	defer deleteImages(name, name2)
 	dockerfile := `
 		FROM busybox
         MAINTAINER dockerio
@@ -2826,7 +2708,6 @@ func (s *DockerSuite) TestBuildADDMultipleLocalFileWithCache(c *check.C) {
 func (s *DockerSuite) TestBuildADDLocalFileWithoutCache(c *check.C) {
 	name := "testbuildaddlocalfilewithoutcache"
 	name2 := "testbuildaddlocalfilewithoutcache2"
-	defer deleteImages(name, name2)
 	dockerfile := `
 		FROM busybox
         MAINTAINER dockerio
@@ -2855,7 +2736,6 @@ func (s *DockerSuite) TestBuildADDLocalFileWithoutCache(c *check.C) {
 func (s *DockerSuite) TestBuildCopyDirButNotFile(c *check.C) {
 	name := "testbuildcopydirbutnotfile"
 	name2 := "testbuildcopydirbutnotfile2"
-	defer deleteImages(name, name2)
 	dockerfile := `
         FROM scratch
         COPY dir /tmp/`
@@ -2889,7 +2769,6 @@ func (s *DockerSuite) TestBuildADDCurrentDirWithCache(c *check.C) {
 	name3 := name + "3"
 	name4 := name + "4"
 	name5 := name + "5"
-	defer deleteImages(name, name2, name3, name4, name5)
 	dockerfile := `
         FROM scratch
         MAINTAINER dockerio
@@ -2951,7 +2830,6 @@ func (s *DockerSuite) TestBuildADDCurrentDirWithCache(c *check.C) {
 func (s *DockerSuite) TestBuildADDCurrentDirWithoutCache(c *check.C) {
 	name := "testbuildaddcurrentdirwithoutcache"
 	name2 := "testbuildaddcurrentdirwithoutcache2"
-	defer deleteImages(name, name2)
 	dockerfile := `
         FROM scratch
         MAINTAINER dockerio
@@ -2978,7 +2856,6 @@ func (s *DockerSuite) TestBuildADDCurrentDirWithoutCache(c *check.C) {
 
 func (s *DockerSuite) TestBuildADDRemoteFileWithCache(c *check.C) {
 	name := "testbuildaddremotefilewithcache"
-	defer deleteImages(name)
 	server, err := fakeStorage(map[string]string{
 		"baz": "hello",
 	})
@@ -3011,7 +2888,6 @@ func (s *DockerSuite) TestBuildADDRemoteFileWithCache(c *check.C) {
 func (s *DockerSuite) TestBuildADDRemoteFileWithoutCache(c *check.C) {
 	name := "testbuildaddremotefilewithoutcache"
 	name2 := "testbuildaddremotefilewithoutcache2"
-	defer deleteImages(name, name2)
 	server, err := fakeStorage(map[string]string{
 		"baz": "hello",
 	})
@@ -3046,8 +2922,6 @@ func (s *DockerSuite) TestBuildADDRemoteFileMTime(c *check.C) {
 	name2 := name + "2"
 	name3 := name + "3"
 	name4 := name + "4"
-
-	defer deleteImages(name, name2, name3, name4)
 
 	files := map[string]string{"baz": "hello"}
 	server, err := fakeStorage(files)
@@ -3116,7 +2990,6 @@ func (s *DockerSuite) TestBuildADDRemoteFileMTime(c *check.C) {
 
 func (s *DockerSuite) TestBuildADDLocalAndRemoteFilesWithCache(c *check.C) {
 	name := "testbuildaddlocalandremotefilewithcache"
-	defer deleteImages(name)
 	server, err := fakeStorage(map[string]string{
 		"baz": "hello",
 	})
@@ -3168,7 +3041,6 @@ CMD ["cat", "/foo"]`,
 	}
 	name := "contexttar"
 	buildCmd := exec.Command(dockerBinary, "build", "-t", name, "-")
-	defer deleteImages(name)
 	buildCmd.Stdin = context
 
 	if out, _, err := runCommandWithOutput(buildCmd); err != nil {
@@ -3195,15 +3067,12 @@ func (s *DockerSuite) TestBuildNoContext(c *check.C) {
 	if out, _ := dockerCmd(c, "run", "--rm", "nocontext"); out != "ok\n" {
 		c.Fatalf("run produced invalid output: %q, expected %q", out, "ok")
 	}
-
-	deleteImages("nocontext")
 }
 
 // TODO: TestCaching
 func (s *DockerSuite) TestBuildADDLocalAndRemoteFilesWithoutCache(c *check.C) {
 	name := "testbuildaddlocalandremotefilewithoutcache"
 	name2 := "testbuildaddlocalandremotefilewithoutcache2"
-	defer deleteImages(name, name2)
 	server, err := fakeStorage(map[string]string{
 		"baz": "hello",
 	})
@@ -3238,7 +3107,6 @@ func (s *DockerSuite) TestBuildADDLocalAndRemoteFilesWithoutCache(c *check.C) {
 
 func (s *DockerSuite) TestBuildWithVolumeOwnership(c *check.C) {
 	name := "testbuildimg"
-	defer deleteImages(name)
 
 	_, err := buildImage(name,
 		`FROM busybox:latest
@@ -3270,7 +3138,6 @@ func (s *DockerSuite) TestBuildWithVolumeOwnership(c *check.C) {
 // utilizing cache
 func (s *DockerSuite) TestBuildEntrypointRunCleanup(c *check.C) {
 	name := "testbuildcmdcleanup"
-	defer deleteImages(name)
 	if _, err := buildImage(name,
 		`FROM busybox
         RUN echo "hello"`,
@@ -3297,14 +3164,13 @@ func (s *DockerSuite) TestBuildEntrypointRunCleanup(c *check.C) {
 		c.Fatal(err)
 	}
 	// Cmd must be cleaned up
-	if expected := "<no value>"; res != expected {
-		c.Fatalf("Cmd %s, expected %s", res, expected)
+	if res != "<nil>" {
+		c.Fatalf("Cmd %s, expected nil", res)
 	}
 }
 
 func (s *DockerSuite) TestBuildForbiddenContextPath(c *check.C) {
 	name := "testbuildforbidpath"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
         ADD ../../ test/
         `,
@@ -3326,7 +3192,6 @@ func (s *DockerSuite) TestBuildForbiddenContextPath(c *check.C) {
 
 func (s *DockerSuite) TestBuildADDFileNotFound(c *check.C) {
 	name := "testbuildaddnotfound"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM scratch
         ADD foo /usr/local/bar`,
 		map[string]string{"bar": "hello"})
@@ -3345,7 +3210,6 @@ func (s *DockerSuite) TestBuildADDFileNotFound(c *check.C) {
 
 func (s *DockerSuite) TestBuildInheritance(c *check.C) {
 	name := "testbuildinheritance"
-	defer deleteImages(name)
 
 	_, err := buildImage(name,
 		`FROM scratch
@@ -3371,7 +3235,7 @@ func (s *DockerSuite) TestBuildInheritance(c *check.C) {
 	if err != nil {
 		c.Fatal(err)
 	}
-	if expected := "[/bin/echo]"; res != expected {
+	if expected := "{[/bin/echo]}"; res != expected {
 		c.Fatalf("Entrypoint %s, expected %s", res, expected)
 	}
 	ports2, err := inspectField(name, "Config.ExposedPorts")
@@ -3385,7 +3249,6 @@ func (s *DockerSuite) TestBuildInheritance(c *check.C) {
 
 func (s *DockerSuite) TestBuildFails(c *check.C) {
 	name := "testbuildfails"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		RUN sh -c "exit 23"`,
@@ -3401,7 +3264,6 @@ func (s *DockerSuite) TestBuildFails(c *check.C) {
 
 func (s *DockerSuite) TestBuildFailsDockerfileEmpty(c *check.C) {
 	name := "testbuildfails"
-	defer deleteImages(name)
 	_, err := buildImage(name, ``, true)
 	if err != nil {
 		if !strings.Contains(err.Error(), "The Dockerfile (Dockerfile) cannot be empty") {
@@ -3414,7 +3276,6 @@ func (s *DockerSuite) TestBuildFailsDockerfileEmpty(c *check.C) {
 
 func (s *DockerSuite) TestBuildOnBuild(c *check.C) {
 	name := "testbuildonbuild"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		ONBUILD RUN touch foobar`,
@@ -3433,7 +3294,6 @@ func (s *DockerSuite) TestBuildOnBuild(c *check.C) {
 
 func (s *DockerSuite) TestBuildOnBuildForbiddenChained(c *check.C) {
 	name := "testbuildonbuildforbiddenchained"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		ONBUILD ONBUILD RUN touch foobar`,
@@ -3449,7 +3309,6 @@ func (s *DockerSuite) TestBuildOnBuildForbiddenChained(c *check.C) {
 
 func (s *DockerSuite) TestBuildOnBuildForbiddenFrom(c *check.C) {
 	name := "testbuildonbuildforbiddenfrom"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		ONBUILD FROM scratch`,
@@ -3465,7 +3324,6 @@ func (s *DockerSuite) TestBuildOnBuildForbiddenFrom(c *check.C) {
 
 func (s *DockerSuite) TestBuildOnBuildForbiddenMaintainer(c *check.C) {
 	name := "testbuildonbuildforbiddenmaintainer"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		ONBUILD MAINTAINER docker.io`,
@@ -3482,7 +3340,6 @@ func (s *DockerSuite) TestBuildOnBuildForbiddenMaintainer(c *check.C) {
 // gh #2446
 func (s *DockerSuite) TestBuildAddToSymlinkDest(c *check.C) {
 	name := "testbuildaddtosymlinkdest"
-	defer deleteImages(name)
 	ctx, err := fakeContext(`FROM busybox
         RUN mkdir /foo
         RUN ln -s /foo /bar
@@ -3503,7 +3360,6 @@ func (s *DockerSuite) TestBuildAddToSymlinkDest(c *check.C) {
 
 func (s *DockerSuite) TestBuildEscapeWhitespace(c *check.C) {
 	name := "testbuildescaping"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
   FROM busybox
@@ -3527,7 +3383,6 @@ docker.com>"
 func (s *DockerSuite) TestBuildVerifyIntString(c *check.C) {
 	// Verify that strings that look like ints are still passed as strings
 	name := "testbuildstringing"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
   FROM busybox
@@ -3536,7 +3391,7 @@ func (s *DockerSuite) TestBuildVerifyIntString(c *check.C) {
 
 	out, rc, err := runCommandWithOutput(exec.Command(dockerBinary, "inspect", name))
 	if rc != 0 || err != nil {
-		c.Fatalf("Unexcepted error from inspect: rc: %v  err: %v", rc, err)
+		c.Fatalf("Unexpected error from inspect: rc: %v  err: %v", rc, err)
 	}
 
 	if !strings.Contains(out, "\"123\"") {
@@ -3547,7 +3402,6 @@ func (s *DockerSuite) TestBuildVerifyIntString(c *check.C) {
 
 func (s *DockerSuite) TestBuildDockerignore(c *check.C) {
 	name := "testbuilddockerignore"
-	defer deleteImages(name)
 	dockerfile := `
         FROM busybox
         ADD . /bla
@@ -3556,20 +3410,29 @@ func (s *DockerSuite) TestBuildDockerignore(c *check.C) {
 		RUN [[ ! -e /bla/src/_vendor ]]
 		RUN [[ ! -e /bla/.gitignore ]]
 		RUN [[ ! -e /bla/README.md ]]
+		RUN [[ ! -e /bla/dir/foo ]]
+		RUN [[ ! -e /bla/foo ]]
 		RUN [[ ! -e /bla/.git ]]`
 	ctx, err := fakeContext(dockerfile, map[string]string{
 		"Makefile":         "all:",
 		".git/HEAD":        "ref: foo",
 		"src/x.go":         "package main",
 		"src/_vendor/v.go": "package main",
+		"dir/foo":          "",
 		".gitignore":       "",
 		"README.md":        "readme",
-		".dockerignore":    ".git\npkg\n.gitignore\nsrc/_vendor\n*.md",
+		".dockerignore": `
+.git
+pkg
+.gitignore
+src/_vendor
+*.md
+dir`,
 	})
-	defer ctx.Close()
 	if err != nil {
 		c.Fatal(err)
 	}
+	defer ctx.Close()
 	if _, err := buildImageFromContext(name, ctx, true); err != nil {
 		c.Fatal(err)
 	}
@@ -3577,7 +3440,6 @@ func (s *DockerSuite) TestBuildDockerignore(c *check.C) {
 
 func (s *DockerSuite) TestBuildDockerignoreCleanPaths(c *check.C) {
 	name := "testbuilddockerignorecleanpaths"
-	defer deleteImages(name)
 	dockerfile := `
         FROM busybox
         ADD . /tmp/
@@ -3597,9 +3459,57 @@ func (s *DockerSuite) TestBuildDockerignoreCleanPaths(c *check.C) {
 	}
 }
 
+func (s *DockerSuite) TestBuildDockerignoreExceptions(c *check.C) {
+	name := "testbuilddockerignoreexceptions"
+	defer deleteImages(name)
+	dockerfile := `
+        FROM busybox
+        ADD . /bla
+		RUN [[ -f /bla/src/x.go ]]
+		RUN [[ -f /bla/Makefile ]]
+		RUN [[ ! -e /bla/src/_vendor ]]
+		RUN [[ ! -e /bla/.gitignore ]]
+		RUN [[ ! -e /bla/README.md ]]
+		RUN [[  -e /bla/dir/dir/foo ]]
+		RUN [[ ! -e /bla/dir/foo1 ]]
+		RUN [[ -f /bla/dir/e ]]
+		RUN [[ -f /bla/dir/e-dir/foo ]]
+		RUN [[ ! -e /bla/foo ]]
+		RUN [[ ! -e /bla/.git ]]`
+	ctx, err := fakeContext(dockerfile, map[string]string{
+		"Makefile":         "all:",
+		".git/HEAD":        "ref: foo",
+		"src/x.go":         "package main",
+		"src/_vendor/v.go": "package main",
+		"dir/foo":          "",
+		"dir/foo1":         "",
+		"dir/dir/f1":       "",
+		"dir/dir/foo":      "",
+		"dir/e":            "",
+		"dir/e-dir/foo":    "",
+		".gitignore":       "",
+		"README.md":        "readme",
+		".dockerignore": `
+.git
+pkg
+.gitignore
+src/_vendor
+*.md
+dir
+!dir/e*
+!dir/dir/foo`,
+	})
+	if err != nil {
+		c.Fatal(err)
+	}
+	defer ctx.Close()
+	if _, err := buildImageFromContext(name, ctx, true); err != nil {
+		c.Fatal(err)
+	}
+}
+
 func (s *DockerSuite) TestBuildDockerignoringDockerfile(c *check.C) {
 	name := "testbuilddockerignoredockerfile"
-	defer deleteImages(name)
 	dockerfile := `
         FROM busybox
 		ADD . /tmp/
@@ -3628,7 +3538,6 @@ func (s *DockerSuite) TestBuildDockerignoringDockerfile(c *check.C) {
 
 func (s *DockerSuite) TestBuildDockerignoringRenamedDockerfile(c *check.C) {
 	name := "testbuilddockerignoredockerfile"
-	defer deleteImages(name)
 	dockerfile := `
         FROM busybox
 		ADD . /tmp/
@@ -3659,7 +3568,6 @@ func (s *DockerSuite) TestBuildDockerignoringRenamedDockerfile(c *check.C) {
 
 func (s *DockerSuite) TestBuildDockerignoringDockerignore(c *check.C) {
 	name := "testbuilddockerignoredockerignore"
-	defer deleteImages(name)
 	dockerfile := `
         FROM busybox
 		ADD . /tmp/
@@ -3683,7 +3591,6 @@ func (s *DockerSuite) TestBuildDockerignoreTouchDockerfile(c *check.C) {
 	var id2 string
 
 	name := "testbuilddockerignoretouchdockerfile"
-	defer deleteImages(name)
 	dockerfile := `
         FROM busybox
 		ADD . /tmp/`
@@ -3733,7 +3640,6 @@ func (s *DockerSuite) TestBuildDockerignoreTouchDockerfile(c *check.C) {
 
 func (s *DockerSuite) TestBuildDockerignoringWholeDir(c *check.C) {
 	name := "testbuilddockerignorewholedir"
-	defer deleteImages(name)
 	dockerfile := `
         FROM busybox
 		COPY . /
@@ -3742,6 +3648,7 @@ func (s *DockerSuite) TestBuildDockerignoringWholeDir(c *check.C) {
 	ctx, err := fakeContext(dockerfile, map[string]string{
 		"Dockerfile":    "FROM scratch",
 		"Makefile":      "all:",
+		".gitignore":    "",
 		".dockerignore": ".*\n",
 	})
 	defer ctx.Close()
@@ -3755,7 +3662,6 @@ func (s *DockerSuite) TestBuildDockerignoringWholeDir(c *check.C) {
 
 func (s *DockerSuite) TestBuildLineBreak(c *check.C) {
 	name := "testbuildlinebreak"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM  busybox
 RUN    sh -c 'echo root:testpass \
@@ -3771,7 +3677,6 @@ RUN    [ "$(ls -d /var/run/sshd)" = "/var/run/sshd" ]`,
 
 func (s *DockerSuite) TestBuildEOLInLine(c *check.C) {
 	name := "testbuildeolinline"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM   busybox
 RUN    sh -c 'echo root:testpass > /tmp/passwd'
@@ -3787,7 +3692,6 @@ RUN    [ "$(ls -d /var/run/sshd)" = "/var/run/sshd" ]`,
 
 func (s *DockerSuite) TestBuildCommentsShebangs(c *check.C) {
 	name := "testbuildcomments"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 # This is an ordinary comment.
@@ -3806,7 +3710,6 @@ RUN [ "$(/hello.sh)" = "hello world" ]`,
 
 func (s *DockerSuite) TestBuildUsersAndGroups(c *check.C) {
 	name := "testbuildusers"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 
@@ -3869,7 +3772,6 @@ RUN [ "$(id -u):$(id -g)/$(id -un):$(id -gn)/$(id -G):$(id -Gn)" = '1042:1043/10
 
 func (s *DockerSuite) TestBuildEnvUsage(c *check.C) {
 	name := "testbuildenvusage"
-	defer deleteImages(name)
 	dockerfile := `FROM busybox
 ENV    HOME /root
 ENV    PATH $HOME/bin:$PATH
@@ -3905,7 +3807,6 @@ RUN    [ "$ghi" = "def" ]
 
 func (s *DockerSuite) TestBuildEnvUsage2(c *check.C) {
 	name := "testbuildenvusage2"
-	defer deleteImages(name)
 	dockerfile := `FROM busybox
 ENV    abc=def
 RUN    [ "$abc" = "def" ]
@@ -4008,7 +3909,6 @@ RUN    [ "$eee1,$eee2,$eee3,$eee4" = 'foo,foo,foo,foo' ]
 
 func (s *DockerSuite) TestBuildAddScript(c *check.C) {
 	name := "testbuildaddscript"
-	defer deleteImages(name)
 	dockerfile := `
 FROM busybox
 ADD test /test
@@ -4031,7 +3931,6 @@ RUN [ "$(cat /testfile)" = 'test!' ]`
 
 func (s *DockerSuite) TestBuildAddTar(c *check.C) {
 	name := "testbuildaddtar"
-	defer deleteImages(name)
 
 	ctx := func() *FakeContext {
 		dockerfile := `
@@ -4086,7 +3985,6 @@ RUN cat /existing-directory-trailing-slash/test/foo | grep Hi`
 
 func (s *DockerSuite) TestBuildAddTarXz(c *check.C) {
 	name := "testbuildaddtarxz"
-	defer deleteImages(name)
 
 	ctx := func() *FakeContext {
 		dockerfile := `
@@ -4137,7 +4035,6 @@ func (s *DockerSuite) TestBuildAddTarXz(c *check.C) {
 
 func (s *DockerSuite) TestBuildAddTarXzGz(c *check.C) {
 	name := "testbuildaddtarxzgz"
-	defer deleteImages(name)
 
 	ctx := func() *FakeContext {
 		dockerfile := `
@@ -4196,7 +4093,6 @@ func (s *DockerSuite) TestBuildAddTarXzGz(c *check.C) {
 
 func (s *DockerSuite) TestBuildFromGIT(c *check.C) {
 	name := "testbuildfromgit"
-	defer deleteImages(name)
 	git, err := fakeGIT("repo", map[string]string{
 		"Dockerfile": `FROM busybox
 					ADD first /first
@@ -4222,9 +4118,37 @@ func (s *DockerSuite) TestBuildFromGIT(c *check.C) {
 	}
 }
 
+func (s *DockerSuite) TestBuildFromGITWithContext(c *check.C) {
+	name := "testbuildfromgit"
+	defer deleteImages(name)
+	git, err := fakeGIT("repo", map[string]string{
+		"docker/Dockerfile": `FROM busybox
+					ADD first /first
+					RUN [ -f /first ]
+					MAINTAINER docker`,
+		"docker/first": "test git data",
+	}, true)
+	if err != nil {
+		c.Fatal(err)
+	}
+	defer git.Close()
+
+	u := fmt.Sprintf("%s#master:docker", git.RepoURL)
+	_, err = buildImageFromPath(name, u, true)
+	if err != nil {
+		c.Fatal(err)
+	}
+	res, err := inspectField(name, "Author")
+	if err != nil {
+		c.Fatal(err)
+	}
+	if res != "docker" {
+		c.Fatalf("Maintainer should be docker, got %s", res)
+	}
+}
+
 func (s *DockerSuite) TestBuildCleanupCmdOnEntrypoint(c *check.C) {
 	name := "testbuildcmdcleanuponentrypoint"
-	defer deleteImages(name)
 	if _, err := buildImage(name,
 		`FROM scratch
         CMD ["test"]
@@ -4242,21 +4166,21 @@ func (s *DockerSuite) TestBuildCleanupCmdOnEntrypoint(c *check.C) {
 	if err != nil {
 		c.Fatal(err)
 	}
-	if expected := "<no value>"; res != expected {
-		c.Fatalf("Cmd %s, expected %s", res, expected)
+	if res != "<nil>" {
+		c.Fatalf("Cmd %s, expected nil", res)
 	}
+
 	res, err = inspectField(name, "Config.Entrypoint")
 	if err != nil {
 		c.Fatal(err)
 	}
-	if expected := "[cat]"; res != expected {
+	if expected := "{[cat]}"; res != expected {
 		c.Fatalf("Entrypoint %s, expected %s", res, expected)
 	}
 }
 
 func (s *DockerSuite) TestBuildClearCmd(c *check.C) {
 	name := "testbuildclearcmd"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`From scratch
    ENTRYPOINT ["/bin/bash"]
@@ -4276,7 +4200,6 @@ func (s *DockerSuite) TestBuildClearCmd(c *check.C) {
 
 func (s *DockerSuite) TestBuildEmptyCmd(c *check.C) {
 	name := "testbuildemptycmd"
-	defer deleteImages(name)
 	if _, err := buildImage(name, "FROM scratch\nMAINTAINER quux\n", true); err != nil {
 		c.Fatal(err)
 	}
@@ -4291,13 +4214,9 @@ func (s *DockerSuite) TestBuildEmptyCmd(c *check.C) {
 
 func (s *DockerSuite) TestBuildOnBuildOutput(c *check.C) {
 	name := "testbuildonbuildparent"
-	defer deleteImages(name)
 	if _, err := buildImage(name, "FROM busybox\nONBUILD RUN echo foo\n", true); err != nil {
 		c.Fatal(err)
 	}
-
-	childname := "testbuildonbuildchild"
-	defer deleteImages(childname)
 
 	_, out, err := buildImageWithOut(name, "FROM "+name+"\nMAINTAINER quux\n", true)
 	if err != nil {
@@ -4312,7 +4231,6 @@ func (s *DockerSuite) TestBuildOnBuildOutput(c *check.C) {
 
 func (s *DockerSuite) TestBuildInvalidTag(c *check.C) {
 	name := "abcd:" + stringutils.GenerateRandomAlphaOnlyString(200)
-	defer deleteImages(name)
 	_, out, err := buildImageWithOut(name, "FROM scratch\nMAINTAINER quux\n", true)
 	// if the error doesnt check for illegal tag name, or the image is built
 	// then this should fail
@@ -4323,7 +4241,6 @@ func (s *DockerSuite) TestBuildInvalidTag(c *check.C) {
 
 func (s *DockerSuite) TestBuildCmdShDashC(c *check.C) {
 	name := "testbuildcmdshc"
-	defer deleteImages(name)
 	if _, err := buildImage(name, "FROM busybox\nCMD echo cmd\n", true); err != nil {
 		c.Fatal(err)
 	}
@@ -4346,7 +4263,6 @@ func (s *DockerSuite) TestBuildCmdSpaces(c *check.C) {
 	// the arg separator to make sure ["echo","hi"] and ["echo hi"] don't
 	// look the same
 	name := "testbuildcmdspaces"
-	defer deleteImages(name)
 	var id1 string
 	var id2 string
 	var err error
@@ -4380,7 +4296,6 @@ func (s *DockerSuite) TestBuildCmdSpaces(c *check.C) {
 
 func (s *DockerSuite) TestBuildCmdJSONNoShDashC(c *check.C) {
 	name := "testbuildcmdjson"
-	defer deleteImages(name)
 	if _, err := buildImage(name, "FROM busybox\nCMD [\"echo\", \"cmd\"]", true); err != nil {
 		c.Fatal(err)
 	}
@@ -4400,7 +4315,6 @@ func (s *DockerSuite) TestBuildCmdJSONNoShDashC(c *check.C) {
 
 func (s *DockerSuite) TestBuildErrorInvalidInstruction(c *check.C) {
 	name := "testbuildignoreinvalidinstruction"
-	defer deleteImages(name)
 
 	out, _, err := buildImageWithOut(name, "FROM busybox\nfoo bar", true)
 	if err == nil {
@@ -4410,7 +4324,6 @@ func (s *DockerSuite) TestBuildErrorInvalidInstruction(c *check.C) {
 }
 
 func (s *DockerSuite) TestBuildEntrypointInheritance(c *check.C) {
-	defer deleteImages("parent", "child")
 
 	if _, err := buildImage("parent", `
     FROM busybox
@@ -4447,8 +4360,6 @@ func (s *DockerSuite) TestBuildEntrypointInheritanceInspect(c *check.C) {
 		expected = `["/bin/sh","-c","echo quux"]`
 	)
 
-	defer deleteImages(name, name2)
-
 	if _, err := buildImage(name, "FROM busybox\nENTRYPOINT /foo/bar", true); err != nil {
 		c.Fatal(err)
 	}
@@ -4481,7 +4392,6 @@ func (s *DockerSuite) TestBuildEntrypointInheritanceInspect(c *check.C) {
 
 func (s *DockerSuite) TestBuildRunShEntrypoint(c *check.C) {
 	name := "testbuildentrypoint"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
                                 ENTRYPOINT /bin/echo`,
@@ -4500,11 +4410,10 @@ func (s *DockerSuite) TestBuildRunShEntrypoint(c *check.C) {
 
 func (s *DockerSuite) TestBuildExoticShellInterpolation(c *check.C) {
 	name := "testbuildexoticshellinterpolation"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
 		FROM busybox
-		
+
 		ENV SOME_VAR a.b.c
 
 		RUN [ "$SOME_VAR"       = 'a.b.c' ]
@@ -4534,7 +4443,6 @@ func (s *DockerSuite) TestBuildVerifySingleQuoteFails(c *check.C) {
 	// as a "string" insead of "JSON array" and pass it on to "sh -c" and
 	// it should barf on it.
 	name := "testbuildsinglequotefails"
-	defer deleteImages(name)
 
 	_, err := buildImage(name,
 		`FROM busybox
@@ -4550,7 +4458,6 @@ func (s *DockerSuite) TestBuildVerifySingleQuoteFails(c *check.C) {
 
 func (s *DockerSuite) TestBuildVerboseOut(c *check.C) {
 	name := "testbuildverboseout"
-	defer deleteImages(name)
 
 	_, out, err := buildImageWithOut(name,
 		`FROM busybox
@@ -4568,7 +4475,6 @@ RUN echo 123`,
 
 func (s *DockerSuite) TestBuildWithTabs(c *check.C) {
 	name := "testbuildwithtabs"
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		"FROM busybox\nRUN echo\tone\t\ttwo", true)
 	if err != nil {
@@ -4588,7 +4494,6 @@ func (s *DockerSuite) TestBuildWithTabs(c *check.C) {
 func (s *DockerSuite) TestBuildLabels(c *check.C) {
 	name := "testbuildlabel"
 	expected := `{"License":"GPL","Vendor":"Acme"}`
-	defer deleteImages(name)
 	_, err := buildImage(name,
 		`FROM busybox
 		LABEL Vendor=Acme
@@ -4608,7 +4513,6 @@ func (s *DockerSuite) TestBuildLabels(c *check.C) {
 
 func (s *DockerSuite) TestBuildLabelsCache(c *check.C) {
 	name := "testbuildlabelcache"
-	defer deleteImages(name)
 
 	id1, err := buildImage(name,
 		`FROM busybox
@@ -4659,7 +4563,6 @@ func (s *DockerSuite) TestBuildStderr(c *check.C) {
 	// This test just makes sure that no non-error output goes
 	// to stderr
 	name := "testbuildstderr"
-	defer deleteImages(name)
 	_, _, stderr, err := buildImageWithStdoutStderr(name,
 		"FROM busybox\nRUN echo one", true)
 	if err != nil {
@@ -4685,7 +4588,6 @@ func (s *DockerSuite) TestBuildChownSingleFile(c *check.C) {
 	testRequires(c, UnixCli) // test uses chown: not available on windows
 
 	name := "testbuildchownsinglefile"
-	defer deleteImages(name)
 
 	ctx, err := fakeContext(`
 FROM busybox
@@ -4765,7 +4667,6 @@ func (s *DockerSuite) TestBuildSymlinkBreakout(c *check.C) {
 
 func (s *DockerSuite) TestBuildXZHost(c *check.C) {
 	name := "testbuildxzhost"
-	defer deleteImages(name)
 
 	ctx, err := fakeContext(`
 FROM busybox
@@ -4796,7 +4697,6 @@ func (s *DockerSuite) TestBuildVolumesRetainContents(c *check.C) {
 		name     = "testbuildvolumescontent"
 		expected = "some text"
 	)
-	defer deleteImages(name)
 	ctx, err := fakeContext(`
 FROM busybox
 COPY content /foo/file
@@ -4929,7 +4829,6 @@ func (s *DockerSuite) TestBuildRenamedDockerfile(c *check.C) {
 
 func (s *DockerSuite) TestBuildFromMixedcaseDockerfile(c *check.C) {
 	testRequires(c, UnixCli) // Dockerfile overwrites dockerfile on windows
-	defer deleteImages("test1")
 
 	ctx, err := fakeContext(`FROM busybox
 	RUN echo from dockerfile`,
@@ -4954,7 +4853,6 @@ func (s *DockerSuite) TestBuildFromMixedcaseDockerfile(c *check.C) {
 
 func (s *DockerSuite) TestBuildWithTwoDockerfiles(c *check.C) {
 	testRequires(c, UnixCli) // Dockerfile overwrites dockerfile on windows
-	defer deleteImages("test1")
 
 	ctx, err := fakeContext(`FROM busybox
 RUN echo from Dockerfile`,
@@ -4978,7 +4876,6 @@ RUN echo from Dockerfile`,
 }
 
 func (s *DockerSuite) TestBuildFromURLWithF(c *check.C) {
-	defer deleteImages("test1")
 
 	server, err := fakeStorage(map[string]string{"baz": `FROM busybox
 RUN echo from baz
@@ -5013,7 +4910,6 @@ RUN echo from Dockerfile`,
 }
 
 func (s *DockerSuite) TestBuildFromStdinWithF(c *check.C) {
-	defer deleteImages("test1")
 
 	ctx, err := fakeContext(`FROM busybox
 RUN echo from Dockerfile`,
@@ -5121,8 +5017,6 @@ func (s *DockerSuite) TestBuildDockerfileOutsideContext(c *check.C) {
 	if err == nil {
 		c.Fatalf("Expected error. Out: %s", out)
 	}
-	deleteImages(name)
-
 }
 
 func (s *DockerSuite) TestBuildSpaces(c *check.C) {
@@ -5134,7 +5028,6 @@ func (s *DockerSuite) TestBuildSpaces(c *check.C) {
 	)
 
 	name := "testspaces"
-	defer deleteImages(name)
 	ctx, err := fakeContext("FROM busybox\nCOPY\n",
 		map[string]string{
 			"Dockerfile": "FROM busybox\nCOPY\n",
@@ -5199,7 +5092,6 @@ func (s *DockerSuite) TestBuildSpaces(c *check.C) {
 func (s *DockerSuite) TestBuildSpacesWithQuotes(c *check.C) {
 	// Test to make sure that spaces in quotes aren't lost
 	name := "testspacesquotes"
-	defer deleteImages(name)
 
 	dockerfile := `FROM busybox
 RUN echo "  \
@@ -5212,7 +5104,7 @@ RUN echo "  \
 
 	expecting := "\n    foo  \n"
 	if !strings.Contains(out, expecting) {
-		c.Fatalf("Bad output: %q expecting to contian %q", out, expecting)
+		c.Fatalf("Bad output: %q expecting to contain %q", out, expecting)
 	}
 
 }
@@ -5275,7 +5167,6 @@ func (s *DockerSuite) TestBuildMissingArgs(c *check.C) {
 }
 
 func (s *DockerSuite) TestBuildEmptyScratch(c *check.C) {
-	defer deleteImages("sc")
 	_, out, err := buildImageWithOut("sc", "FROM scratch", true)
 	if err == nil {
 		c.Fatalf("Build was supposed to fail")
@@ -5286,7 +5177,6 @@ func (s *DockerSuite) TestBuildEmptyScratch(c *check.C) {
 }
 
 func (s *DockerSuite) TestBuildDotDotFile(c *check.C) {
-	defer deleteImages("sc")
 	ctx, err := fakeContext("FROM busybox\n",
 		map[string]string{
 			"..gitme": "",
@@ -5302,7 +5192,6 @@ func (s *DockerSuite) TestBuildDotDotFile(c *check.C) {
 }
 
 func (s *DockerSuite) TestBuildNotVerbose(c *check.C) {
-	defer deleteImages("verbose")
 
 	ctx, err := fakeContext("FROM busybox\nENV abc=hi\nRUN echo $abc there", map[string]string{})
 	if err != nil {
@@ -5337,8 +5226,6 @@ func (s *DockerSuite) TestBuildNotVerbose(c *check.C) {
 func (s *DockerSuite) TestBuildRUNoneJSON(c *check.C) {
 	name := "testbuildrunonejson"
 
-	defer deleteImages(name, "hello-world")
-
 	ctx, err := fakeContext(`FROM hello-world:frozen
 RUN [ "/hello" ]`, map[string]string{})
 	if err != nil {
@@ -5361,7 +5248,6 @@ RUN [ "/hello" ]`, map[string]string{})
 
 func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
 	name := "testbuildresourceconstraints"
-	defer deleteImages(name, "hello-world")
 
 	ctx, err := fakeContext(`
 	FROM hello-world:frozen
@@ -5371,7 +5257,7 @@ func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
 		c.Fatal(err)
 	}
 
-	cmd := exec.Command(dockerBinary, "build", "--no-cache", "--rm=false", "--memory=64m", "--memory-swap=-1", "--cpuset-cpus=0", "--cpuset-mems=0", "--cpu-shares=100", "-t", name, ".")
+	cmd := exec.Command(dockerBinary, "build", "--no-cache", "--rm=false", "--memory=64m", "--memory-swap=-1", "--cpuset-cpus=0", "--cpuset-mems=0", "--cpu-shares=100", "--cpu-quota=8000", "-t", name, ".")
 	cmd.Dir = ctx.Dir
 
 	out, _, err := runCommandWithOutput(cmd)
@@ -5383,11 +5269,12 @@ func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
 	cID := strings.TrimSpace(out)
 
 	type hostConfig struct {
-		Memory     float64 // Use float64 here since the json decoder sees it that way
-		MemorySwap int
+		Memory     int64
+		MemorySwap int64
 		CpusetCpus string
 		CpusetMems string
-		CpuShares  int
+		CpuShares  int64
+		CpuQuota   int64
 	}
 
 	cfg, err := inspectFieldJSON(cID, "HostConfig")
@@ -5399,10 +5286,9 @@ func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
 	if err := json.Unmarshal([]byte(cfg), &c1); err != nil {
 		c.Fatal(err, cfg)
 	}
-	mem := int64(c1.Memory)
-	if mem != 67108864 || c1.MemorySwap != -1 || c1.CpusetCpus != "0" || c1.CpusetMems != "0" || c1.CpuShares != 100 {
-		c.Fatalf("resource constraints not set properly:\nMemory: %d, MemSwap: %d, CpusetCpus: %s, CpusetMems: %s, CpuShares: %d",
-			mem, c1.MemorySwap, c1.CpusetCpus, c1.CpusetMems, c1.CpuShares)
+	if c1.Memory != 67108864 || c1.MemorySwap != -1 || c1.CpusetCpus != "0" || c1.CpusetMems != "0" || c1.CpuShares != 100 || c1.CpuQuota != 8000 {
+		c.Fatalf("resource constraints not set properly:\nMemory: %d, MemSwap: %d, CpusetCpus: %s, CpusetMems: %s, CpuShares: %d, CpuQuota: %d",
+			c1.Memory, c1.MemorySwap, c1.CpusetCpus, c1.CpusetMems, c1.CpuShares, c1.CpuQuota)
 	}
 
 	// Make sure constraints aren't saved to image
@@ -5416,17 +5302,15 @@ func (s *DockerSuite) TestBuildResourceConstraintsAreUsed(c *check.C) {
 	if err := json.Unmarshal([]byte(cfg), &c2); err != nil {
 		c.Fatal(err, cfg)
 	}
-	mem = int64(c2.Memory)
-	if mem == 67108864 || c2.MemorySwap == -1 || c2.CpusetCpus == "0" || c2.CpusetMems == "0" || c2.CpuShares == 100 {
-		c.Fatalf("resource constraints leaked from build:\nMemory: %d, MemSwap: %d, CpusetCpus: %s, CpusetMems: %s, CpuShares: %d",
-			mem, c2.MemorySwap, c2.CpusetCpus, c2.CpusetMems, c2.CpuShares)
+	if c2.Memory == 67108864 || c2.MemorySwap == -1 || c2.CpusetCpus == "0" || c2.CpusetMems == "0" || c2.CpuShares == 100 || c2.CpuQuota == 8000 {
+		c.Fatalf("resource constraints leaked from build:\nMemory: %d, MemSwap: %d, CpusetCpus: %s, CpusetMems: %s, CpuShares: %d, CpuQuota: %d",
+			c2.Memory, c2.MemorySwap, c2.CpusetCpus, c2.CpusetMems, c2.CpuShares, c2.CpuQuota)
 	}
 
 }
 
 func (s *DockerSuite) TestBuildEmptyStringVolume(c *check.C) {
 	name := "testbuildemptystringvolume"
-	defer deleteImages(name)
 
 	_, err := buildImage(name, `
   FROM busybox
@@ -5437,4 +5321,66 @@ func (s *DockerSuite) TestBuildEmptyStringVolume(c *check.C) {
 		c.Fatal("Should have failed to build")
 	}
 
+}
+
+func (s *DockerSuite) TestBuildContainerWithCgroupParent(c *check.C) {
+	testRequires(c, NativeExecDriver)
+	testRequires(c, SameHostDaemon)
+	defer deleteImages()
+
+	cgroupParent := "test"
+	data, err := ioutil.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		c.Fatalf("failed to read '/proc/self/cgroup - %v", err)
+	}
+	selfCgroupPaths := parseCgroupPaths(string(data))
+	_, found := selfCgroupPaths["memory"]
+	if !found {
+		c.Fatalf("unable to find self cpu cgroup path. CgroupsPath: %v", selfCgroupPaths)
+	}
+	cmd := exec.Command(dockerBinary, "build", "--cgroup-parent", cgroupParent, "-")
+	cmd.Stdin = strings.NewReader(`
+FROM busybox
+RUN cat /proc/self/cgroup
+`)
+
+	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		c.Fatalf("unexpected failure when running container with --cgroup-parent option - %s\n%v", string(out), err)
+	}
+}
+
+func (s *DockerSuite) TestBuildNoDupOutput(c *check.C) {
+	// Check to make sure our build output prints the Dockerfile cmd
+	// property - there was a bug that caused it to be duplicated on the
+	// Step X  line
+	name := "testbuildnodupoutput"
+
+	_, out, err := buildImageWithOut(name, `
+  FROM busybox
+  RUN env`, false)
+	if err != nil {
+		c.Fatalf("Build should have worked: %q", err)
+	}
+
+	exp := "\nStep 1 : RUN env\n"
+	if !strings.Contains(out, exp) {
+		c.Fatalf("Bad output\nGot:%s\n\nExpected to contain:%s\n", out, exp)
+	}
+}
+
+func (s *DockerSuite) TestBuildBadCmdFlag(c *check.C) {
+	name := "testbuildbadcmdflag"
+
+	_, out, err := buildImageWithOut(name, `
+  FROM busybox
+  MAINTAINER --boo joe@example.com`, false)
+	if err == nil {
+		c.Fatal("Build should have failed")
+	}
+
+	exp := `"Unknown flag: boo"`
+	if !strings.Contains(out, exp) {
+		c.Fatalf("Bad output\nGot:%s\n\nExpected to contain:%s\n", out, exp)
+	}
 }

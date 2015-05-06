@@ -24,7 +24,7 @@ the `docker` command, your system administrator can create a Unix group called
 For more information about installing Docker or `sudo` configuration, refer to
 the [installation](/installation) instructions for your operating system.
 
-## Environment Variables
+## Environment variables
 
 For easy reference, the following list of environment variables are supported
 by the `docker` command line:
@@ -48,7 +48,7 @@ These Go environment variables are case-insensitive. See the
 [Go specification](http://golang.org/pkg/net/http/) for details on these
 variables.
 
-## Configuration Files
+## Configuration files
 
 The Docker command line stores its configuration files in a directory called
 `.docker` within your `HOME` directory. Docker manages most of the files in
@@ -442,7 +442,7 @@ Currently supported options are:
     > Otherwise, set this flag for migrating existing Docker daemons to a
     > daemon with a supported environment.
 
-### Docker exec-driver option
+### Docker execdriver option
 
 The Docker daemon uses a specifically built `libcontainer` execution driver as its
 interface to the Linux kernel `namespaces`, `cgroups`, and `SELinux`.
@@ -452,6 +452,21 @@ https://linuxcontainers.org/) via the `lxc` execution driver, however, this is
 not where the primary development of new functionality is taking place.
 Add `-e lxc` to the daemon flags to use the `lxc` execution driver.
 
+#### Options for the native execdriver
+
+You can configure the `native` (libcontainer) execdriver using options specified
+with the `--exec-opt` flag. All the flag's options have the `native` prefix. A
+single `native.cgroupdriver` option is available.
+
+The `native.cgroupdriver` option specifies the management of the container's 
+cgroups. You can specify `cgroupfs` or `systemd`. If you specify `systemd` and 
+it is not available, the system uses `cgroupfs`. By default, if no option is 
+specified, the execdriver first tries `systemd` and falls back to `cgroupfs`. 
+This example sets the execdriver to `cgroupfs`:
+
+    $ sudo docker -d --exec-opt native.cgroupdriver=cgroupfs
+     
+Setting this option applies to all containers the daemon launches.
 
 ### Daemon DNS options
 
@@ -627,8 +642,9 @@ is returned by the `docker attach` command to its caller too:
       -m, --memory=""          Memory limit for all build containers
       --memory-swap=""         Total memory (memory + swap), `-1` to disable swap
       -c, --cpu-shares         CPU Shares (relative weight)
-      --cpuset-cpus=""         CPUs in which to allow execution, e.g. `0-3`, `0,1`
       --cpuset-mems=""         MEMs in which to allow execution, e.g. `0-3`, `0,1`
+      --cpuset-cpus=""         CPUs in which to allow exection, e.g. `0-3`, `0,1`
+      --cgroup-parent=""       Optional parent cgroup for the container
 
 Builds Docker images from a Dockerfile and a "context". A build's context is
 the files located in the specified `PATH` or `URL`.  The build process can
@@ -636,12 +652,36 @@ refer to any of the files in the context. For example, your build can use
 an [*ADD*](/reference/builder/#add) instruction to reference a file in the
 context.
 
-The `URL` parameter can specify the location of a Git repository; in this
-case,  the repository is the context. The Git repository is recursively
-cloned with its submodules.  The system does a fresh `git clone -recursive`
-in a temporary directory on your local host. Then, this clone is sent to
-the Docker daemon as the context. Local clones give you the ability to
-access private repositories using local user credentials, VPN's, and so forth.
+The `URL` parameter can specify the location of a Git repository;
+the repository acts as the build context. The system recursively clones the repository
+and its submodules using a `git clone --depth 1 --recursive` command.
+This command runs in a temporary directory on your local host.
+After the command succeeds, the directory is sent to the Docker daemon as the context.
+Local clones give you the ability to access private repositories using
+local user credentials, VPN's, and so forth.
+
+Git URLs accept context configuration in their fragment section, separated by a colon `:`.
+The first part represents the reference that Git will check out, this can be either
+a branch, a tag, or a commit SHA. The second part represents a subdirectory
+inside the repository that will be used as a build context.
+
+For example, run this command to use a directory called `docker` in the branch `container`:
+
+      $ docker build https://github.com/docker/rootfs.git#container:docker
+
+The following table represents all the valid suffixes with their build contexts:
+
+Build Syntax Suffix | Commit Used | Build Context Used
+--------------------|-------------|-------------------
+`myrepo.git` | `refs/heads/master` | `/`
+`myrepo.git#mytag` | `refs/tags/mytag` | `/`
+`myrepo.git#mybranch` | `refs/heads/mybranch` | `/`
+`myrepo.git#abcdef` | `sha1 = abcdef` | `/`
+`myrepo.git#:myfolder` | `refs/heads/master` | `/myfolder`
+`myrepo.git#master:myfolder` | `refs/heads/master` | `/myfolder`
+`myrepo.git#mytag:myfolder` | `refs/tags/mytag` | `/myfolder`
+`myrepo.git#mybranch:myfolder` | `refs/heads/mybranch` | `/myfolder`
+`myrepo.git#abcdef:myfolder` | `sha1 = abcdef` | `/myfolder`
 
 Instead of specifying a context, you can pass a single Dockerfile in the
 `URL` or pipe the file in via `STDIN`.  To pipe a Dockerfile from `STDIN`:
@@ -651,6 +691,26 @@ Instead of specifying a context, you can pass a single Dockerfile in the
 If you use STDIN or specify a `URL`, the system places the contents into a
 file called `Dockerfile`, and any `-f`, `--file` option is ignored. In this
 scenario, there is no context.
+
+By default the `docker build` command will look for a `Dockerfile` at the
+root of the build context. The `-f`, `--file`, option lets you specify
+the path to an alternative file to use instead.  This is useful
+in cases where the same set of files are used for multiple builds. The path
+must be to a file within the build context. If a relative path is specified
+then it must to be relative to the current directory.
+
+In most cases, it's best to put each Dockerfile in an empty directory. Then, add
+to that directory only the files needed for building the Dockerfile. To increase
+the build's performance, you can exclude files and directories by adding a
+`.dockerignore` file to that directory as well. For information on creating one,
+see the [.dockerignore file](../../reference/builder/#dockerignore-file).
+
+If the Docker client loses connection to the daemon, the build is canceled.
+This happens if you interrupt the Docker client with `ctrl-c` or if the Docker
+client is killed for any reason.
+
+> **Note:** Currently only the "run" phase of the build can be canceled until
+> pull cancelation is implemented).
 
 ### Return code
 
@@ -672,55 +732,11 @@ INFO[0000] The command [/bin/sh -c exit 13] returned a non-zero code: 13
 $ echo $?
 1
 ```
-
-### .dockerignore file
-
-If a file named `.dockerignore` exists in the root of `PATH` then it
-is interpreted as a newline-separated list of exclusion patterns.
-Exclusion patterns match files or directories relative to `PATH` that
-will be excluded from the context. Globbing is done using Go's
-[filepath.Match](http://golang.org/pkg/path/filepath#Match) rules.
-
-Please note that `.dockerignore` files in other subdirectories are
-considered as normal files. Filepaths in `.dockerignore` are absolute with
-the current directory as the root. Wildcards are allowed but the search
-is not recursive.
-
-#### Example .dockerignore file
-    */temp*
-    */*/temp*
-    temp?
-
-The first line above `*/temp*`, would ignore all files with names starting with
-`temp` from any subdirectory below the root directory. For example, a file named
-`/somedir/temporary.txt` would be ignored. The second line `*/*/temp*`, will
-ignore files starting with name `temp` from any subdirectory that is two levels
-below the root directory. For example, the file `/somedir/subdir/temporary.txt`
-would get ignored in this case. The last line in the above example `temp?`
-will ignore the files that match the pattern from the root directory.
-For example, the files `tempa`, `tempb` are ignored from the root directory.
-Currently there is no support for regular expressions. Formats
-like `[^temp*]` are ignored.
-
-By default the `docker build` command will look for a `Dockerfile` at the
-root of the build context. The `-f`, `--file`, option lets you specify
-the path to an alternative file to use instead.  This is useful
-in cases where the same set of files are used for multiple builds. The path
-must be to a file within the build context. If a relative path is specified
-then it must to be relative to the current directory.
-
-If the Docker client loses connection to the daemon, the build is canceled.
-This happens if you interrupt the Docker client with `ctrl-c` or if the Docker
-client is killed for any reason.
-
-> **Note:** Currently only the "run" phase of the build can be canceled until
-> pull cancelation is implemented).
-
 See also:
 
 [*Dockerfile Reference*](/reference/builder).
 
-#### Examples
+### Examples
 
     $ docker build .
     Uploading context 10240 bytes
@@ -789,7 +805,8 @@ affect the build cache.
 
 This example shows the use of the `.dockerignore` file to exclude the `.git`
 directory from the context. Its effect can be seen in the changed size of the
-uploaded context.
+uploaded context. The builder reference contains detailed information on
+[creating a .dockerignore file](../../builder/#dockerignore-file)
 
     $ docker build -t vieux/apache:2.0 .
 
@@ -845,6 +862,11 @@ you refer to it on the command line.
 > on the Host system. The context is limited to the current directory (and its
 > children) for security reasons, and to ensure repeatable builds on remote
 > Docker hosts. This is also the reason why `ADD ../file` will not work.
+
+When `docker build` is run with the `--cgroup-parent` option the containers used
+in the build will be run with the [corresponding `docker run`
+flag](/reference/run/#specifying-custom-cgroups). 
+
 
 ## commit
 
@@ -946,6 +968,7 @@ Creates a new container.
       --mac-address=""           Container MAC address (e.g. 92:d0:c6:0a:29:33)
       --name=""                  Assign a name to the container
       --net="bridge"             Set the Network mode for the container
+      --oom-kill-disable=false   Whether to disable OOM Killer for the container or not
       -P, --publish-all=false    Publish all exposed ports to random ports
       -p, --publish=[]           Publish a container's port(s) to the host
       --privileged=false         Give extended privileges to this container
@@ -1904,6 +1927,7 @@ To remove an image using its digest:
       --memory-swap=""           Total memory (memory + swap), '-1' to disable swap
       --name=""                  Assign a name to the container
       --net="bridge"             Set the Network mode for the container
+      --oom-kill-disable=false   Whether to disable OOM Killer for the container or not
       -P, --publish-all=false    Publish all exposed ports to random ports
       -p, --publish=[]           Publish a container's port(s) to the host
       --pid=""                   PID namespace to use
@@ -2210,7 +2234,7 @@ application change:
    `--rm` option means that when the container exits, the container's layer is
    removed.
 
-#### Restart Policies
+#### Restart policies
 
 Use Docker's `--restart` to specify a container's *restart policy*. A restart
 policy controls whether the Docker daemon restarts a container after exit.
@@ -2376,6 +2400,7 @@ more details on finding shared images from the command line.
     Display a live stream of one or more containers' resource usage statistics
 
       --help=false       Print usage
+      --no-stream=false  Disable streaming stats and only pull the first result
 
 Running `docker stats` on multiple containers
 

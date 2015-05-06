@@ -6,12 +6,13 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/client"
 	"github.com/docker/docker/autogen/dockerversion"
+	"github.com/docker/docker/opts"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/reexec"
 	"github.com/docker/docker/pkg/term"
@@ -62,10 +63,15 @@ func main() {
 	if len(flHosts) == 0 {
 		defaultHost := os.Getenv("DOCKER_HOST")
 		if defaultHost == "" || *flDaemon {
-			// If we do not have a host, default to unix socket
-			defaultHost = fmt.Sprintf("unix://%s", api.DEFAULTUNIXSOCKET)
+			if runtime.GOOS != "windows" {
+				// If we do not have a host, default to unix socket
+				defaultHost = fmt.Sprintf("unix://%s", opts.DefaultUnixSocket)
+			} else {
+				// If we do not have a host, default to TCP socket on Windows
+				defaultHost = fmt.Sprintf("tcp://%s:%d", opts.DefaultHTTPHost, opts.DefaultHTTPPort)
+			}
 		}
-		defaultHost, err := api.ValidateHost(defaultHost)
+		defaultHost, err := opts.ValidateHost(defaultHost)
 		if err != nil {
 			logrus.Fatal(err)
 		}

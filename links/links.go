@@ -7,6 +7,7 @@ import (
 
 	"github.com/docker/docker/daemon/networkdriver/bridge"
 	"github.com/docker/docker/nat"
+	"github.com/docker/docker/pkg/iptables"
 )
 
 type Link struct {
@@ -106,8 +107,8 @@ func (l *Link) ToEnv() []string {
 
 	if l.ChildEnvironment != nil {
 		for _, v := range l.ChildEnvironment {
-			parts := strings.Split(v, "=")
-			if len(parts) != 2 {
+			parts := strings.SplitN(v, "=", 2)
+			if len(parts) < 2 {
 				continue
 			}
 			// Ignore a few variables that are added during docker build (and not really relevant to linked containers)
@@ -143,6 +144,8 @@ func (l *Link) Enable() error {
 	if err := l.toggle("-A", false); err != nil {
 		return err
 	}
+	// call this on Firewalld reload
+	iptables.OnReloaded(func() { l.toggle("-I", false) })
 	l.IsEnabled = true
 	return nil
 }
@@ -152,7 +155,8 @@ func (l *Link) Disable() {
 	// exist in iptables
 	// -D == iptables delete flag
 	l.toggle("-D", true)
-
+	// call this on Firewalld reload
+	iptables.OnReloaded(func() { l.toggle("-D", true) })
 	l.IsEnabled = false
 }
 

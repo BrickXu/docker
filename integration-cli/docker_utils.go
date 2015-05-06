@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/docker/docker/api"
+	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/stringutils"
 	"github.com/go-check/check"
@@ -269,12 +269,20 @@ func (d *Daemon) Cmd(name string, arg ...string) (string, error) {
 	return string(b), err
 }
 
+func (d *Daemon) CmdWithArgs(daemonArgs []string, name string, arg ...string) (string, error) {
+	args := append(daemonArgs, name)
+	args = append(args, arg...)
+	c := exec.Command(dockerBinary, args...)
+	b, err := c.CombinedOutput()
+	return string(b), err
+}
+
 func (d *Daemon) LogfileName() string {
 	return d.logFile.Name()
 }
 
 func daemonHost() string {
-	daemonUrlStr := "unix://" + api.DEFAULTUNIXSOCKET
+	daemonUrlStr := "unix://" + opts.DefaultUnixSocket
 	if daemonHostVar := os.Getenv("DOCKER_HOST"); daemonHostVar != "" {
 		daemonUrlStr = daemonHostVar
 	}
@@ -305,20 +313,20 @@ func sockRequest(method, endpoint string, data interface{}) (int, []byte, error)
 		return -1, nil, err
 	}
 
-	status, body, err := sockRequestRaw(method, endpoint, jsonData, "application/json")
+	res, body, err := sockRequestRaw(method, endpoint, jsonData, "application/json")
 	if err != nil {
 		b, _ := ioutil.ReadAll(body)
-		return status, b, err
+		return -1, b, err
 	}
 	var b []byte
 	b, err = readBody(body)
-	return status, b, err
+	return res.StatusCode, b, err
 }
 
-func sockRequestRaw(method, endpoint string, data io.Reader, ct string) (int, io.ReadCloser, error) {
+func sockRequestRaw(method, endpoint string, data io.Reader, ct string) (*http.Response, io.ReadCloser, error) {
 	c, err := sockConn(time.Duration(10 * time.Second))
 	if err != nil {
-		return -1, nil, fmt.Errorf("could not dial docker daemon: %v", err)
+		return nil, nil, fmt.Errorf("could not dial docker daemon: %v", err)
 	}
 
 	client := httputil.NewClientConn(c, nil)
@@ -326,7 +334,7 @@ func sockRequestRaw(method, endpoint string, data io.Reader, ct string) (int, io
 	req, err := http.NewRequest(method, endpoint, data)
 	if err != nil {
 		client.Close()
-		return -1, nil, fmt.Errorf("could not create new request: %v", err)
+		return nil, nil, fmt.Errorf("could not create new request: %v", err)
 	}
 
 	if ct != "" {
@@ -336,17 +344,14 @@ func sockRequestRaw(method, endpoint string, data io.Reader, ct string) (int, io
 	resp, err := client.Do(req)
 	if err != nil {
 		client.Close()
-		return -1, nil, fmt.Errorf("could not perform request: %v", err)
+		return nil, nil, fmt.Errorf("could not perform request: %v", err)
 	}
 	body := ioutils.NewReadCloserWrapper(resp.Body, func() error {
 		defer client.Close()
 		return resp.Body.Close()
 	})
-	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, body, fmt.Errorf("received status != 200 OK: %s", resp.Status)
-	}
 
-	return resp.StatusCode, body, err
+	return resp, body, nil
 }
 
 func readBody(b io.ReadCloser) ([]byte, error) {
@@ -356,9 +361,7 @@ func readBody(b io.ReadCloser) ([]byte, error) {
 
 func deleteContainer(container string) error {
 	container = strings.TrimSpace(strings.Replace(container, "\n", " ", -1))
-	killArgs := strings.Split(fmt.Sprintf("kill %v", container), " ")
-	runCommand(exec.Command(dockerBinary, killArgs...))
-	rmArgs := strings.Split(fmt.Sprintf("rm -v %v", container), " ")
+	rmArgs := strings.Split(fmt.Sprintf("rm -fv %v", container), " ")
 	exitCode, err := runCommand(exec.Command(dockerBinary, rmArgs...))
 	// set error manually if not set
 	if exitCode != 0 && err == nil {
@@ -386,6 +389,58 @@ func deleteAllContainers() error {
 	}
 
 	if err = deleteContainer(containers); err != nil {
+		return err
+	}
+	return nil
+}
+
+var protectedImages = map[string]struct{}{}
+
+func init() {
+	out, err := exec.Command(dockerBinary, "images").CombinedOutput()
+	if err != nil {
+		panic(err)
+	}
+	lines := strings.Split(string(out), "\n")[1:]
+	for _, l := range lines {
+		if l == "" {
+			continue
+		}
+		fields := strings.Fields(l)
+		imgTag := fields[0] + ":" + fields[1]
+		// just for case if we have dangling images in tested daemon
+		if imgTag != "<none>:<none>" {
+			protectedImages[imgTag] = struct{}{}
+		}
+	}
+}
+
+func deleteAllImages() error {
+	out, err := exec.Command(dockerBinary, "images").CombinedOutput()
+	if err != nil {
+		return err
+	}
+	lines := strings.Split(string(out), "\n")[1:]
+	var imgs []string
+	for _, l := range lines {
+		if l == "" {
+			continue
+		}
+		fields := strings.Fields(l)
+		imgTag := fields[0] + ":" + fields[1]
+		if _, ok := protectedImages[imgTag]; !ok {
+			if fields[0] == "<none>" {
+				imgs = append(imgs, fields[2])
+				continue
+			}
+			imgs = append(imgs, imgTag)
+		}
+	}
+	if len(imgs) == 0 {
+		return nil
+	}
+	args := append([]string{"rmi", "-f"}, imgs...)
+	if err := exec.Command(dockerBinary, args...).Run(); err != nil {
 		return err
 	}
 	return nil
@@ -444,8 +499,7 @@ func unpauseAllContainers() error {
 }
 
 func deleteImages(images ...string) error {
-	args := make([]string, 1, 2)
-	args[0] = "rmi"
+	args := []string{"rmi", "-f"}
 	args = append(args, images...)
 	rmiCmd := exec.Command(dockerBinary, args...)
 	exitCode, err := runCommand(rmiCmd)
@@ -453,7 +507,6 @@ func deleteImages(images ...string) error {
 	if exitCode != 0 && err == nil {
 		err = fmt.Errorf("failed to remove image: `docker rmi` exit is non-zero")
 	}
-
 	return err
 }
 
@@ -517,14 +570,19 @@ func dockerCmdInDirWithTimeout(timeout time.Duration, path string, args ...strin
 	return out, status, err
 }
 
-func findContainerIP(c *check.C, id string) string {
-	cmd := exec.Command(dockerBinary, "inspect", "--format='{{ .NetworkSettings.IPAddress }}'", id)
+func findContainerIP(c *check.C, id string, vargs ...string) string {
+	args := append(vargs, "inspect", "--format='{{ .NetworkSettings.IPAddress }}'", id)
+	cmd := exec.Command(dockerBinary, args...)
 	out, _, err := runCommandWithOutput(cmd)
 	if err != nil {
 		c.Fatal(err, out)
 	}
 
 	return strings.Trim(out, " \r\n'")
+}
+
+func (d *Daemon) findContainerIP(id string) string {
+	return findContainerIP(d.c, id, "--host", d.sock())
 }
 
 func getContainerCount() (int, error) {
@@ -1056,10 +1114,9 @@ func daemonTime(c *check.C) time.Time {
 		return time.Now()
 	}
 
-	_, body, err := sockRequest("GET", "/info", nil)
-	if err != nil {
-		c.Fatalf("daemonTime: failed to get /info: %v", err)
-	}
+	status, body, err := sockRequest("GET", "/info", nil)
+	c.Assert(status, check.Equals, http.StatusOK)
+	c.Assert(err, check.IsNil)
 
 	type infoJSON struct {
 		SystemTime string
@@ -1076,7 +1133,7 @@ func daemonTime(c *check.C) time.Time {
 	return dt
 }
 
-func setupRegistry(c *check.C) func() {
+func setupRegistry(c *check.C) *testRegistryV2 {
 	testRequires(c, RegistryHosting)
 	reg, err := newTestRegistryV2(c)
 	if err != nil {
@@ -1094,8 +1151,7 @@ func setupRegistry(c *check.C) func() {
 	if err != nil {
 		c.Fatal("Timeout waiting for test registry to become available")
 	}
-
-	return func() { reg.Close() }
+	return reg
 }
 
 // appendBaseEnv appends the minimum set of environment variables to exec the

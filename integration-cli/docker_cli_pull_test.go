@@ -9,11 +9,8 @@ import (
 )
 
 // See issue docker/docker#8141
-func (s *DockerSuite) TestPullImageWithAliases(c *check.C) {
-	defer setupRegistry(c)()
-
+func (s *DockerRegistrySuite) TestPullImageWithAliases(c *check.C) {
 	repoName := fmt.Sprintf("%v/dockercli/busybox", privateRegistryURL)
-	defer deleteImages(repoName)
 
 	repos := []string{}
 	for _, tag := range []string{"recent", "fresh"} {
@@ -25,7 +22,6 @@ func (s *DockerSuite) TestPullImageWithAliases(c *check.C) {
 		if out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "tag", "busybox", repo)); err != nil {
 			c.Fatalf("Failed to tag image %v: error %v, output %q", repos, err, out)
 		}
-		defer deleteImages(repo)
 		if out, err := exec.Command(dockerBinary, "push", repo).CombinedOutput(); err != nil {
 			c.Fatalf("Failed to push image %v: error %v, output %q", repo, err, string(out))
 		}
@@ -50,7 +46,6 @@ func (s *DockerSuite) TestPullImageWithAliases(c *check.C) {
 			c.Fatalf("Image %v shouldn't have been pulled down", repo)
 		}
 	}
-
 }
 
 // pulling library/hello-world should show verified message
@@ -61,7 +56,6 @@ func (s *DockerSuite) TestPullVerified(c *check.C) {
 	// unless keychain is manually updated to contain the daemon's sign key.
 
 	verifiedName := "hello-world"
-	defer deleteImages(verifiedName)
 
 	// pull it
 	expected := "The image you are pulling has been verified"
@@ -88,8 +82,6 @@ func (s *DockerSuite) TestPullVerified(c *check.C) {
 func (s *DockerSuite) TestPullImageFromCentralRegistry(c *check.C) {
 	testRequires(c, Network)
 
-	defer deleteImages("hello-world")
-
 	pullCmd := exec.Command(dockerBinary, "pull", "hello-world")
 	if out, _, err := runCommandWithOutput(pullCmd); err != nil {
 		c.Fatalf("pulling the hello-world image from the registry has failed: %s, %v", out, err)
@@ -98,8 +90,13 @@ func (s *DockerSuite) TestPullImageFromCentralRegistry(c *check.C) {
 
 // pulling a non-existing image from the central registry should return a non-zero exit code
 func (s *DockerSuite) TestPullNonExistingImage(c *check.C) {
-	pullCmd := exec.Command(dockerBinary, "pull", "fooblahblah1234")
-	if out, _, err := runCommandWithOutput(pullCmd); err == nil {
+	testRequires(c, Network)
+
+	name := "sadfsadfasdf"
+	pullCmd := exec.Command(dockerBinary, "pull", name)
+	out, _, err := runCommandWithOutput(pullCmd)
+
+	if err == nil || !strings.Contains(out, fmt.Sprintf("Error: image library/%s:latest not found", name)) {
 		c.Fatalf("expected non-zero exit status when pulling non-existing image: %s", out)
 	}
 }
@@ -132,5 +129,24 @@ func (s *DockerSuite) TestPullImageOfficialNames(c *check.C) {
 		} else if strings.Contains(out, name) {
 			c.Errorf("images should not have listed '%s'", name)
 		}
+	}
+}
+
+func (s *DockerSuite) TestPullScratchNotAllowed(c *check.C) {
+	testRequires(c, Network)
+
+	pullCmd := exec.Command(dockerBinary, "pull", "scratch")
+	out, exitCode, err := runCommandWithOutput(pullCmd)
+	if err == nil {
+		c.Fatal("expected pull of scratch to fail, but it didn't")
+	}
+	if exitCode != 1 {
+		c.Fatalf("pulling scratch expected exit code 1, got %d", exitCode)
+	}
+	if strings.Contains(out, "Pulling repository scratch") {
+		c.Fatalf("pulling scratch should not have begun: %s", out)
+	}
+	if !strings.Contains(out, "'scratch' is a reserved name") {
+		c.Fatalf("unexpected output pulling scratch: %s", out)
 	}
 }

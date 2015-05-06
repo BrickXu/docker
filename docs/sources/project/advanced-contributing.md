@@ -67,7 +67,7 @@ The following provides greater detail on the process:
 
     The design proposals are <a
     href="https://github.com/docker/docker/pulls?q=is%3Aopen+is%3Apr+label%
-    3AProposal" target="_blank">all online in our GitHub pull requests</a>. 
+    3Akind%2Fproposal" target="_blank">all online in our GitHub pull requests</a>. 
     
 3. Talk to the community about your idea.
 
@@ -137,7 +137,7 @@ The following provides greater detail on the process:
 
 14. Acceptance and merge!
 
-## About the Advanced process
+## About the advanced process
 
 Docker is a large project. Our core team gets a great many design proposals.
 Design proposal discussions can span days, weeks, and longer. The number of comments can reach the 100s.

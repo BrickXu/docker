@@ -226,13 +226,18 @@ func InitDriver(config *Config) error {
 		bridgeIPv6Addr = networkv6.IP
 	}
 
+	if config.EnableIptables {
+		iptables.FirewalldInit()
+	}
+
 	// Configure iptables for link support
 	if config.EnableIptables {
 		if err := setupIPTables(addrv4, config.InterContainerCommunication, config.EnableIpMasq); err != nil {
-			logrus.Errorf("Error configuing iptables: %s", err)
+			logrus.Errorf("Error configuring iptables: %s", err)
 			return err
 		}
-
+		// call this on Firewalld reload
+		iptables.OnReloaded(func() { setupIPTables(addrv4, config.InterContainerCommunication, config.EnableIpMasq) })
 	}
 
 	if config.EnableIpForward {
@@ -262,10 +267,16 @@ func InitDriver(config *Config) error {
 		if err != nil {
 			return err
 		}
+		// call this on Firewalld reload
+		iptables.OnReloaded(func() { iptables.NewChain("DOCKER", bridgeIface, iptables.Nat) })
+
 		chain, err := iptables.NewChain("DOCKER", bridgeIface, iptables.Filter)
 		if err != nil {
 			return err
 		}
+		// call this on Firewalld reload
+		iptables.OnReloaded(func() { iptables.NewChain("DOCKER", bridgeIface, iptables.Filter) })
+
 		portMapper.SetIptablesChain(chain)
 	}
 
@@ -310,6 +321,10 @@ func InitDriver(config *Config) error {
 	// Block BridgeIP in IP allocator
 	ipAllocator.RequestIP(bridgeIPv4Network, bridgeIPv4Network.IP)
 
+	if config.EnableIptables {
+		iptables.OnReloaded(portMapper.ReMapAll) // call this on Firewalld reload
+	}
+
 	return nil
 }
 
@@ -340,7 +355,7 @@ func setupIPTables(addr net.Addr, icc, ipmasq bool) error {
 
 		if !iptables.Exists(iptables.Filter, "FORWARD", dropArgs...) {
 			logrus.Debugf("Disable inter-container communication")
-			if output, err := iptables.Raw(append([]string{"-I", "FORWARD"}, dropArgs...)...); err != nil {
+			if output, err := iptables.Raw(append([]string{"-A", "FORWARD"}, dropArgs...)...); err != nil {
 				return fmt.Errorf("Unable to prevent intercontainer communication: %s", err)
 			} else if len(output) != 0 {
 				return fmt.Errorf("Error disabling intercontainer communication: %s", output)
@@ -351,7 +366,7 @@ func setupIPTables(addr net.Addr, icc, ipmasq bool) error {
 
 		if !iptables.Exists(iptables.Filter, "FORWARD", acceptArgs...) {
 			logrus.Debugf("Enable inter-container communication")
-			if output, err := iptables.Raw(append([]string{"-I", "FORWARD"}, acceptArgs...)...); err != nil {
+			if output, err := iptables.Raw(append([]string{"-A", "FORWARD"}, acceptArgs...)...); err != nil {
 				return fmt.Errorf("Unable to allow intercontainer communication: %s", err)
 			} else if len(output) != 0 {
 				return fmt.Errorf("Error enabling intercontainer communication: %s", output)

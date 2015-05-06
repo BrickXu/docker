@@ -1,11 +1,6 @@
 package server
 
 import (
-	"bufio"
-	"bytes"
-	"runtime"
-	"time"
-
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -13,8 +8,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
@@ -24,9 +21,9 @@ import (
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/autogen/dockerversion"
 	"github.com/docker/docker/builder"
+	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/daemon/networkdriver/bridge"
-	"github.com/docker/docker/engine"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/parsers"
@@ -36,7 +33,6 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/version"
-	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
 )
@@ -55,24 +51,29 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	daemon *daemon.Daemon
-	cfg    *ServerConfig
-	router *mux.Router
-	start  chan struct{}
-
-	// TODO: delete engine
-	eng *engine.Engine
+	daemon  *daemon.Daemon
+	cfg     *ServerConfig
+	router  *mux.Router
+	start   chan struct{}
+	servers []serverCloser
 }
 
-func New(cfg *ServerConfig, eng *engine.Engine) *Server {
+func New(cfg *ServerConfig) *Server {
 	srv := &Server{
 		cfg:   cfg,
 		start: make(chan struct{}),
-		eng:   eng,
 	}
-	r := createRouter(srv, eng)
+	r := createRouter(srv)
 	srv.router = r
 	return srv
+}
+
+func (s *Server) Close() {
+	for _, srv := range s.servers {
+		if err := srv.Close(); err != nil {
+			logrus.Error(err)
+		}
+	}
 }
 
 func (s *Server) SetDaemon(d *daemon.Daemon) {
@@ -94,19 +95,15 @@ func (s *Server) ServeApi(protoAddrs []string) error {
 		if len(protoAddrParts) != 2 {
 			return fmt.Errorf("bad format, expected PROTO://ADDR")
 		}
+		srv, err := s.newServer(protoAddrParts[0], protoAddrParts[1])
+		if err != nil {
+			return err
+		}
+		s.servers = append(s.servers, srv)
+
 		go func(proto, addr string) {
 			logrus.Infof("Listening for HTTP on %s (%s)", proto, addr)
-			srv, err := s.newServer(proto, addr)
-			if err != nil {
-				chErrors <- err
-				return
-			}
-			s.eng.OnShutdown(func() {
-				if err := srv.Close(); err != nil {
-					logrus.Error(err)
-				}
-			})
-			if err = srv.Serve(); err != nil && strings.Contains(err.Error(), "use of closed network connection") {
+			if err := srv.Serve(); err != nil && strings.Contains(err.Error(), "use of closed network connection") {
 				err = nil
 			}
 			chErrors <- err
@@ -135,7 +132,7 @@ func (s *HttpServer) Close() error {
 	return s.l.Close()
 }
 
-type HttpApiFunc func(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error
+type HttpApiFunc func(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error
 
 func hijackServer(w http.ResponseWriter) (io.ReadCloser, io.Writer, error) {
 	conn, _, err := w.(http.Hijacker).Hijack()
@@ -205,18 +202,19 @@ func httpError(w http.ResponseWriter, err error) {
 	// If we need to differentiate between different possible error types, we should
 	// create appropriate error types with clearly defined meaning.
 	errStr := strings.ToLower(err.Error())
-	if strings.Contains(errStr, "no such") {
-		statusCode = http.StatusNotFound
-	} else if strings.Contains(errStr, "bad parameter") {
-		statusCode = http.StatusBadRequest
-	} else if strings.Contains(errStr, "conflict") {
-		statusCode = http.StatusConflict
-	} else if strings.Contains(errStr, "impossible") {
-		statusCode = http.StatusNotAcceptable
-	} else if strings.Contains(errStr, "wrong login/password") {
-		statusCode = http.StatusUnauthorized
-	} else if strings.Contains(errStr, "hasn't been activated") {
-		statusCode = http.StatusForbidden
+	for keyword, status := range map[string]int{
+		"not found":             http.StatusNotFound,
+		"no such":               http.StatusNotFound,
+		"bad parameter":         http.StatusBadRequest,
+		"conflict":              http.StatusConflict,
+		"impossible":            http.StatusNotAcceptable,
+		"wrong login/password":  http.StatusUnauthorized,
+		"hasn't been activated": http.StatusForbidden,
+	} {
+		if strings.Contains(errStr, keyword) {
+			statusCode = status
+			break
+		}
 	}
 
 	logrus.WithFields(logrus.Fields{"statusCode": statusCode, "err": err}).Error("HTTP Error")
@@ -231,17 +229,8 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) error {
 	return json.NewEncoder(w).Encode(v)
 }
 
-func streamJSON(out *engine.Output, w http.ResponseWriter, flush bool) {
-	w.Header().Set("Content-Type", "application/json")
-	if flush {
-		out.Add(utils.NewWriteFlusher(w))
-	} else {
-		out.Add(w)
-	}
-}
-
-func (s *Server) postAuth(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
-	var config *registry.AuthConfig
+func (s *Server) postAuth(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	var config *cliconfig.AuthConfig
 	err := json.NewDecoder(r.Body).Decode(&config)
 	r.Body.Close()
 	if err != nil {
@@ -256,7 +245,7 @@ func (s *Server) postAuth(eng *engine.Engine, version version.Version, w http.Re
 	})
 }
 
-func (s *Server) getVersion(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getVersion(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	w.Header().Set("Content-Type", "application/json")
 
 	v := &types.Version{
@@ -274,12 +263,11 @@ func (s *Server) getVersion(eng *engine.Engine, version version.Version, w http.
 	return writeJSON(w, http.StatusOK, v)
 }
 
-func (s *Server) postContainersKill(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersKill(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
-	err := parseForm(r)
-	if err != nil {
+	if err := parseForm(r); err != nil {
 		return err
 	}
 
@@ -290,7 +278,7 @@ func (s *Server) postContainersKill(eng *engine.Engine, version version.Version,
 	if sigStr := vars["signal"]; sigStr != "" {
 		// Check if we passed the signal as a number:
 		// The largest legal signal is 31, so let's parse on 5 bits
-		sig, err = strconv.ParseUint(sigStr, 10, 5)
+		sig, err := strconv.ParseUint(sigStr, 10, 5)
 		if err != nil {
 			// The signal is not a number, treat it as a string (either like
 			// "KILL" or like "SIGKILL")
@@ -302,7 +290,7 @@ func (s *Server) postContainersKill(eng *engine.Engine, version version.Version,
 		}
 	}
 
-	if err = s.daemon.ContainerKill(name, sig); err != nil {
+	if err := s.daemon.ContainerKill(name, sig); err != nil {
 		return err
 	}
 
@@ -310,7 +298,7 @@ func (s *Server) postContainersKill(eng *engine.Engine, version version.Version,
 	return nil
 }
 
-func (s *Server) postContainersPause(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersPause(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -318,23 +306,16 @@ func (s *Server) postContainersPause(eng *engine.Engine, version version.Version
 		return err
 	}
 
-	name := vars["name"]
-	cont, err := s.daemon.Get(name)
-	if err != nil {
+	if err := s.daemon.ContainerPause(vars["name"]); err != nil {
 		return err
 	}
-
-	if err := cont.Pause(); err != nil {
-		return fmt.Errorf("Cannot pause container %s: %s", name, err)
-	}
-	cont.LogEvent("pause")
 
 	w.WriteHeader(http.StatusNoContent)
 
 	return nil
 }
 
-func (s *Server) postContainersUnpause(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersUnpause(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -342,23 +323,16 @@ func (s *Server) postContainersUnpause(eng *engine.Engine, version version.Versi
 		return err
 	}
 
-	name := vars["name"]
-	cont, err := s.daemon.Get(name)
-	if err != nil {
+	if err := s.daemon.ContainerUnpause(vars["name"]); err != nil {
 		return err
 	}
-
-	if err := cont.Unpause(); err != nil {
-		return fmt.Errorf("Cannot unpause container %s: %s", name, err)
-	}
-	cont.LogEvent("unpause")
 
 	w.WriteHeader(http.StatusNoContent)
 
 	return nil
 }
 
-func (s *Server) getContainersExport(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getContainersExport(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -366,7 +340,7 @@ func (s *Server) getContainersExport(eng *engine.Engine, version version.Version
 	return s.daemon.ContainerExport(vars["name"], w)
 }
 
-func (s *Server) getImagesJSON(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getImagesJSON(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -407,16 +381,7 @@ func (s *Server) getImagesJSON(eng *engine.Engine, version version.Version, w ht
 	return writeJSON(w, http.StatusOK, legacyImages)
 }
 
-func (s *Server) getImagesViz(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
-	if version.GreaterThan("1.6") {
-		w.WriteHeader(http.StatusNotFound)
-		return fmt.Errorf("This is now implemented in the client.")
-	}
-	eng.ServeHTTP(w, r)
-	return nil
-}
-
-func (s *Server) getInfo(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getInfo(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	w.Header().Set("Content-Type", "application/json")
 
 	info, err := s.daemon.SystemInfo()
@@ -427,7 +392,7 @@ func (s *Server) getInfo(eng *engine.Engine, version version.Version, w http.Res
 	return writeJSON(w, http.StatusOK, info)
 }
 
-func (s *Server) getEvents(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getEvents(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -531,7 +496,7 @@ func (s *Server) getEvents(eng *engine.Engine, version version.Version, w http.R
 	}
 }
 
-func (s *Server) getImagesHistory(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getImagesHistory(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -545,18 +510,12 @@ func (s *Server) getImagesHistory(eng *engine.Engine, version version.Version, w
 	return writeJSON(w, http.StatusOK, history)
 }
 
-func (s *Server) getContainersChanges(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getContainersChanges(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
 
-	name := vars["name"]
-	cont, err := s.daemon.Get(name)
-	if err != nil {
-		return err
-	}
-
-	changes, err := cont.Changes()
+	changes, err := s.daemon.ContainerChanges(vars["name"])
 	if err != nil {
 		return err
 	}
@@ -564,7 +523,7 @@ func (s *Server) getContainersChanges(eng *engine.Engine, version version.Versio
 	return writeJSON(w, http.StatusOK, changes)
 }
 
-func (s *Server) getContainersTop(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getContainersTop(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if version.LessThan("1.4") {
 		return fmt.Errorf("top was improved a lot since 1.3, Please upgrade your docker client.")
 	}
@@ -585,7 +544,7 @@ func (s *Server) getContainersTop(eng *engine.Engine, version version.Version, w
 	return writeJSON(w, http.StatusOK, procList)
 }
 
-func (s *Server) getContainersJSON(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getContainersJSON(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -614,7 +573,7 @@ func (s *Server) getContainersJSON(eng *engine.Engine, version version.Version, 
 	return writeJSON(w, http.StatusOK, containers)
 }
 
-func (s *Server) getContainersStats(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getContainersStats(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -622,10 +581,10 @@ func (s *Server) getContainersStats(eng *engine.Engine, version version.Version,
 		return fmt.Errorf("Missing parameter")
 	}
 
-	return s.daemon.ContainerStats(vars["name"], utils.NewWriteFlusher(w))
+	return s.daemon.ContainerStats(vars["name"], boolValue(r, "stream"), utils.NewWriteFlusher(w))
 }
 
-func (s *Server) getContainersLogs(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getContainersLogs(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -655,7 +614,7 @@ func (s *Server) getContainersLogs(eng *engine.Engine, version version.Version, 
 	return nil
 }
 
-func (s *Server) postImagesTag(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postImagesTag(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -673,7 +632,7 @@ func (s *Server) postImagesTag(eng *engine.Engine, version version.Version, w ht
 	return nil
 }
 
-func (s *Server) postCommit(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postCommit(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -719,7 +678,7 @@ func (s *Server) postCommit(eng *engine.Engine, version version.Version, w http.
 }
 
 // Creates an image from Pull or from Import
-func (s *Server) postImagesCreate(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -730,14 +689,23 @@ func (s *Server) postImagesCreate(eng *engine.Engine, version version.Version, w
 		tag   = r.Form.Get("tag")
 	)
 	authEncoded := r.Header.Get("X-Registry-Auth")
-	authConfig := &registry.AuthConfig{}
+	authConfig := &cliconfig.AuthConfig{}
 	if authEncoded != "" {
 		authJson := base64.NewDecoder(base64.URLEncoding, strings.NewReader(authEncoded))
 		if err := json.NewDecoder(authJson).Decode(authConfig); err != nil {
 			// for a pull it is not an error if no auth was given
 			// to increase compatibility with the existing api it is defaulting to be empty
-			authConfig = &registry.AuthConfig{}
+			authConfig = &cliconfig.AuthConfig{}
 		}
+	}
+
+	var (
+		opErr   error
+		useJSON = version.GreaterThan("1.0")
+	)
+
+	if useJSON {
+		w.Header().Set("Content-Type", "application/json")
 	}
 
 	if image != "" { //pull
@@ -756,17 +724,10 @@ func (s *Server) postImagesCreate(eng *engine.Engine, version version.Version, w
 			MetaHeaders: metaHeaders,
 			AuthConfig:  authConfig,
 			OutStream:   utils.NewWriteFlusher(w),
-		}
-		if version.GreaterThan("1.0") {
-			imagePullConfig.Json = true
-			w.Header().Set("Content-Type", "application/json")
-		} else {
-			imagePullConfig.Json = false
+			Json:        useJSON,
 		}
 
-		if err := s.daemon.Repositories().Pull(image, tag, imagePullConfig); err != nil {
-			return err
-		}
+		opErr = s.daemon.Repositories().Pull(image, tag, imagePullConfig)
 	} else { //import
 		if tag == "" {
 			repo, tag = parsers.ParseRepositoryTag(repo)
@@ -777,12 +738,7 @@ func (s *Server) postImagesCreate(eng *engine.Engine, version version.Version, w
 			Changes:   r.Form["changes"],
 			InConfig:  r.Body,
 			OutStream: utils.NewWriteFlusher(w),
-		}
-		if version.GreaterThan("1.0") {
-			imageImportConfig.Json = true
-			w.Header().Set("Content-Type", "application/json")
-		} else {
-			imageImportConfig.Json = false
+			Json:      useJSON,
 		}
 
 		newConfig, err := builder.BuildFromConfig(s.daemon, &runconfig.Config{}, imageImportConfig.Changes)
@@ -791,20 +747,23 @@ func (s *Server) postImagesCreate(eng *engine.Engine, version version.Version, w
 		}
 		imageImportConfig.ContainerConfig = newConfig
 
-		if err := s.daemon.Repositories().Import(src, repo, tag, imageImportConfig); err != nil {
-			return err
-		}
+		opErr = s.daemon.Repositories().Import(src, repo, tag, imageImportConfig)
+	}
+
+	if opErr != nil {
+		sf := streamformatter.NewStreamFormatter(useJSON)
+		return fmt.Errorf(string(sf.FormatError(opErr)))
 	}
 
 	return nil
 }
 
-func (s *Server) getImagesSearch(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getImagesSearch(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
 	var (
-		config      *registry.AuthConfig
+		config      *cliconfig.AuthConfig
 		authEncoded = r.Header.Get("X-Registry-Auth")
 		headers     = map[string][]string{}
 	)
@@ -814,7 +773,7 @@ func (s *Server) getImagesSearch(eng *engine.Engine, version version.Version, w 
 		if err := json.NewDecoder(authJson).Decode(&config); err != nil {
 			// for a search it is not an error if no auth was given
 			// to increase compatibility with the existing api it is defaulting to be empty
-			config = &registry.AuthConfig{}
+			config = &cliconfig.AuthConfig{}
 		}
 	}
 	for k, v := range r.Header {
@@ -829,7 +788,7 @@ func (s *Server) getImagesSearch(eng *engine.Engine, version version.Version, w 
 	return json.NewEncoder(w).Encode(query.Results)
 }
 
-func (s *Server) postImagesPush(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postImagesPush(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -843,7 +802,7 @@ func (s *Server) postImagesPush(eng *engine.Engine, version version.Version, w h
 	if err := parseForm(r); err != nil {
 		return err
 	}
-	authConfig := &registry.AuthConfig{}
+	authConfig := &cliconfig.AuthConfig{}
 
 	authEncoded := r.Header.Get("X-Registry-Auth")
 	if authEncoded != "" {
@@ -851,7 +810,7 @@ func (s *Server) postImagesPush(eng *engine.Engine, version version.Version, w h
 		authJson := base64.NewDecoder(base64.URLEncoding, strings.NewReader(authEncoded))
 		if err := json.NewDecoder(authJson).Decode(authConfig); err != nil {
 			// to increase compatibility to existing api it is defaulting to be empty
-			authConfig = &registry.AuthConfig{}
+			authConfig = &cliconfig.AuthConfig{}
 		}
 	} else {
 		// the old format is supported for compatibility if there was no authConfig header
@@ -860,55 +819,69 @@ func (s *Server) postImagesPush(eng *engine.Engine, version version.Version, w h
 		}
 	}
 
-	job := eng.Job("push", vars["name"])
-	job.SetenvJson("metaHeaders", metaHeaders)
-	job.SetenvJson("authConfig", authConfig)
-	job.Setenv("tag", r.Form.Get("tag"))
-	if version.GreaterThan("1.0") {
-		job.SetenvBool("json", true)
-		streamJSON(job.Stdout, w, true)
-	} else {
-		job.Stdout.Add(utils.NewWriteFlusher(w))
+	useJSON := version.GreaterThan("1.0")
+	name := vars["name"]
+
+	output := utils.NewWriteFlusher(w)
+	imagePushConfig := &graph.ImagePushConfig{
+		MetaHeaders: metaHeaders,
+		AuthConfig:  authConfig,
+		Tag:         r.Form.Get("tag"),
+		OutStream:   output,
+		Json:        useJSON,
+	}
+	if useJSON {
+		w.Header().Set("Content-Type", "application/json")
 	}
 
-	if err := job.Run(); err != nil {
-		if !job.Stdout.Used() {
+	if err := s.daemon.Repositories().Push(name, imagePushConfig); err != nil {
+		if !output.Flushed() {
 			return err
 		}
-		sf := streamformatter.NewStreamFormatter(version.GreaterThan("1.0"))
-		w.Write(sf.FormatError(err))
+		sf := streamformatter.NewStreamFormatter(useJSON)
+		output.Write(sf.FormatError(err))
 	}
 	return nil
+
 }
 
-func (s *Server) getImagesGet(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getImagesGet(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
 	if err := parseForm(r); err != nil {
 		return err
 	}
-	if version.GreaterThan("1.0") {
+
+	useJSON := version.GreaterThan("1.0")
+	if useJSON {
 		w.Header().Set("Content-Type", "application/x-tar")
 	}
-	var job *engine.Job
+
+	output := utils.NewWriteFlusher(w)
+	imageExportConfig := &graph.ImageExportConfig{Outstream: output}
 	if name, ok := vars["name"]; ok {
-		job = eng.Job("image_export", name)
+		imageExportConfig.Names = []string{name}
 	} else {
-		job = eng.Job("image_export", r.Form["names"]...)
+		imageExportConfig.Names = r.Form["names"]
 	}
-	job.Stdout.Add(w)
-	return job.Run()
+
+	if err := s.daemon.Repositories().ImageExport(imageExportConfig); err != nil {
+		if !output.Flushed() {
+			return err
+		}
+		sf := streamformatter.NewStreamFormatter(useJSON)
+		output.Write(sf.FormatError(err))
+	}
+	return nil
+
 }
 
-func (s *Server) postImagesLoad(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
-	job := eng.Job("load")
-	job.Stdin.Add(r.Body)
-	job.Stdout.Add(w)
-	return job.Run()
+func (s *Server) postImagesLoad(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+	return s.daemon.Repositories().Load(r.Body, w)
 }
 
-func (s *Server) postContainersCreate(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersCreate(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return nil
 	}
@@ -936,7 +909,7 @@ func (s *Server) postContainersCreate(eng *engine.Engine, version version.Versio
 	})
 }
 
-func (s *Server) postContainersRestart(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersRestart(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -958,7 +931,7 @@ func (s *Server) postContainersRestart(eng *engine.Engine, version version.Versi
 	return nil
 }
 
-func (s *Server) postContainerRename(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainerRename(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -975,7 +948,7 @@ func (s *Server) postContainerRename(eng *engine.Engine, version version.Version
 	return nil
 }
 
-func (s *Server) deleteContainers(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) deleteContainers(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -1003,7 +976,7 @@ func (s *Server) deleteContainers(eng *engine.Engine, version version.Version, w
 	return nil
 }
 
-func (s *Server) deleteImages(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) deleteImages(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -1023,7 +996,7 @@ func (s *Server) deleteImages(eng *engine.Engine, version version.Version, w htt
 	return writeJSON(w, http.StatusOK, list)
 }
 
-func (s *Server) postContainersStart(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersStart(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -1059,7 +1032,7 @@ func (s *Server) postContainersStart(eng *engine.Engine, version version.Version
 	return nil
 }
 
-func (s *Server) postContainersStop(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersStop(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -1084,7 +1057,7 @@ func (s *Server) postContainersStop(eng *engine.Engine, version version.Version,
 	return nil
 }
 
-func (s *Server) postContainersWait(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersWait(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -1102,7 +1075,7 @@ func (s *Server) postContainersWait(eng *engine.Engine, version version.Version,
 	})
 }
 
-func (s *Server) postContainersResize(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersResize(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -1119,15 +1092,10 @@ func (s *Server) postContainersResize(eng *engine.Engine, version version.Versio
 		return err
 	}
 
-	cont, err := s.daemon.Get(vars["name"])
-	if err != nil {
-		return err
-	}
-
-	return cont.Resize(height, width)
+	return s.daemon.ContainerResize(vars["name"], height, width)
 }
 
-func (s *Server) postContainersAttach(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersAttach(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -1182,7 +1150,7 @@ func (s *Server) postContainersAttach(eng *engine.Engine, version version.Versio
 	return nil
 }
 
-func (s *Server) wsContainersAttach(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) wsContainersAttach(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -1208,19 +1176,28 @@ func (s *Server) wsContainersAttach(eng *engine.Engine, version version.Version,
 	return nil
 }
 
-func (s *Server) getContainersByName(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getContainersByName(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
-	var job = eng.Job("container_inspect", vars["name"])
+
+	name := vars["name"]
+
 	if version.LessThan("1.12") {
-		job.SetenvBool("raw", true)
+		containerJSONRaw, err := s.daemon.ContainerInspectRaw(name)
+		if err != nil {
+			return err
+		}
+		return writeJSON(w, http.StatusOK, containerJSONRaw)
 	}
-	streamJSON(job.Stdout, w, false)
-	return job.Run()
+	containerJSON, err := s.daemon.ContainerInspect(name)
+	if err != nil {
+		return err
+	}
+	return writeJSON(w, http.StatusOK, containerJSON)
 }
 
-func (s *Server) getExecByID(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getExecByID(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter 'id'")
 	}
@@ -1233,27 +1210,38 @@ func (s *Server) getExecByID(eng *engine.Engine, version version.Version, w http
 	return writeJSON(w, http.StatusOK, eConfig)
 }
 
-func (s *Server) getImagesByName(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getImagesByName(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
-	var job = eng.Job("image_inspect", vars["name"])
+
+	name := vars["name"]
 	if version.LessThan("1.12") {
-		job.SetenvBool("raw", true)
+		imageInspectRaw, err := s.daemon.Repositories().LookupRaw(name)
+		if err != nil {
+			return err
+		}
+
+		return writeJSON(w, http.StatusOK, imageInspectRaw)
 	}
-	streamJSON(job.Stdout, w, false)
-	return job.Run()
+
+	imageInspect, err := s.daemon.Repositories().Lookup(name)
+	if err != nil {
+		return err
+	}
+
+	return writeJSON(w, http.StatusOK, imageInspect)
 }
 
-func (s *Server) postBuild(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postBuild(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if version.LessThan("1.3") {
 		return fmt.Errorf("Multipart upload for build is no longer supported. Please upgrade your docker client.")
 	}
 	var (
 		authEncoded       = r.Header.Get("X-Registry-Auth")
-		authConfig        = &registry.AuthConfig{}
+		authConfig        = &cliconfig.AuthConfig{}
 		configFileEncoded = r.Header.Get("X-Registry-Config")
-		configFile        = &registry.ConfigFile{}
+		configFile        = &cliconfig.ConfigFile{}
 		buildConfig       = builder.NewBuildConfig()
 	)
 
@@ -1266,7 +1254,7 @@ func (s *Server) postBuild(eng *engine.Engine, version version.Version, w http.R
 		if err := json.NewDecoder(authJson).Decode(authConfig); err != nil {
 			// for a pull it is not an error if no auth was given
 			// to increase compatibility with the existing api it is defaulting to be empty
-			authConfig = &registry.AuthConfig{}
+			authConfig = &cliconfig.AuthConfig{}
 		}
 	}
 
@@ -1275,7 +1263,7 @@ func (s *Server) postBuild(eng *engine.Engine, version version.Version, w http.R
 		if err := json.NewDecoder(configFileJson).Decode(configFile); err != nil {
 			// for a pull it is not an error if no auth was given
 			// to increase compatibility with the existing api it is defaulting to be empty
-			configFile = &registry.ConfigFile{}
+			configFile = &cliconfig.ConfigFile{}
 		}
 	}
 
@@ -1307,11 +1295,13 @@ func (s *Server) postBuild(eng *engine.Engine, version version.Version, w http.R
 	buildConfig.ForceRemove = boolValue(r, "forcerm")
 	buildConfig.AuthConfig = authConfig
 	buildConfig.ConfigFile = configFile
-	buildConfig.MemorySwap = int64Value(r, "memswap")
-	buildConfig.Memory = int64Value(r, "memory")
-	buildConfig.CpuShares = int64Value(r, "cpushares")
+	buildConfig.MemorySwap = int64ValueOrZero(r, "memswap")
+	buildConfig.Memory = int64ValueOrZero(r, "memory")
+	buildConfig.CpuShares = int64ValueOrZero(r, "cpushares")
+	buildConfig.CpuQuota = int64ValueOrZero(r, "cpuquota")
 	buildConfig.CpuSetCpus = r.FormValue("cpusetcpus")
 	buildConfig.CpuSetMems = r.FormValue("cpusetmems")
+	buildConfig.CgroupParent = r.FormValue("cgroupparent")
 
 	// Job cancellation. Note: not all job types support this.
 	if closeNotifier, ok := w.(http.CloseNotifier); ok {
@@ -1339,7 +1329,7 @@ func (s *Server) postBuild(eng *engine.Engine, version version.Version, w http.R
 	return nil
 }
 
-func (s *Server) postContainersCopy(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainersCopy(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter")
 	}
@@ -1357,30 +1347,19 @@ func (s *Server) postContainersCopy(eng *engine.Engine, version version.Version,
 		return fmt.Errorf("Path cannot be empty")
 	}
 
-	res := cfg.Resource
-
-	if res[0] == '/' {
-		res = res[1:]
-	}
-
-	cont, err := s.daemon.Get(vars["name"])
+	data, err := s.daemon.ContainerCopy(vars["name"], cfg.Resource)
 	if err != nil {
-		logrus.Errorf("%v", err)
 		if strings.Contains(strings.ToLower(err.Error()), "no such id") {
 			w.WriteHeader(http.StatusNotFound)
 			return nil
 		}
-	}
-
-	data, err := cont.Copy(res)
-	if err != nil {
-		logrus.Errorf("%v", err)
 		if os.IsNotExist(err) {
 			return fmt.Errorf("Could not find the file %s in container %s", cfg.Resource, vars["name"])
 		}
 		return err
 	}
 	defer data.Close()
+
 	w.Header().Set("Content-Type", "application/x-tar")
 	if _, err := io.Copy(w, data); err != nil {
 		return err
@@ -1389,57 +1368,52 @@ func (s *Server) postContainersCopy(eng *engine.Engine, version version.Version,
 	return nil
 }
 
-func (s *Server) postContainerExecCreate(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainerExecCreate(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return nil
 	}
-	var (
-		name         = vars["name"]
-		job          = eng.Job("execCreate", name)
-		stdoutBuffer = bytes.NewBuffer(nil)
-		outWarnings  []string
-		warnings     = bytes.NewBuffer(nil)
-	)
+	name := vars["name"]
 
-	if err := job.DecodeEnv(r.Body); err != nil {
+	execConfig := &runconfig.ExecConfig{}
+	if err := json.NewDecoder(r.Body).Decode(execConfig); err != nil {
 		return err
 	}
+	execConfig.Container = name
 
-	job.Stdout.Add(stdoutBuffer)
-	// Read warnings from stderr
-	job.Stderr.Add(warnings)
+	if len(execConfig.Cmd) == 0 {
+		return fmt.Errorf("No exec command specified")
+	}
+
 	// Register an instance of Exec in container.
-	if err := job.Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "Error setting up exec command in container %s: %s\n", name, err)
+	id, err := s.daemon.ContainerExecCreate(execConfig)
+	if err != nil {
+		logrus.Errorf("Error setting up exec command in container %s: %s", name, err)
 		return err
-	}
-	// Parse warnings from stderr
-	scanner := bufio.NewScanner(warnings)
-	for scanner.Scan() {
-		outWarnings = append(outWarnings, scanner.Text())
 	}
 
 	return writeJSON(w, http.StatusCreated, &types.ContainerExecCreateResponse{
-		ID:       engine.Tail(stdoutBuffer, 1),
-		Warnings: outWarnings,
+		ID: id,
 	})
 }
 
 // TODO(vishh): Refactor the code to avoid having to specify stream config as part of both create and start.
-func (s *Server) postContainerExecStart(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainerExecStart(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return nil
 	}
 	var (
-		name             = vars["name"]
-		job              = eng.Job("execStart", name)
-		errOut io.Writer = os.Stderr
+		execName = vars["name"]
+		stdin    io.ReadCloser
+		stdout   io.Writer
+		stderr   io.Writer
 	)
 
-	if err := job.DecodeEnv(r.Body); err != nil {
+	execStartCheck := &types.ExecStartCheck{}
+	if err := json.NewDecoder(r.Body).Decode(execStartCheck); err != nil {
 		return err
 	}
-	if !job.GetenvBool("Detach") {
+
+	if !execStartCheck.Detach {
 		// Setting up the streaming http interface.
 		inStream, outStream, err := hijackServer(w)
 		if err != nil {
@@ -1455,21 +1429,20 @@ func (s *Server) postContainerExecStart(eng *engine.Engine, version version.Vers
 			fmt.Fprintf(outStream, "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.docker.raw-stream\r\n\r\n")
 		}
 
-		if !job.GetenvBool("Tty") && version.GreaterThanOrEqualTo("1.6") {
+		if !execStartCheck.Tty && version.GreaterThanOrEqualTo("1.6") {
 			errStream = stdcopy.NewStdWriter(outStream, stdcopy.Stderr)
 			outStream = stdcopy.NewStdWriter(outStream, stdcopy.Stdout)
 		} else {
 			errStream = outStream
 		}
-		job.Stdin.Add(inStream)
-		job.Stdout.Add(outStream)
-		job.Stderr.Set(errStream)
-		errOut = outStream
+		stdin = inStream
+		stdout = outStream
+		stderr = errStream
 	}
 	// Now run the user process in container.
-	job.SetCloseIO(false)
-	if err := job.Run(); err != nil {
-		fmt.Fprintf(errOut, "Error starting exec command in container %s: %s\n", name, err)
+
+	if err := s.daemon.ContainerExecStart(execName, stdin, stdout, stderr); err != nil {
+		logrus.Errorf("Error starting exec command in container %s: %s", execName, err)
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1477,7 +1450,7 @@ func (s *Server) postContainerExecStart(eng *engine.Engine, version version.Vers
 	return nil
 }
 
-func (s *Server) postContainerExecResize(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainerExecResize(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -1497,7 +1470,7 @@ func (s *Server) postContainerExecResize(eng *engine.Engine, version version.Ver
 	return s.daemon.ContainerExecResize(vars["name"], height, width)
 }
 
-func (s *Server) optionsHandler(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) optionsHandler(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -1508,12 +1481,12 @@ func writeCorsHeaders(w http.ResponseWriter, r *http.Request, corsHeaders string
 	w.Header().Add("Access-Control-Allow-Methods", "GET, POST, DELETE, PUT, OPTIONS")
 }
 
-func (s *Server) ping(eng *engine.Engine, version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) ping(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	_, err := w.Write([]byte{'O', 'K'})
 	return err
 }
 
-func makeHttpHandler(eng *engine.Engine, logging bool, localMethod string, localRoute string, handlerFunc HttpApiFunc, corsHeaders string, dockerVersion version.Version) http.HandlerFunc {
+func makeHttpHandler(logging bool, localMethod string, localRoute string, handlerFunc HttpApiFunc, corsHeaders string, dockerVersion version.Version) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// log the request
 		logrus.Debugf("Calling %s %s", localMethod, localRoute)
@@ -1541,7 +1514,7 @@ func makeHttpHandler(eng *engine.Engine, logging bool, localMethod string, local
 			return
 		}
 
-		if err := handlerFunc(eng, version, w, r, mux.Vars(r)); err != nil {
+		if err := handlerFunc(version, w, r, mux.Vars(r)); err != nil {
 			logrus.Errorf("Handler for %s %s returned error: %s", localMethod, localRoute, err)
 			httpError(w, err)
 		}
@@ -1549,7 +1522,7 @@ func makeHttpHandler(eng *engine.Engine, logging bool, localMethod string, local
 }
 
 // we keep enableCors just for legacy usage, need to be removed in the future
-func createRouter(s *Server, eng *engine.Engine) *mux.Router {
+func createRouter(s *Server) *mux.Router {
 	r := mux.NewRouter()
 	if os.Getenv("DEBUG") != "" {
 		ProfilerSetup(r, "/debug/")
@@ -1561,7 +1534,6 @@ func createRouter(s *Server, eng *engine.Engine) *mux.Router {
 			"/info":                           s.getInfo,
 			"/version":                        s.getVersion,
 			"/images/json":                    s.getImagesJSON,
-			"/images/viz":                     s.getImagesViz,
 			"/images/search":                  s.getImagesSearch,
 			"/images/get":                     s.getImagesGet,
 			"/images/{name:.*}/get":           s.getImagesGet,
@@ -1627,7 +1599,7 @@ func createRouter(s *Server, eng *engine.Engine) *mux.Router {
 			localMethod := method
 
 			// build the handler function
-			f := makeHttpHandler(eng, s.cfg.Logging, localMethod, localRoute, localFct, corsHeaders, version.Version(s.cfg.Version))
+			f := makeHttpHandler(s.cfg.Logging, localMethod, localRoute, localFct, corsHeaders, version.Version(s.cfg.Version))
 
 			// add the new route
 			if localRoute == "" {
@@ -1640,23 +1612,6 @@ func createRouter(s *Server, eng *engine.Engine) *mux.Router {
 	}
 
 	return r
-}
-
-// ServeRequest processes a single http request to the docker remote api.
-// FIXME: refactor this to be part of Server and not require re-creating a new
-// router each time. This requires first moving ListenAndServe into Server.
-func ServeRequest(eng *engine.Engine, apiversion version.Version, w http.ResponseWriter, req *http.Request) {
-	cfg := &ServerConfig{
-		EnableCors: true,
-		Version:    string(apiversion),
-	}
-	api := New(cfg, eng)
-	daemon, _ := eng.HackGetGlobalVar("httpapi.daemon").(*daemon.Daemon)
-	api.AcceptConnections(daemon)
-	router := createRouter(api, eng)
-	// Insert APIVERSION into the request as a convenience
-	req.URL.Path = fmt.Sprintf("/v%s%s", apiversion, req.URL.Path)
-	router.ServeHTTP(w, req)
 }
 
 func allocateDaemonPort(addr string) error {

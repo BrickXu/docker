@@ -1,7 +1,6 @@
 package main
 
 import (
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -54,21 +53,6 @@ func (s *DockerSuite) TestRmRunningContainer(c *check.C) {
 
 }
 
-func (s *DockerSuite) TestRmRunningContainerCheckError409(c *check.C) {
-
-	createRunningContainer(c, "foo")
-
-	endpoint := "/containers/foo"
-	status, _, err := sockRequest("DELETE", endpoint, nil)
-
-	if err == nil {
-		c.Fatalf("Expected error, can't rm a running container")
-	} else if status != http.StatusConflict {
-		c.Fatalf("Expected error to contain '409 Conflict' but found %s", err)
-	}
-
-}
-
 func (s *DockerSuite) TestRmForceRemoveRunningContainer(c *check.C) {
 
 	createRunningContainer(c, "foo")
@@ -92,7 +76,6 @@ func (s *DockerSuite) TestRmContainerOrphaning(c *check.C) {
 
 	// build first dockerfile
 	img1, err := buildImage(img, dockerfile1, true)
-	defer deleteImages(img1)
 	if err != nil {
 		c.Fatalf("Could not build image %s: %v", img, err)
 	}

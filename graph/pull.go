@@ -12,6 +12,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution/digest"
+	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/progressreader"
 	"github.com/docker/docker/pkg/streamformatter"
@@ -23,7 +24,7 @@ import (
 type ImagePullConfig struct {
 	Parallel    bool
 	MetaHeaders map[string][]string
-	AuthConfig  *registry.AuthConfig
+	AuthConfig  *cliconfig.AuthConfig
 	Json        bool
 	OutStream   io.Writer
 }
@@ -36,6 +37,10 @@ func (s *TagStore) Pull(image string, tag string, imagePullConfig *ImagePullConf
 	// Resolve the Repository name from fqn to RepositoryInfo
 	repoInfo, err := s.registryService.ResolveRepository(image)
 	if err != nil {
+		return err
+	}
+
+	if err := validateRepoName(repoInfo.LocalName); err != nil {
 		return err
 	}
 
@@ -532,8 +537,7 @@ func (s *TagStore) pullV2Tag(r *registry.Session, out io.Writer, endpoint *regis
 				di.err <- downloadFunc(di)
 			}(&downloads[i])
 		} else {
-			err := downloadFunc(&downloads[i])
-			if err != nil {
+			if err := downloadFunc(&downloads[i]); err != nil {
 				return false, err
 			}
 		}
@@ -543,8 +547,7 @@ func (s *TagStore) pullV2Tag(r *registry.Session, out io.Writer, endpoint *regis
 	for i := len(downloads) - 1; i >= 0; i-- {
 		d := &downloads[i]
 		if d.err != nil {
-			err := <-d.err
-			if err != nil {
+			if err := <-d.err; err != nil {
 				return false, err
 			}
 		}

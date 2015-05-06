@@ -91,6 +91,7 @@ Query Parameters:
 -   **filters** - a json encoded value of the filters (a map[string][]string) to process on the containers list. Available filters:
   -   exited=&lt;int&gt; -- containers with exit code of &lt;int&gt;
   -   status=(restarting|running|paused|exited)
+  -   label=`key` or `key=value` of a container label
 
 Status Codes:
 
@@ -148,6 +149,7 @@ Create a container
                "CpuShares": 512,
                "CpusetCpus": "0,1",
                "CpusetMems": "0,1",
+               "OomKillDisable": false,
                "PortBindings": { "22/tcp": [{ "HostPort": "11022" }] },
                "PublishAllPorts": false,
                "Privileged": false,
@@ -193,6 +195,7 @@ Json Parameters:
 -   **Cpuset** - The same as CpusetCpus, but deprecated, please don't use.
 -   **CpusetCpus** - String value containing the cgroups CpusetCpus to use.
 -   **CpusetMems** - Memory nodes (MEMs) in which to allow execution (0-3, 0,1). Only effective on NUMA systems.
+-   **OomKillDisable** - Boolean value, whether to disable OOM Killer for the container or not.
 -   **AttachStdin** - Boolean value, attaches to stdin.
 -   **AttachStdout** - Boolean value, attaches to stdout.
 -   **AttachStderr** - Boolean value, attaches to stderr.
@@ -261,7 +264,7 @@ Json Parameters:
         systems, such as SELinux.
     -   **LogConfig** - Log configuration for the container, specified as
           `{ "Type": "<driver_name>", "Config": {"key1": "val1"}}`.
-          Available types: `json-file`, `syslog`, `none`.
+          Available types: `json-file`, `syslog`, `journald`, `none`.
           `json-file` logging driver.
     -   **CgroupParent** - Path to cgroups under which the cgroup for the container will be created. If the path is not absolute, the path is considered to be relative to the cgroups path of the init process. Cgroups will be created if they do not already exist.
 
@@ -353,6 +356,7 @@ Return low-level information on the container `id`
 			"LxcConf": [],
 			"Memory": 0,
 			"MemorySwap": 0,
+			"OomKillDisable": false,
 			"NetworkMode": "bridge",
 			"PortBindings": {},
 			"Privileged": false,
@@ -643,6 +647,10 @@ This endpoint returns a live stream of a container's resource usage statistics.
            }
         }
 
+Query Parameters:
+
+-   **stream** – 1/True/true or 0/False/false, pull stats once then disconnect. Default true
+
 Status Codes:
 
 -   **200** – no error
@@ -762,7 +770,7 @@ Json Parameters:
     systems, such as SELinux.
 -   **LogConfig** - Log configuration for the container, specified as
       `{ "Type": "<driver_name>", "Config": {"key1": "val1"}}`.
-      Available types: `json-file`, `syslog`, `none`.
+      Available types: `json-file`, `syslog`, `journald`, `none`.
       `json-file` logging driver.
 -   **CgroupParent** - Path to cgroups under which the cgroup for the container will be created. If the path is not absolute, the path is considered to be relative to the cgroups path of the init process. Cgroups will be created if they do not already exist.
 
@@ -1194,6 +1202,7 @@ Query Parameters:
 -   **all** – 1/True/true or 0/False/false, default false
 -   **filters** – a json encoded value of the filters (a map[string][]string) to process on the images list. Available filters:
   -   dangling=true
+  -   label=`key` or `key=value` of an image label
 
 ### Build image from a Dockerfile
 
@@ -1253,7 +1262,7 @@ Query Parameters:
     Request Headers:
 
 -   **Content-type** – should be set to `"application/tar"`.
--   **X-Registry-Config** – base64-encoded ConfigFile objec
+-   **X-Registry-Config** – base64-encoded ConfigFile object
 
 Status Codes:
 
@@ -1794,7 +1803,7 @@ Get a tarball containing all images and metadata for the repository specified
 by `name`.
 
 If `name` is a specific name and tag (e.g. ubuntu:latest), then only that image
-(and its parents) are returned. If `name` is an image ID, similarly only tha
+(and its parents) are returned. If `name` is an image ID, similarly only that
 image (and its parents) are returned, but with the exclusion of the
 'repositories' file in the tarball, as there were no image names referenced.
 

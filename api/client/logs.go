@@ -1,10 +1,11 @@
 package client
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 
-	"github.com/docker/docker/engine"
+	"github.com/docker/docker/api/types"
 	flag "github.com/docker/docker/pkg/mflag"
 )
 
@@ -29,12 +30,12 @@ func (cli *DockerCli) CmdLogs(args ...string) error {
 		return err
 	}
 
-	env := engine.Env{}
-	if err := env.Decode(stream); err != nil {
+	var c types.ContainerJSON
+	if err := json.NewDecoder(stream).Decode(&c); err != nil {
 		return err
 	}
 
-	if env.GetSubEnv("HostConfig").GetSubEnv("LogConfig").Get("Type") != "json-file" {
+	if c.HostConfig.LogConfig.Type != "json-file" {
 		return fmt.Errorf("\"logs\" command is supported only for \"json-file\" logging driver")
 	}
 
@@ -51,5 +52,11 @@ func (cli *DockerCli) CmdLogs(args ...string) error {
 	}
 	v.Set("tail", *tail)
 
-	return cli.streamHelper("GET", "/containers/"+name+"/logs?"+v.Encode(), env.GetSubEnv("Config").GetBool("Tty"), nil, cli.out, cli.err, nil)
+	sopts := &streamOpts{
+		rawTerminal: c.Config.Tty,
+		out:         cli.out,
+		err:         cli.err,
+	}
+
+	return cli.stream("GET", "/containers/"+name+"/logs?"+v.Encode(), sopts)
 }

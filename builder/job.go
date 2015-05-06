@@ -6,12 +6,12 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/builder/parser"
+	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/pkg/archive"
@@ -21,6 +21,7 @@ import (
 	"github.com/docker/docker/pkg/urlutil"
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
+	"github.com/docker/docker/utils"
 )
 
 // whitelist of commands allowed for a commit/import
@@ -48,10 +49,12 @@ type Config struct {
 	Memory         int64
 	MemorySwap     int64
 	CpuShares      int64
+	CpuQuota       int64
 	CpuSetCpus     string
 	CpuSetMems     string
-	AuthConfig     *registry.AuthConfig
-	ConfigFile     *registry.ConfigFile
+	CgroupParent   string
+	AuthConfig     *cliconfig.AuthConfig
+	ConfigFile     *cliconfig.ConfigFile
 
 	Stdout  io.Writer
 	Context io.ReadCloser
@@ -76,8 +79,8 @@ func (b *Config) WaitCancelled() <-chan struct{} {
 
 func NewBuildConfig() *Config {
 	return &Config{
-		AuthConfig: &registry.AuthConfig{},
-		ConfigFile: &registry.ConfigFile{},
+		AuthConfig: &cliconfig.AuthConfig{},
+		ConfigFile: &cliconfig.ConfigFile{},
 		cancelled:  make(chan struct{}),
 	}
 }
@@ -104,18 +107,11 @@ func Build(d *daemon.Daemon, buildConfig *Config) error {
 	if buildConfig.RemoteURL == "" {
 		context = ioutil.NopCloser(buildConfig.Context)
 	} else if urlutil.IsGitURL(buildConfig.RemoteURL) {
-		if !urlutil.IsGitTransport(buildConfig.RemoteURL) {
-			buildConfig.RemoteURL = "https://" + buildConfig.RemoteURL
-		}
-		root, err := ioutil.TempDir("", "docker-build-git")
+		root, err := utils.GitClone(buildConfig.RemoteURL)
 		if err != nil {
 			return err
 		}
 		defer os.RemoveAll(root)
-
-		if output, err := exec.Command("git", "clone", "--recursive", buildConfig.RemoteURL, root).CombinedOutput(); err != nil {
-			return fmt.Errorf("Error trying to use git: %s (%s)", err, output)
-		}
 
 		c, err := archive.Tar(root, archive.Uncompressed)
 		if err != nil {
@@ -168,8 +164,10 @@ func Build(d *daemon.Daemon, buildConfig *Config) error {
 		ConfigFile:      buildConfig.ConfigFile,
 		dockerfileName:  buildConfig.DockerfileName,
 		cpuShares:       buildConfig.CpuShares,
+		cpuQuota:        buildConfig.CpuQuota,
 		cpuSetCpus:      buildConfig.CpuSetCpus,
 		cpuSetMems:      buildConfig.CpuSetMems,
+		cgroupParent:    buildConfig.CgroupParent,
 		memory:          buildConfig.Memory,
 		memorySwap:      buildConfig.MemorySwap,
 		cancelled:       buildConfig.WaitCancelled(),

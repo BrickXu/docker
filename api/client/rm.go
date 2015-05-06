@@ -3,10 +3,14 @@ package client
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	flag "github.com/docker/docker/pkg/mflag"
 )
 
+// CmdRm removes one or more containers.
+//
+// Usage: docker rm [OPTIONS] CONTAINER [CONTAINER...]
 func (cli *DockerCli) CmdRm(args ...string) error {
 	cmd := cli.Subcmd("rm", "CONTAINER [CONTAINER...]", "Remove one or more containers", true)
 	v := cmd.Bool([]string{"v", "-volumes"}, false, "Remove the volumes associated with the container")
@@ -33,6 +37,7 @@ func (cli *DockerCli) CmdRm(args ...string) error {
 		if name == "" {
 			return fmt.Errorf("Container name cannot be empty")
 		}
+		name = strings.Trim(name, "/")
 
 		_, _, err := readBody(cli.call("DELETE", "/containers/"+name+"?"+val.Encode(), nil, nil))
 		if err != nil {

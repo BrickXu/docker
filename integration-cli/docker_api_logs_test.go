@@ -1,30 +1,46 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/go-check/check"
 )
 
 func (s *DockerSuite) TestLogsApiWithStdout(c *check.C) {
-	name := "logs_test"
-
-	runCmd := exec.Command(dockerBinary, "run", "-d", "-t", "--name", name, "busybox", "bin/sh", "-c", "sleep 10 && echo "+name)
-	if out, _, err := runCommandWithOutput(runCmd); err != nil {
-		c.Fatal(out, err)
+	out, _ := dockerCmd(c, "run", "-d", "-t", "busybox", "/bin/sh", "-c", "while true; do echo hello; sleep 1; done")
+	id := strings.TrimSpace(out)
+	if err := waitRun(id); err != nil {
+		c.Fatal(err)
 	}
 
-	statusCode, body, err := sockRequest("GET", fmt.Sprintf("/containers/%s/logs?follow=1&stdout=1&timestamps=1", name), nil)
-
-	if err != nil || statusCode != http.StatusOK {
-		c.Fatalf("Expected %d from logs request, got %d", http.StatusOK, statusCode)
+	type logOut struct {
+		out string
+		res *http.Response
+		err error
 	}
+	chLog := make(chan logOut)
 
-	if !bytes.Contains(body, []byte(name)) {
-		c.Fatalf("Expected %s, got %s", name, string(body[:]))
+	go func() {
+		res, body, err := sockRequestRaw("GET", fmt.Sprintf("/containers/%s/logs?follow=1&stdout=1&timestamps=1", id), nil, "")
+		out, _ := bufio.NewReader(body).ReadString('\n')
+		chLog <- logOut{strings.TrimSpace(out), res, err}
+	}()
+
+	select {
+	case l := <-chLog:
+		c.Assert(l.err, check.IsNil)
+		c.Assert(l.res.StatusCode, check.Equals, http.StatusOK)
+		if !strings.HasSuffix(l.out, "hello") {
+			c.Fatalf("expected log output to container 'hello', but it does not")
+		}
+	case <-time.After(2 * time.Second):
+		c.Fatal("timeout waiting for logs to exit")
 	}
 }
 
@@ -35,11 +51,9 @@ func (s *DockerSuite) TestLogsApiNoStdoutNorStderr(c *check.C) {
 		c.Fatal(out, err)
 	}
 
-	statusCode, body, err := sockRequest("GET", fmt.Sprintf("/containers/%s/logs", name), nil)
-
-	if err == nil || statusCode != http.StatusBadRequest {
-		c.Fatalf("Expected %d from logs request, got %d", http.StatusBadRequest, statusCode)
-	}
+	status, body, err := sockRequest("GET", fmt.Sprintf("/containers/%s/logs", name), nil)
+	c.Assert(status, check.Equals, http.StatusBadRequest)
+	c.Assert(err, check.IsNil)
 
 	expected := "Bad parameters: you must choose at least one stream"
 	if !bytes.Contains(body, []byte(expected)) {

@@ -4,6 +4,8 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"strconv"
+	"strings"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/libcontainer/cgroups"
@@ -16,6 +18,7 @@ type SysInfo struct {
 	CpuCfsQuota            bool
 	IPv4ForwardingDisabled bool
 	AppArmor               bool
+	OomKillDisable         bool
 }
 
 // New returns a new SysInfo, using the filesystem to detect which features the kernel supports.
@@ -23,33 +26,45 @@ func New(quiet bool) *SysInfo {
 	sysInfo := &SysInfo{}
 	if cgroupMemoryMountpoint, err := cgroups.FindCgroupMountpoint("memory"); err != nil {
 		if !quiet {
-			logrus.Warnf("%s", err)
+			logrus.Warnf("Your kernel does not support cgroup memory limit: %v", err)
 		}
 	} else {
-		_, err1 := ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.limit_in_bytes"))
-		_, err2 := ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.soft_limit_in_bytes"))
-		sysInfo.MemoryLimit = err1 == nil && err2 == nil
-		if !sysInfo.MemoryLimit && !quiet {
-			logrus.Warnf("Your kernel does not support cgroup memory limit.")
+		// If memory cgroup is mounted, MemoryLimit is always enabled.
+		sysInfo.MemoryLimit = true
+
+		_, err1 := ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.memsw.limit_in_bytes"))
+		sysInfo.SwapLimit = err1 == nil
+		if !sysInfo.SwapLimit && !quiet {
+			logrus.Warn("Your kernel does not support swap memory limit.")
 		}
 
-		_, err = ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.memsw.limit_in_bytes"))
-		sysInfo.SwapLimit = err == nil
-		if !sysInfo.SwapLimit && !quiet {
-			logrus.Warnf("Your kernel does not support cgroup swap limit.")
+		_, err = ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.oom_control"))
+		sysInfo.OomKillDisable = err == nil
+		if !sysInfo.OomKillDisable && !quiet {
+			logrus.Warnf("Your kernel does not support oom control.")
 		}
 	}
 
 	if cgroupCpuMountpoint, err := cgroups.FindCgroupMountpoint("cpu"); err != nil {
 		if !quiet {
-			logrus.Warnf("WARING: %s\n", err)
+			logrus.Warnf("%v", err)
 		}
 	} else {
 		_, err1 := ioutil.ReadFile(path.Join(cgroupCpuMountpoint, "cpu.cfs_quota_us"))
-		logrus.Warnf("%s", cgroupCpuMountpoint)
 		sysInfo.CpuCfsQuota = err1 == nil
 		if !sysInfo.CpuCfsQuota && !quiet {
-			logrus.Warnf("WARING: Your kernel does not support cgroup cfs quotas")
+			logrus.Warn("Your kernel does not support cgroup cfs quotas")
+		}
+	}
+
+	// Checek if ipv4_forward is disabled.
+	if data, err := ioutil.ReadFile("/proc/sys/net/ipv4/ip_forward"); os.IsNotExist(err) {
+		sysInfo.IPv4ForwardingDisabled = true
+	} else {
+		if enabled, _ := strconv.Atoi(strings.TrimSpace(string(data))); enabled == 0 {
+			sysInfo.IPv4ForwardingDisabled = true
+		} else {
+			sysInfo.IPv4ForwardingDisabled = false
 		}
 	}
 
@@ -59,5 +74,11 @@ func New(quiet bool) *SysInfo {
 	} else {
 		sysInfo.AppArmor = true
 	}
+
+	// Check if Devices cgroup is mounted, it is hard requirement for container security.
+	if _, err := cgroups.FindCgroupMountpoint("devices"); err != nil {
+		logrus.Fatalf("Error mounting devices cgroup: %v", err)
+	}
+
 	return sysInfo
 }

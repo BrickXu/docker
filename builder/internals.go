@@ -32,10 +32,10 @@ import (
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/progressreader"
 	"github.com/docker/docker/pkg/stringid"
-	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/pkg/tarsum"
 	"github.com/docker/docker/pkg/urlutil"
+	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
 )
 
@@ -147,8 +147,15 @@ func (b *Builder) runContextCommand(args []string, allowRemote bool, allowDecomp
 	// do the copy (e.g. hash value if cached).  Don't actually do
 	// the copy until we've looked at all src files
 	for _, orig := range args[0 : len(args)-1] {
-		err := calcCopyInfo(b, cmdName, &copyInfos, orig, dest, allowRemote, allowDecompression)
-		if err != nil {
+		if err := calcCopyInfo(
+			b,
+			cmdName,
+			&copyInfos,
+			orig,
+			dest,
+			allowRemote,
+			allowDecompression,
+		); err != nil {
 			return err
 		}
 	}
@@ -443,7 +450,7 @@ func (b *Builder) pullImage(name string) (*imagepkg.Image, error) {
 		if err != nil {
 			return nil, err
 		}
-		resolvedAuth := b.ConfigFile.ResolveAuthConfig(repoInfo.Index)
+		resolvedAuth := registry.ResolveAuthConfig(b.ConfigFile, repoInfo.Index)
 		pullRegistryAuth = &resolvedAuth
 	}
 
@@ -482,7 +489,7 @@ func (b *Builder) processImageFrom(img *imagepkg.Image) error {
 		fmt.Fprintf(b.ErrStream, "# Executing %d build triggers\n", nTriggers)
 	}
 
-	// Copy the ONBUILD triggers, and remove them from the config, since the config will be commited.
+	// Copy the ONBUILD triggers, and remove them from the config, since the config will be committed.
 	onBuildTriggers := b.Config.OnBuild
 	b.Config.OnBuild = []string{}
 
@@ -545,11 +552,13 @@ func (b *Builder) create() (*daemon.Container, error) {
 	b.Config.Image = b.image
 
 	hostConfig := &runconfig.HostConfig{
-		CpuShares:  b.cpuShares,
-		CpusetCpus: b.cpuSetCpus,
-		CpusetMems: b.cpuSetMems,
-		Memory:     b.memory,
-		MemorySwap: b.memorySwap,
+		CpuShares:    b.cpuShares,
+		CpuQuota:     b.cpuQuota,
+		CpusetCpus:   b.cpuSetCpus,
+		CpusetMems:   b.cpuSetMems,
+		CgroupParent: b.cgroupParent,
+		Memory:       b.memory,
+		MemorySwap:   b.memorySwap,
 	}
 
 	config := *b.Config
@@ -644,14 +653,12 @@ func (b *Builder) addContext(container *daemon.Container, orig, dest string, dec
 		err        error
 		destExists = true
 		origPath   = path.Join(b.contextPath, orig)
-		destPath   = path.Join(container.RootfsPath(), dest)
+		destPath   string
 	)
 
-	if destPath != container.RootfsPath() {
-		destPath, err = symlink.FollowSymlinkInScope(destPath, container.RootfsPath())
-		if err != nil {
-			return err
-		}
+	destPath, err = container.GetResourcePath(dest)
+	if err != nil {
+		return err
 	}
 
 	// Preserve the trailing '/'

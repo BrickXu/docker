@@ -11,7 +11,7 @@ repository into the `docker/docker` repository.
 You can see <a href="https://github.com/docker/docker/pulls" target="_blank">the
 list of active pull requests to Docker</a> on GitHub.
 
-## Check Your Work
+## Check your work
 
 Before you create a pull request, check your work.
 
@@ -77,7 +77,7 @@ Always rebase and squash your commits before making a pull request.
 
 		`git commit -s`
 
-		Make sure your message includes <a href="./set-up-git" target="_blank>your signature</a>.
+    Make sure your message includes <a href="./set-up-git" target="_blank>your signature</a>.
 
 7. Force push any changes to your fork on GitHub.
 
