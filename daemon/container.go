@@ -307,6 +307,7 @@ func populateCommand(c *Container, env []string) error {
 				GlobalIPv6Address:    network.GlobalIPv6Address,
 				GlobalIPv6PrefixLen:  network.GlobalIPv6PrefixLen,
 				IPv6Gateway:          network.IPv6Gateway,
+				HairpinMode:          network.HairpinMode,
 			}
 		}
 	case "container":
@@ -382,7 +383,9 @@ func populateCommand(c *Container, env []string) error {
 		CpuShares:      c.hostConfig.CpuShares,
 		CpusetCpus:     c.hostConfig.CpusetCpus,
 		CpusetMems:     c.hostConfig.CpusetMems,
+		CpuPeriod:      c.hostConfig.CpuPeriod,
 		CpuQuota:       c.hostConfig.CpuQuota,
+		BlkioWeight:    c.hostConfig.BlkioWeight,
 		Rlimits:        rlimits,
 		OomKillDisable: c.hostConfig.OomKillDisable,
 	}
@@ -646,7 +649,14 @@ func (container *Container) AllocateNetwork() error {
 
 	container.NetworkSettings.PortMapping = nil
 
-	for port := range portSpecs {
+	ports := make([]nat.Port, len(portSpecs))
+	var i int
+	for p := range portSpecs {
+		ports[i] = p
+		i++
+	}
+	nat.SortPortMap(ports, bindings)
+	for _, port := range ports {
 		if err = container.allocatePort(port, bindings); err != nil {
 			bridge.Release(container.ID)
 			return err
@@ -1043,16 +1053,11 @@ func (container *Container) Exposes(p nat.Port) bool {
 }
 
 func (container *Container) HostConfig() *runconfig.HostConfig {
-	container.Lock()
-	res := container.hostConfig
-	container.Unlock()
-	return res
+	return container.hostConfig
 }
 
 func (container *Container) SetHostConfig(hostConfig *runconfig.HostConfig) {
-	container.Lock()
 	container.hostConfig = hostConfig
-	container.Unlock()
 }
 
 func (container *Container) DisableLink(name string) {
@@ -1107,7 +1112,7 @@ func (container *Container) setupContainerDns() error {
 		return err
 	}
 
-	if config.NetworkMode != "host" {
+	if config.NetworkMode.IsBridge() || config.NetworkMode.IsNone() {
 		// check configurations for any container/daemon dns settings
 		if len(config.Dns) > 0 || len(daemon.config.Dns) > 0 || len(config.DnsSearch) > 0 || len(daemon.config.DnsSearch) > 0 {
 			var (

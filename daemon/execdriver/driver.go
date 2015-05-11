@@ -96,6 +96,7 @@ type NetworkInterface struct {
 	LinkLocalIPv6Address string `json:"link_local_ipv6"`
 	GlobalIPv6PrefixLen  int    `json:"global_ipv6_prefix_len"`
 	IPv6Gateway          string `json:"ipv6_gateway"`
+	HairpinMode          bool   `json:"hairpin_mode"`
 }
 
 // TODO Windows: Factor out ulimit.Rlimit
@@ -105,7 +106,9 @@ type Resources struct {
 	CpuShares      int64            `json:"cpu_shares"`
 	CpusetCpus     string           `json:"cpuset_cpus"`
 	CpusetMems     string           `json:"cpuset_mems"`
+	CpuPeriod      int64            `json:"cpu_period"`
 	CpuQuota       int64            `json:"cpu_quota"`
+	BlkioWeight    int64            `json:"blkio_weight"`
 	Rlimits        []*ulimit.Rlimit `json:"rlimits"`
 	OomKillDisable bool             `json:"oom_kill_disable"`
 }

@@ -371,6 +371,33 @@ func (s *DockerSuite) TestRunLinkToContainerNetMode(c *check.C) {
 	}
 }
 
+func (s *DockerSuite) TestRunContainerNetModeWithDnsMacHosts(c *check.C) {
+	cmd := exec.Command(dockerBinary, "run", "-d", "--name", "parent", "busybox", "top")
+	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		c.Fatalf("failed to run container: %v, output: %q", err, out)
+	}
+
+	cmd = exec.Command(dockerBinary, "run", "--dns", "1.2.3.4", "--net=container:parent", "busybox")
+	out, _, err = runCommandWithOutput(cmd)
+	if err == nil || !strings.Contains(out, "Conflicting options: --dns and the network mode") {
+		c.Fatalf("run --net=container with --dns should error out")
+	}
+
+	cmd = exec.Command(dockerBinary, "run", "--mac-address", "92:d0:c6:0a:29:33", "--net=container:parent", "busybox")
+	out, _, err = runCommandWithOutput(cmd)
+	if err == nil || !strings.Contains(out, "--mac-address and the network mode") {
+		c.Fatalf("run --net=container with --mac-address should error out")
+	}
+
+	cmd = exec.Command(dockerBinary, "run", "--add-host", "test:192.168.2.109", "--net=container:parent", "busybox")
+	out, _, err = runCommandWithOutput(cmd)
+	if err == nil || !strings.Contains(out, "--add-host and the network mode") {
+		c.Fatalf("run --net=container with --add-host should error out")
+	}
+
+}
+
 func (s *DockerSuite) TestRunModeNetContainerHostname(c *check.C) {
 	testRequires(c, ExecSupport)
 	cmd := exec.Command(dockerBinary, "run", "-i", "-d", "--name", "parent", "busybox", "top")
@@ -1137,6 +1164,28 @@ func (s *DockerSuite) TestRunProcWritableInPrivilegedContainers(c *check.C) {
 	}
 }
 
+func (s *DockerSuite) TestRunWithCpuPeriod(c *check.C) {
+	runCmd := exec.Command(dockerBinary, "run", "--cpu-period", "50000", "--name", "test", "busybox", "true")
+	out, _, _, err := runCommandWithStdoutStderr(runCmd)
+	if err != nil {
+		c.Fatalf("failed to run container: %v, output: %q", err, out)
+	}
+	out = strings.TrimSpace(out)
+	if strings.Contains(out, "Your kernel does not support CPU cfs period") {
+		c.Skip("Your kernel does not support CPU cfs period, skip this test")
+	}
+
+	cmd := exec.Command(dockerBinary, "inspect", "-f", "{{.HostConfig.CpuPeriod}}", "test")
+	out, _, err = runCommandWithOutput(cmd)
+	if err != nil {
+		c.Fatalf("failed to inspect container: %s, %v", out, err)
+	}
+	out = strings.TrimSpace(out)
+	if out != "50000" {
+		c.Errorf("setting the CPU CFS period failed")
+	}
+}
+
 func (s *DockerSuite) TestRunWithCpuset(c *check.C) {
 	cmd := exec.Command(dockerBinary, "run", "--cpuset", "0", "busybox", "true")
 	if code, err := runCommand(cmd); err != nil || code != 0 {
@@ -1155,6 +1204,20 @@ func (s *DockerSuite) TestRunWithCpusetMems(c *check.C) {
 	cmd := exec.Command(dockerBinary, "run", "--cpuset-mems", "0", "busybox", "true")
 	if code, err := runCommand(cmd); err != nil || code != 0 {
 		c.Fatalf("container should run successfully with cpuset-mems of 0: %s", err)
+	}
+}
+
+func (s *DockerSuite) TestRunWithBlkioWeight(c *check.C) {
+	cmd := exec.Command(dockerBinary, "run", "--blkio-weight", "300", "busybox", "true")
+	if code, err := runCommand(cmd); err != nil || code != 0 {
+		c.Fatalf("container should run successfully with blkio-weight of 300: %s", err)
+	}
+}
+
+func (s *DockerSuite) TestRunWithBlkioInvalidWeight(c *check.C) {
+	cmd := exec.Command(dockerBinary, "run", "--blkio-weight", "5", "busybox", "true")
+	if _, err := runCommand(cmd); err == nil {
+		c.Fatalf("run with invalid blkio-weight should failed")
 	}
 }
 
@@ -2197,49 +2260,52 @@ func (s *DockerSuite) TestRunPortInUse(c *check.C) {
 	testRequires(c, SameHostDaemon)
 
 	port := "1234"
-	l, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		c.Fatal(err)
-	}
-	defer l.Close()
 	cmd := exec.Command(dockerBinary, "run", "-d", "-p", port+":80", "busybox", "top")
 	out, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		c.Fatalf("Fail to run listening container")
+	}
+
+	cmd = exec.Command(dockerBinary, "run", "-d", "-p", port+":80", "busybox", "top")
+	out, _, err = runCommandWithOutput(cmd)
 	if err == nil {
 		c.Fatalf("Binding on used port must fail")
 	}
-	if !strings.Contains(out, "address already in use") {
-		c.Fatalf("Out must be about \"address already in use\", got %s", out)
+	if !strings.Contains(out, "port is already allocated") {
+		c.Fatalf("Out must be about \"port is already allocated\", got %s", out)
 	}
 }
 
-// https://github.com/docker/docker/issues/8428
-func (s *DockerSuite) TestRunPortProxy(c *check.C) {
-	testRequires(c, SameHostDaemon)
-
-	port := "12345"
-	cmd := exec.Command(dockerBinary, "run", "-d", "-p", port+":80", "busybox", "top")
-
+// https://github.com/docker/docker/issues/12148
+func (s *DockerSuite) TestRunAllocatePortInReservedRange(c *check.C) {
+	// allocate a dynamic port to get the most recent
+	cmd := exec.Command(dockerBinary, "run", "-d", "-P", "-p", "80", "busybox", "top")
 	out, _, err := runCommandWithOutput(cmd)
 	if err != nil {
-		c.Fatalf("Failed to run and bind port %s, output: %s, error: %s", port, out, err)
+		c.Fatalf("Failed to run, output: %s, error: %s", out, err)
 	}
+	id := strings.TrimSpace(out)
 
-	// connett for 10 times here. This will trigger 10 EPIPES in the child
-	// process and kill it when it writes to a closed stdout/stderr
-	for i := 0; i < 10; i++ {
-		net.Dial("tcp", fmt.Sprintf("0.0.0.0:%s", port))
-	}
-
-	listPs := exec.Command("sh", "-c", "ps ax | grep docker")
-	out, _, err = runCommandWithOutput(listPs)
+	cmd = exec.Command(dockerBinary, "port", id, "80")
+	out, _, err = runCommandWithOutput(cmd)
 	if err != nil {
-		c.Errorf("list docker process failed with output %s, error %s", out, err)
+		c.Fatalf("Failed to get port, output: %s, error: %s", out, err)
 	}
-	if strings.Contains(out, "docker <defunct>") {
-		c.Errorf("Unexpected defunct docker process")
+	strPort := strings.Split(strings.TrimSpace(out), ":")[1]
+	port, err := strconv.ParseInt(strPort, 10, 64)
+	if err != nil {
+		c.Fatalf("invalid port, got: %s, error: %s", strPort, err)
 	}
-	if !strings.Contains(out, "docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 12345") {
-		c.Errorf("Failed to find docker-proxy process, got %s", out)
+
+	// allocate a static port and a dynamic port together, with static port
+	// takes the next recent port in dynamic port range.
+	cmd = exec.Command(dockerBinary, "run", "-d", "-P",
+		"-p", "80",
+		"-p", fmt.Sprintf("%d:8080", port+1),
+		"busybox", "top")
+	out, _, err = runCommandWithOutput(cmd)
+	if err != nil {
+		c.Fatalf("Failed to run, output: %s, error: %s", out, err)
 	}
 }
 
@@ -3084,5 +3150,71 @@ func (s *DockerSuite) TestRunPidHostWithChildIsKillable(c *check.C) {
 		c.Assert(err, check.IsNil)
 	case <-time.After(5 * time.Second):
 		c.Fatal("Kill container timed out")
+	}
+}
+
+func (s *DockerSuite) TestRunWithTooSmallMemoryLimit(c *check.C) {
+	defer deleteAllContainers()
+	// this memory limit is 1 byte less than the min, which is 4MB
+	// https://github.com/docker/docker/blob/v1.5.0/daemon/create.go#L22
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "-m", "4194303", "busybox"))
+	if err == nil || !strings.Contains(out, "Minimum memory limit allowed is 4MB") {
+		c.Fatalf("expected run to fail when using too low a memory limit: %q", out)
+	}
+}
+
+func (s *DockerSuite) TestRunWriteToProcAsound(c *check.C) {
+	defer deleteAllContainers()
+	code, err := runCommand(exec.Command(dockerBinary, "run", "busybox", "sh", "-c", "echo 111 >> /proc/asound/version"))
+	if err == nil || code == 0 {
+		c.Fatal("standard container should not be able to write to /proc/asound")
+	}
+}
+
+func (s *DockerSuite) TestRunReadProcTimer(c *check.C) {
+	testRequires(c, NativeExecDriver)
+	defer deleteAllContainers()
+	out, code, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "busybox", "cat", "/proc/timer_stats"))
+	if err != nil || code != 0 {
+		c.Fatal(err)
+	}
+	if strings.Trim(out, "\n ") != "" {
+		c.Fatalf("expected to receive no output from /proc/timer_stats but received %q", out)
+	}
+}
+
+func (s *DockerSuite) TestRunReadProcLatency(c *check.C) {
+	testRequires(c, NativeExecDriver)
+	// some kernels don't have this configured so skip the test if this file is not found
+	// on the host running the tests.
+	if _, err := os.Stat("/proc/latency_stats"); err != nil {
+		c.Skip("kernel doesnt have latency_stats configured")
+		return
+	}
+	defer deleteAllContainers()
+	out, code, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "busybox", "cat", "/proc/latency_stats"))
+	if err != nil || code != 0 {
+		c.Fatal(err)
+	}
+	if strings.Trim(out, "\n ") != "" {
+		c.Fatalf("expected to receive no output from /proc/latency_stats but received %q", out)
+	}
+}
+
+func (s *DockerSuite) TestMountIntoProc(c *check.C) {
+	testRequires(c, NativeExecDriver)
+	defer deleteAllContainers()
+	code, err := runCommand(exec.Command(dockerBinary, "run", "-v", "/proc//sys", "busybox", "true"))
+	if err == nil || code == 0 {
+		c.Fatal("container should not be able to mount into /proc")
+	}
+}
+
+func (s *DockerSuite) TestMountIntoSys(c *check.C) {
+	testRequires(c, NativeExecDriver)
+	defer deleteAllContainers()
+	code, err := runCommand(exec.Command(dockerBinary, "run", "-v", "/sys/", "busybox", "true"))
+	if err == nil || code == 0 {
+		c.Fatal("container should not be able to mount into /sys")
 	}
 }

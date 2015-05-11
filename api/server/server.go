@@ -25,6 +25,7 @@ import (
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/daemon/networkdriver/bridge"
 	"github.com/docker/docker/graph"
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/parsers/filters"
@@ -34,7 +35,6 @@ import (
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/version"
 	"github.com/docker/docker/runconfig"
-	"github.com/docker/docker/utils"
 )
 
 type ServerConfig struct {
@@ -74,10 +74,6 @@ func (s *Server) Close() {
 			logrus.Error(err)
 		}
 	}
-}
-
-func (s *Server) SetDaemon(d *daemon.Daemon) {
-	s.daemon = d
 }
 
 type serverCloser interface {
@@ -446,7 +442,7 @@ func (s *Server) getEvents(version version.Version, w http.ResponseWriter, r *ht
 	d := s.daemon
 	es := d.EventsService
 	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(utils.NewWriteFlusher(w))
+	enc := json.NewEncoder(ioutils.NewWriteFlusher(w))
 
 	getContainerId := func(cn string) string {
 		c, err := d.Get(cn)
@@ -581,7 +577,7 @@ func (s *Server) getContainersStats(version version.Version, w http.ResponseWrit
 		return fmt.Errorf("Missing parameter")
 	}
 
-	return s.daemon.ContainerStats(vars["name"], boolValue(r, "stream"), utils.NewWriteFlusher(w))
+	return s.daemon.ContainerStats(vars["name"], boolValue(r, "stream"), ioutils.NewWriteFlusher(w))
 }
 
 func (s *Server) getContainersLogs(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -604,7 +600,7 @@ func (s *Server) getContainersLogs(version version.Version, w http.ResponseWrite
 		Tail:       r.Form.Get("tail"),
 		UseStdout:  stdout,
 		UseStderr:  stderr,
-		OutStream:  utils.NewWriteFlusher(w),
+		OutStream:  ioutils.NewWriteFlusher(w),
 	}
 
 	if err := s.daemon.ContainerLogs(vars["name"], logsConfig); err != nil {
@@ -700,8 +696,9 @@ func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter
 	}
 
 	var (
-		opErr   error
+		err     error
 		useJSON = version.GreaterThan("1.0")
+		output  = ioutils.NewWriteFlusher(w)
 	)
 
 	if useJSON {
@@ -723,11 +720,12 @@ func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter
 			Parallel:    version.GreaterThan("1.3"),
 			MetaHeaders: metaHeaders,
 			AuthConfig:  authConfig,
-			OutStream:   utils.NewWriteFlusher(w),
+			OutStream:   output,
 			Json:        useJSON,
 		}
 
-		opErr = s.daemon.Repositories().Pull(image, tag, imagePullConfig)
+		err = s.daemon.Repositories().Pull(image, tag, imagePullConfig)
+
 	} else { //import
 		if tag == "" {
 			repo, tag = parsers.ParseRepositoryTag(repo)
@@ -737,7 +735,7 @@ func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter
 		imageImportConfig := &graph.ImageImportConfig{
 			Changes:   r.Form["changes"],
 			InConfig:  r.Body,
-			OutStream: utils.NewWriteFlusher(w),
+			OutStream: output,
 			Json:      useJSON,
 		}
 
@@ -747,15 +745,19 @@ func (s *Server) postImagesCreate(version version.Version, w http.ResponseWriter
 		}
 		imageImportConfig.ContainerConfig = newConfig
 
-		opErr = s.daemon.Repositories().Import(src, repo, tag, imageImportConfig)
-	}
+		err = s.daemon.Repositories().Import(src, repo, tag, imageImportConfig)
 
-	if opErr != nil {
+	}
+	if err != nil {
+		if !output.Flushed() {
+			return err
+		}
 		sf := streamformatter.NewStreamFormatter(useJSON)
-		return fmt.Errorf(string(sf.FormatError(opErr)))
+		output.Write(sf.FormatError(err))
 	}
 
 	return nil
+
 }
 
 func (s *Server) getImagesSearch(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -822,7 +824,7 @@ func (s *Server) postImagesPush(version version.Version, w http.ResponseWriter, 
 	useJSON := version.GreaterThan("1.0")
 	name := vars["name"]
 
-	output := utils.NewWriteFlusher(w)
+	output := ioutils.NewWriteFlusher(w)
 	imagePushConfig := &graph.ImagePushConfig{
 		MetaHeaders: metaHeaders,
 		AuthConfig:  authConfig,
@@ -858,7 +860,7 @@ func (s *Server) getImagesGet(version version.Version, w http.ResponseWriter, r 
 		w.Header().Set("Content-Type", "application/x-tar")
 	}
 
-	output := utils.NewWriteFlusher(w)
+	output := ioutils.NewWriteFlusher(w)
 	imageExportConfig := &graph.ImageExportConfig{Outstream: output}
 	if name, ok := vars["name"]; ok {
 		imageExportConfig.Names = []string{name}
@@ -917,10 +919,7 @@ func (s *Server) postContainersRestart(version version.Version, w http.ResponseW
 		return fmt.Errorf("Missing parameter")
 	}
 
-	timeout, err := strconv.Atoi(r.Form.Get("t"))
-	if err != nil {
-		return err
-	}
+	timeout, _ := strconv.Atoi(r.Form.Get("t"))
 
 	if err := s.daemon.ContainerRestart(vars["name"], timeout); err != nil {
 		return err
@@ -1040,10 +1039,7 @@ func (s *Server) postContainersStop(version version.Version, w http.ResponseWrit
 		return fmt.Errorf("Missing parameter")
 	}
 
-	seconds, err := strconv.Atoi(r.Form.Get("t"))
-	if err != nil {
-		return err
-	}
+	seconds, _ := strconv.Atoi(r.Form.Get("t"))
 
 	if err := s.daemon.ContainerStop(vars["name"], seconds); err != nil {
 		if err.Error() == "Container already stopped" {
@@ -1283,7 +1279,7 @@ func (s *Server) postBuild(version version.Version, w http.ResponseWriter, r *ht
 		buildConfig.Pull = true
 	}
 
-	output := utils.NewWriteFlusher(w)
+	output := ioutils.NewWriteFlusher(w)
 	buildConfig.Stdout = output
 	buildConfig.Context = r.Body
 
@@ -1298,6 +1294,7 @@ func (s *Server) postBuild(version version.Version, w http.ResponseWriter, r *ht
 	buildConfig.MemorySwap = int64ValueOrZero(r, "memswap")
 	buildConfig.Memory = int64ValueOrZero(r, "memory")
 	buildConfig.CpuShares = int64ValueOrZero(r, "cpushares")
+	buildConfig.CpuPeriod = int64ValueOrZero(r, "cpuperiod")
 	buildConfig.CpuQuota = int64ValueOrZero(r, "cpuquota")
 	buildConfig.CpuSetCpus = r.FormValue("cpusetcpus")
 	buildConfig.CpuSetMems = r.FormValue("cpusetmems")

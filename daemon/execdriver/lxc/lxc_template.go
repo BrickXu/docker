@@ -109,6 +109,9 @@ lxc.cgroup.memory.memsw.limit_in_bytes = {{$memSwap}}
 {{if .Resources.CpuShares}}
 lxc.cgroup.cpu.shares = {{.Resources.CpuShares}}
 {{end}}
+{{if .Resources.CpuPeriod}}
+lxc.cgroup.cpu.cfs_period_us = {{.Resources.CpuPeriod}}
+{{end}}
 {{if .Resources.CpusetCpus}}
 lxc.cgroup.cpuset.cpus = {{.Resources.CpusetCpus}}
 {{end}}
@@ -117,6 +120,9 @@ lxc.cgroup.cpuset.mems = {{.Resources.CpusetMems}}
 {{end}}
 {{if .Resources.CpuQuota}}
 lxc.cgroup.cpu.cfs_quota_us = {{.Resources.CpuQuota}}
+{{end}}
+{{if .Resources.BlkioWeight}}
+lxc.cgroup.blkio.weight = {{.Resources.BlkioWeight}}
 {{end}}
 {{if .Resources.OomKillDisable}}
 lxc.cgroup.memory.oom_control = {{.Resources.OomKillDisable}}

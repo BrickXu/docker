@@ -21,6 +21,10 @@ func (n NetworkMode) IsPrivate() bool {
 	return !(n.IsHost() || n.IsContainer() || n.IsNone())
 }
 
+func (n NetworkMode) IsBridge() bool {
+	return n == "bridge"
+}
+
 func (n NetworkMode) IsHost() bool {
 	return n == "host"
 }
@@ -162,13 +166,15 @@ type HostConfig struct {
 	Binds           []string
 	ContainerIDFile string
 	LxcConf         *LxcConfig
-	Memory          int64  // Memory limit (in bytes)
-	MemorySwap      int64  // Total memory usage (memory + swap); set `-1` to disable swap
-	CpuShares       int64  // CPU shares (relative weight vs. other containers)
+	Memory          int64 // Memory limit (in bytes)
+	MemorySwap      int64 // Total memory usage (memory + swap); set `-1` to disable swap
+	CpuShares       int64 // CPU shares (relative weight vs. other containers)
+	CpuPeriod       int64
 	CpusetCpus      string // CpusetCpus 0-2, 0,1
 	CpusetMems      string // CpusetMems 0-2, 0,1
 	CpuQuota        int64
-	OomKillDisable  bool // Whether to disable OOM Killer or not
+	BlkioWeight     int64 // Block IO weight (relative weight vs. other containers)
+	OomKillDisable  bool  // Whether to disable OOM Killer or not
 	Privileged      bool
 	PortBindings    nat.PortMap
 	Links           []string

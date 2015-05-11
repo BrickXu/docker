@@ -1112,10 +1112,10 @@ func (s *DockerSuite) TestBuildCopyWildcard(c *check.C) {
 			"dir/nested_dir/nest_nest_file": "2 times nested",
 			"dirt": "dirty",
 		})
-	defer ctx.Close()
 	if err != nil {
 		c.Fatal(err)
 	}
+	defer ctx.Close()
 
 	id1, err := buildImageFromContext(name, ctx, true)
 	if err != nil {
@@ -1152,6 +1152,31 @@ func (s *DockerSuite) TestBuildCopyWildcardNoFind(c *check.C) {
 		c.Fatalf("Wrong error %v, must be about no source files", err)
 	}
 
+}
+
+func (s *DockerSuite) TestBuildCopyWildcardInName(c *check.C) {
+	name := "testcopywildcardinname"
+	defer deleteImages(name)
+	ctx, err := fakeContext(`FROM busybox
+	COPY *.txt /tmp/
+	RUN [ "$(cat /tmp/\*.txt)" = 'hi there' ]
+	`, map[string]string{"*.txt": "hi there"})
+
+	if err != nil {
+		// Normally we would do c.Fatal(err) here but given that
+		// the odds of this failing are so rare, it must be because
+		// the OS we're running the client on doesn't support * in
+		// filenames (like windows).  So, instead of failing the test
+		// just let it pass. Then we don't need to explicitly
+		// say which OSs this works on or not.
+		return
+	}
+	defer ctx.Close()
+
+	_, err = buildImageFromContext(name, ctx, true)
+	if err != nil {
+		c.Fatalf("should have built: %q", err)
+	}
 }
 
 func (s *DockerSuite) TestBuildCopyWildcardCache(c *check.C) {
@@ -5382,5 +5407,22 @@ func (s *DockerSuite) TestBuildBadCmdFlag(c *check.C) {
 	exp := `"Unknown flag: boo"`
 	if !strings.Contains(out, exp) {
 		c.Fatalf("Bad output\nGot:%s\n\nExpected to contain:%s\n", out, exp)
+	}
+}
+
+func (s *DockerSuite) TestBuildRUNErrMsg(c *check.C) {
+	// Test to make sure the bad command is quoted with just "s and
+	// not as a Go []string
+	name := "testbuildbadrunerrmsg"
+	_, out, err := buildImageWithOut(name, `
+  FROM busybox
+  RUN badEXE a1 a2`, false)
+	if err == nil {
+		c.Fatal("Should have failed to build")
+	}
+
+	exp := `The command \"/bin/sh -c badEXE a1 a2\" returned a non-zero code: 127"`
+	if !strings.Contains(out, exp) {
+		c.Fatalf("RUN doesn't have the correct output:\nGot:%s\nExpected:%s", out, exp)
 	}
 }

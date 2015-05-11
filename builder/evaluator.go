@@ -71,7 +71,6 @@ func init() {
 		command.Expose:     expose,
 		command.Volume:     volume,
 		command.User:       user,
-		command.Insert:     insert,
 	}
 }
 
@@ -125,6 +124,7 @@ type Builder struct {
 	cpuSetCpus   string
 	cpuSetMems   string
 	cpuShares    int64
+	cpuPeriod    int64
 	cpuQuota     int64
 	cgroupParent string
 	memory       int64

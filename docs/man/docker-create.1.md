@@ -8,10 +8,12 @@ docker-create - Create a new container
 **docker create**
 [**-a**|**--attach**[=*[]*]]
 [**--add-host**[=*[]*]]
+[**--blkio-weight**[=*[BLKIO-WEIGHT]*]]
 [**-c**|**--cpu-shares**[=*0*]]
 [**--cap-add**[=*[]*]]
 [**--cap-drop**[=*[]*]]
 [**--cidfile**[=*CIDFILE*]]
+[**--cpu-period**[=*0*]]
 [**--cpuset-cpus**[=*CPUSET-CPUS*]]
 [**--cpuset-mems**[=*CPUSET-MEMS*]]
 [**--cpu-quota**[=*0*]]
@@ -59,6 +61,9 @@ IMAGE [COMMAND] [ARG...]
 **--add-host**=[]
    Add a custom host-to-IP mapping (host:ip)
 
+**--blkio-weight**=0
+   Block IO weight (relative weight) accepts a weight value between 10 and 1000.
+
 **-c**, **--cpu-shares**=0
    CPU shares (relative weight)
 
@@ -73,6 +78,9 @@ IMAGE [COMMAND] [ARG...]
 
 **--cgroup-parent**=""
    Path to cgroups under which the cgroup for the container will be created. If the path is not absolute, the path is considered to be relative to the cgroups path of the init process. Cgroups will be created if they do not already exist.
+
+**--cpu-peroid**=0
+    Limit the CPU CFS (Completely Fair Scheduler) period
 
 **--cpuset-cpus**=""
    CPUs in which to allow execution (0-3, 0,1)

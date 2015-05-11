@@ -216,9 +216,9 @@ networking. In cases like this, you would perform I/O through files or
 Your container will use the same DNS servers as the host by default, but
 you can override this with `--dns`.
 
-By default a random MAC is generated. You can set the container's MAC address
-explicitly by providing a MAC via the `--mac-address` parameter (format:
-`12:34:56:78:9a:bc`).
+By default, the MAC address is generated using the IP address allocated to the
+container. You can set the container's MAC address explicitly by providing a
+MAC address via the `--mac-address` parameter (format:`12:34:56:78:9a:bc`).
 
 Supported networking modes are:
 
@@ -282,7 +282,8 @@ With the networking mode set to `host` a container will share the host's
 network stack and all interfaces from the host will be available to the
 container.  The container's hostname will match the hostname on the host
 system.  Publishing ports and linking to other containers will not work
-when sharing the host's network stack.
+when sharing the host's network stack. Note that `--add-host` `--hostname`
+`--dns` `--dns-search` and `--mac-address` is invalid in `host` netmode.
 
 Compared to the default `bridge` mode, the `host` mode gives *significantly*
 better networking performance since it uses the host's native networking stack
@@ -298,7 +299,9 @@ or a High Performance Web Server.
 
 With the networking mode set to `container` a container will share the
 network stack of another container.  The other container's name must be
-provided in the format of `--net container:<name|id>`.
+provided in the format of `--net container:<name|id>`. Note that `--add-host` 
+`--hostname` `--dns` `--dns-search` and `--mac-address` is invalid 
+in `container` netmode.
 
 Example running a Redis container with Redis binding to `localhost` then
 running the `redis-cli` command and connecting to the Redis server over the
@@ -480,9 +483,11 @@ container:
     -m, --memory="": Memory limit (format: <number><optional unit>, where unit = b, k, m or g)
     -memory-swap="": Total memory limit (memory + swap, format: <number><optional unit>, where unit = b, k, m or g)
     -c, --cpu-shares=0: CPU shares (relative weight)
+    --cpu-period=0: Limit the CPU CFS (Completely Fair Scheduler) period
     --cpuset-cpus="": CPUs in which to allow execution (0-3, 0,1)
     --cpuset-mems="": Memory nodes (MEMs) in which to allow execution (0-3, 0,1). Only effective on NUMA systems.
     --cpu-quota=0: Limit the CPU CFS (Completely Fair Scheduler) quota
+    --blkio-weight=0: Block IO weight (relative weight) accepts a weight value between 10 and 1000.
     --oom-kill-disable=true|false: Whether to disable OOM Killer for the container or not.
 
 ### Memory constraints
@@ -616,6 +621,20 @@ division of CPU shares:
     101    {C1}		1	100% of CPU1
     102    {C1}		2	100% of CPU2
 
+### CPU period constraint
+
+The default CPU CFS (Completely Fair Scheduler) period is 100ms. We can use
+`--cpu-period` to set the period of CPUs to limit the container's CPU usage. 
+And usually `--cpu-period` should work with `--cpu-quota`.
+
+Examples:
+
+    $ docker run -ti --cpu-period=50000 --cpu-quota=25000 ubuntu:14.04 /bin/bash
+
+If there is 1 CPU, this means the container can get 50% CPU worth of run-time every 50ms.
+
+For more information, see the [CFS documentation on bandwidth limiting](https://www.kernel.org/doc/Documentation/scheduler/sched-bwc.txt).
+
 ### Cpuset constraint
 
 We can set cpus in which to allow execution for containers.
@@ -653,6 +672,30 @@ Scheduler) handles resource allocation for executing processes and is default
 Linux Scheduler used by the kernel. Set this value to 50000 to limit the container
 to 50% of a CPU resource. For multiple CPUs, adjust the `--cpu-quota` as necessary.
 For more information, see the [CFS documentation on bandwidth limiting](https://www.kernel.org/doc/Documentation/scheduler/sched-bwc.txt).
+
+### Block IO bandwidth (Blkio) constraint
+
+By default, all containers get the same proportion of block IO bandwidth
+(blkio). This proportion is 500. To modify this proportion, change the
+container's blkio weight relative to the weighting of all other running
+containers using the `--blkio-weight` flag.
+
+The `--blkio-weight` flag can set the weighting to a value between 10 to 1000.
+For example, the commands below create two containers with different blkio
+weight:
+
+    $ docker run -ti --name c1 --blkio-weight 300 ubuntu:14.04 /bin/bash
+    $ docker run -ti --name c2 --blkio-weight 600 ubuntu:14.04 /bin/bash
+
+If you do block IO in the two containers at the same time, by, for example:
+
+    $ time dd if=/mnt/zerofile of=test.out bs=1M count=1024 oflag=direct
+
+You'll find that the proportion of time is the same as the proportion of blkio
+weights of the two containers.
+
+> **Note:** The blkio weight setting is only available for direct IO. Buffered IO
+> is not currently supported.
 
 ## Runtime privilege, Linux capabilities, and LXC configuration
 
@@ -820,6 +863,10 @@ command is not available for this logging driver
 #### Logging driver: journald
 
 Journald logging driver for Docker. Writes log messages to journald; the container id will be stored in the journal's `CONTAINER_ID` field. `docker logs` command is not available for this logging driver.  For detailed information on working with this logging driver, see [the journald logging driver](reference/logging/journald) reference documentation.
+
+#### Log Opts : 
+
+Logging options for configuring a log driver. The following log options are supported: [none]
 
 ## Overriding Dockerfile image defaults
 

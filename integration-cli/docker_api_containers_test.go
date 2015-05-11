@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"os"
 	"os/exec"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/pkg/stringid"
+	"github.com/docker/docker/runconfig"
 	"github.com/go-check/check"
 )
 
@@ -675,43 +677,97 @@ func (s *DockerSuite) TestContainerApiCreate(c *check.C) {
 }
 
 func (s *DockerSuite) TestContainerApiCreateWithHostName(c *check.C) {
-	var hostName = "test-host"
+	hostName := "test-host"
 	config := map[string]interface{}{
 		"Image":    "busybox",
 		"Hostname": hostName,
 	}
 
-	_, b, err := sockRequest("POST", "/containers/create", config)
-	if err != nil && !strings.Contains(err.Error(), "200 OK: 201") {
-		c.Fatal(err)
-	}
-	type createResp struct {
-		Id string
-	}
-	var container createResp
-	if err := json.Unmarshal(b, &container); err != nil {
+	status, body, err := sockRequest("POST", "/containers/create", config)
+	c.Assert(err, check.IsNil)
+	c.Assert(status, check.Equals, http.StatusCreated)
+
+	var container types.ContainerCreateResponse
+	if err := json.Unmarshal(body, &container); err != nil {
 		c.Fatal(err)
 	}
 
-	var id = container.Id
+	status, body, err = sockRequest("GET", "/containers/"+container.ID+"/json", nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(status, check.Equals, http.StatusOK)
 
-	_, bodyGet, err := sockRequest("GET", "/containers/"+id+"/json", nil)
-
-	type configLocal struct {
-		Hostname string
-	}
-	type getResponse struct {
-		Id     string
-		Config configLocal
-	}
-
-	var containerInfo getResponse
-	if err := json.Unmarshal(bodyGet, &containerInfo); err != nil {
+	var containerJSON types.ContainerJSON
+	if err := json.Unmarshal(body, &containerJSON); err != nil {
 		c.Fatal(err)
 	}
-	var hostNameActual = containerInfo.Config.Hostname
-	if hostNameActual != "test-host" {
-		c.Fatalf("Mismatched Hostname, Expected %v, Actual: %v ", hostName, hostNameActual)
+
+	if containerJSON.Config.Hostname != hostName {
+		c.Fatalf("Mismatched Hostname, Expected %s, Actual: %s ", hostName, containerJSON.Config.Hostname)
+	}
+}
+
+func (s *DockerSuite) TestContainerApiCreateWithDomainName(c *check.C) {
+	domainName := "test-domain"
+	config := map[string]interface{}{
+		"Image":      "busybox",
+		"Domainname": domainName,
+	}
+
+	status, body, err := sockRequest("POST", "/containers/create", config)
+	c.Assert(err, check.IsNil)
+	c.Assert(status, check.Equals, http.StatusCreated)
+
+	var container types.ContainerCreateResponse
+	if err := json.Unmarshal(body, &container); err != nil {
+		c.Fatal(err)
+	}
+
+	status, body, err = sockRequest("GET", "/containers/"+container.ID+"/json", nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(status, check.Equals, http.StatusOK)
+
+	var containerJSON types.ContainerJSON
+	if err := json.Unmarshal(body, &containerJSON); err != nil {
+		c.Fatal(err)
+	}
+
+	if containerJSON.Config.Domainname != domainName {
+		c.Fatalf("Mismatched Domainname, Expected %s, Actual: %s ", domainName, containerJSON.Config.Domainname)
+	}
+}
+
+func (s *DockerSuite) TestContainerApiCreateNetworkMode(c *check.C) {
+	UtilCreateNetworkMode(c, "host")
+	UtilCreateNetworkMode(c, "bridge")
+	UtilCreateNetworkMode(c, "container:web1")
+}
+
+func UtilCreateNetworkMode(c *check.C, networkMode string) {
+	config := map[string]interface{}{
+		"Image":      "busybox",
+		"HostConfig": map[string]interface{}{"NetworkMode": networkMode},
+	}
+
+	status, body, err := sockRequest("POST", "/containers/create", config)
+	c.Assert(err, check.IsNil)
+	c.Assert(status, check.Equals, http.StatusCreated)
+
+	var container types.ContainerCreateResponse
+	if err := json.Unmarshal(body, &container); err != nil {
+		c.Fatal(err)
+	}
+
+	status, body, err = sockRequest("GET", "/containers/"+container.ID+"/json", nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(status, check.Equals, http.StatusOK)
+
+	var containerJSON types.ContainerJSON
+	if err := json.Unmarshal(body, &containerJSON); err != nil {
+		c.Fatal(err)
+	}
+
+	if containerJSON.HostConfig.NetworkMode != runconfig.NetworkMode(networkMode) {
+		c.Fatalf("Mismatched NetworkMode, Expected %s, Actual: %s ", networkMode, containerJSON.HostConfig.NetworkMode)
 	}
 }
 
@@ -890,6 +946,25 @@ func (s *DockerSuite) TestContainerApiRestart(c *check.C) {
 	}
 
 	status, _, err := sockRequest("POST", "/containers/"+name+"/restart?t=1", nil)
+	c.Assert(status, check.Equals, http.StatusNoContent)
+	c.Assert(err, check.IsNil)
+
+	if err := waitInspect(name, "{{ .State.Restarting  }} {{ .State.Running  }}", "false true", 5); err != nil {
+		c.Fatal(err)
+	}
+}
+
+func (s *DockerSuite) TestContainerApiRestartNotimeoutParam(c *check.C) {
+	name := "test-api-restart-no-timeout-param"
+	runCmd := exec.Command(dockerBinary, "run", "-di", "--name", name, "busybox", "top")
+	out, _, err := runCommandWithOutput(runCmd)
+	if err != nil {
+		c.Fatalf("Error on container creation: %v, output: %q", err, out)
+	}
+	id := strings.TrimSpace(out)
+	c.Assert(waitRun(id), check.IsNil)
+
+	status, _, err := sockRequest("POST", "/containers/"+name+"/restart", nil)
 	c.Assert(status, check.Equals, http.StatusNoContent)
 	c.Assert(err, check.IsNil)
 
@@ -1148,5 +1223,75 @@ func (s *DockerSuite) TestContainerApiDeleteRemoveVolume(c *check.C) {
 
 	if _, err := os.Stat(vol); !os.IsNotExist(err) {
 		c.Fatalf("expected to get ErrNotExist error, got %v", err)
+	}
+}
+
+// Regression test for https://github.com/docker/docker/issues/6231
+func (s *DockerSuite) TestContainersApiChunkedEncoding(c *check.C) {
+	out, _ := dockerCmd(c, "create", "-v", "/foo", "busybox", "true")
+	id := strings.TrimSpace(out)
+
+	conn, err := sockConn(time.Duration(10 * time.Second))
+	if err != nil {
+		c.Fatal(err)
+	}
+	client := httputil.NewClientConn(conn, nil)
+	defer client.Close()
+
+	bindCfg := strings.NewReader(`{"Binds": ["/tmp:/foo"]}`)
+	req, err := http.NewRequest("POST", "/containers/"+id+"/start", bindCfg)
+	if err != nil {
+		c.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// This is a cheat to make the http request do chunked encoding
+	// Otherwise (just setting the Content-Encoding to chunked) net/http will overwrite
+	// https://golang.org/src/pkg/net/http/request.go?s=11980:12172
+	req.ContentLength = -1
+
+	resp, err := client.Do(req)
+	if err != nil {
+		c.Fatalf("error starting container with chunked encoding: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		c.Fatalf("expected status code 204, got %d", resp.StatusCode)
+	}
+
+	out, err = inspectFieldJSON(id, "HostConfig.Binds")
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	var binds []string
+	if err := json.NewDecoder(strings.NewReader(out)).Decode(&binds); err != nil {
+		c.Fatal(err)
+	}
+	if len(binds) != 1 {
+		c.Fatalf("got unexpected binds: %v", binds)
+	}
+
+	expected := "/tmp:/foo"
+	if binds[0] != expected {
+		c.Fatalf("got incorrect bind spec, wanted %s, got: %s", expected, binds[0])
+	}
+}
+
+func (s *DockerSuite) TestPostContainerStop(c *check.C) {
+	runCmd := exec.Command(dockerBinary, "run", "-d", "busybox", "top")
+	out, _, err := runCommandWithOutput(runCmd)
+	c.Assert(err, check.IsNil)
+
+	containerID := strings.TrimSpace(out)
+	c.Assert(waitRun(containerID), check.IsNil)
+
+	statusCode, _, err := sockRequest("POST", "/containers/"+containerID+"/stop", nil)
+
+	// 204 No Content is expected, not 200
+	c.Assert(statusCode, check.Equals, http.StatusNoContent)
+	c.Assert(err, check.IsNil)
+
+	if err := waitInspect(containerID, "{{ .State.Running  }}", "false", 5); err != nil {
+		c.Fatal(err)
 	}
 }

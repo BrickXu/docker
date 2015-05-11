@@ -147,8 +147,10 @@ Create a container
                "Memory": 0,
                "MemorySwap": 0,
                "CpuShares": 512,
+               "CpuPeriod": 100000,
                "CpusetCpus": "0,1",
                "CpusetMems": "0,1",
+               "BlkioWeight": 300,
                "OomKillDisable": false,
                "PortBindings": { "22/tcp": [{ "HostPort": "11022" }] },
                "PublishAllPorts": false,
@@ -192,9 +194,11 @@ Json Parameters:
       always use this with `memory`, and make the value larger than `memory`.
 -   **CpuShares** - An integer value containing the CPU Shares for container
       (ie. the relative weight vs other containers).
+-   **CpuPeriod** - The length of a CPU period (in microseconds).
 -   **Cpuset** - The same as CpusetCpus, but deprecated, please don't use.
 -   **CpusetCpus** - String value containing the cgroups CpusetCpus to use.
 -   **CpusetMems** - Memory nodes (MEMs) in which to allow execution (0-3, 0,1). Only effective on NUMA systems.
+-   **BlkioWeight** - Block IO weight (relative weight) accepts a weight value between 10 and 1000.
 -   **OomKillDisable** - Boolean value, whether to disable OOM Killer for the container or not.
 -   **AttachStdin** - Boolean value, attaches to stdin.
 -   **AttachStdout** - Boolean value, attaches to stdout.
@@ -222,8 +226,8 @@ Json Parameters:
             volume for the container), `host_path:container_path` (to bind-mount
             a host path into the container), or `host_path:container_path:ro`
             (to make the bind-mount read-only inside the container).
-    -   **Links** - A list of links for the container. Each link entry should be of
-          of the form `container_name:alias`.
+    -   **Links** - A list of links for the container. Each link entry should be
+          in the form of `container_name:alias`.
     -   **LxcConf** - LXC specific configurations. These configurations will only
           work when using the `lxc` execution driver.
     -   **PortBindings** - A map of exposed container ports and the host port they
@@ -341,12 +345,14 @@ Return low-level information on the container `id`
 		"ExecIDs": null,
 		"HostConfig": {
 			"Binds": null,
+			"BlkioWeight": 0,
 			"CapAdd": null,
 			"CapDrop": null,
 			"ContainerIDFile": "",
 			"CpusetCpus": "",
 			"CpusetMems": "",
 			"CpuShares": 0,
+			"CpuPeriod": 100000,
 			"Devices": [],
 			"Dns": null,
 			"DnsSearch": null,

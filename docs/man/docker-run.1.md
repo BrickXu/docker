@@ -8,10 +8,12 @@ docker-run - Run a command in a new container
 **docker run**
 [**-a**|**--attach**[=*[]*]]
 [**--add-host**[=*[]*]]
+[**--blkio-weight**[=*[BLKIO-WEIGHT]*]]
 [**-c**|**--cpu-shares**[=*0*]]
 [**--cap-add**[=*[]*]]
 [**--cap-drop**[=*[]*]]
 [**--cidfile**[=*CIDFILE*]]
+[**--cpu-period**[=*0*]]
 [**--cpuset-cpus**[=*CPUSET-CPUS*]]
 [**--cpuset-mems**[=*CPUSET-MEMS*]]
 [**-d**|**--detach**[=*false*]]
@@ -86,6 +88,9 @@ each of stdin, stdout, and stderr.
    Add a line to /etc/hosts. The format is hostname:ip.  The **--add-host**
 option can be set multiple times.
 
+**--blkio-weight**=0
+   Block IO weight (relative weight) accepts a weight value between 10 and 1000.
+
 **-c**, **--cpu-shares**=0
    CPU shares (relative weight)
 
@@ -133,6 +138,11 @@ division of CPU shares:
 
 **--cidfile**=""
    Write the container ID to the file
+
+**--cpu-period**=0
+   Limit the CPU CFS (Completely Fair Scheduler) period
+
+   Limit the container's CPU usage. This flag tell the kernel to restrict the container's CPU usage to the period you specify.
 
 **--cpuset-cpus**=""
    CPUs in which to allow execution (0-3, 0,1)
