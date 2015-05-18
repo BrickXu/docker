@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -21,9 +22,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/logger"
-	"github.com/docker/docker/daemon/logger/journald"
 	"github.com/docker/docker/daemon/logger/jsonfilelog"
-	"github.com/docker/docker/daemon/logger/syslog"
 	"github.com/docker/docker/daemon/network"
 	"github.com/docker/docker/daemon/networkdriver/bridge"
 	"github.com/docker/docker/image"
@@ -34,6 +33,7 @@ import (
 	"github.com/docker/docker/pkg/directory"
 	"github.com/docker/docker/pkg/etchosts"
 	"github.com/docker/docker/pkg/ioutils"
+	"github.com/docker/docker/pkg/jsonlog"
 	"github.com/docker/docker/pkg/promise"
 	"github.com/docker/docker/pkg/resolvconf"
 	"github.com/docker/docker/pkg/stringid"
@@ -335,6 +335,10 @@ func populateCommand(c *Container, env []string) error {
 	pid := &execdriver.Pid{}
 	pid.HostPid = c.hostConfig.PidMode.IsHost()
 
+	uts := &execdriver.UTS{
+		HostUTS: c.hostConfig.UTSMode.IsHost(),
+	}
+
 	// Build lists of devices allowed and created within the container.
 	var userSpecifiedDevices []*configs.Device
 	for _, deviceMapping := range c.hostConfig.Devices {
@@ -410,6 +414,7 @@ func populateCommand(c *Container, env []string) error {
 		Network:            en,
 		Ipc:                ipc,
 		Pid:                pid,
+		UTS:                uts,
 		Resources:          resources,
 		AllowedDevices:     allowedDevices,
 		AutoCreatedDevices: autoCreatedDevices,
@@ -767,23 +772,45 @@ func (container *Container) killPossiblyDeadProcess(sig int) error {
 }
 
 func (container *Container) Pause() error {
-	if container.IsPaused() {
+	container.Lock()
+	defer container.Unlock()
+
+	// We cannot Pause the container which is already paused
+	if container.Paused {
 		return fmt.Errorf("Container %s is already paused", container.ID)
 	}
-	if !container.IsRunning() {
+
+	// We cannot Pause the container which is not running
+	if !container.Running {
 		return fmt.Errorf("Container %s is not running", container.ID)
 	}
-	return container.daemon.Pause(container)
+
+	if err := container.daemon.execDriver.Pause(container.command); err != nil {
+		return err
+	}
+	container.Paused = true
+	return nil
 }
 
 func (container *Container) Unpause() error {
-	if !container.IsPaused() {
-		return fmt.Errorf("Container %s is not paused", container.ID)
+	container.Lock()
+	defer container.Unlock()
+
+	// We cannot unpause the container which is not paused
+	if !container.Paused {
+		return fmt.Errorf("Container %s is not paused, so what", container.ID)
 	}
-	if !container.IsRunning() {
+
+	// We cannot unpause the container which is not running
+	if !container.Running {
 		return fmt.Errorf("Container %s is not running", container.ID)
 	}
-	return container.daemon.Unpause(container)
+
+	if err := container.daemon.execDriver.Unpause(container.command); err != nil {
+		return err
+	}
+	container.Paused = false
+	return nil
 }
 
 func (container *Container) Kill() error {
@@ -921,18 +948,6 @@ func (container *Container) GetImage() (*image.Image, error) {
 
 func (container *Container) Unmount() error {
 	return container.daemon.Unmount(container)
-}
-
-func (container *Container) logPath(name string) (string, error) {
-	return container.GetRootResourcePath(fmt.Sprintf("%s-%s.log", container.ID, name))
-}
-
-func (container *Container) ReadLog(name string) (io.Reader, error) {
-	pth, err := container.logPath(name)
-	if err != nil {
-		return nil, err
-	}
-	return os.Open(pth)
 }
 
 func (container *Container) hostConfigPath() (string, error) {
@@ -1421,41 +1436,45 @@ func (container *Container) setupWorkingDirectory() error {
 	return nil
 }
 
-func (container *Container) startLogging() error {
+func (container *Container) getLogConfig() runconfig.LogConfig {
 	cfg := container.hostConfig.LogConfig
-	if cfg.Type == "" {
-		cfg = container.daemon.defaultLogConfig
+	if cfg.Type != "" { // container has log driver configured
+		return cfg
 	}
-	var l logger.Logger
-	switch cfg.Type {
-	case "json-file":
-		pth, err := container.logPath("json")
-		if err != nil {
-			return err
-		}
-		container.LogPath = pth
+	// Use daemon's default log config for containers
+	return container.daemon.defaultLogConfig
+}
 
-		dl, err := jsonfilelog.New(pth)
+func (container *Container) getLogger() (logger.Logger, error) {
+	cfg := container.getLogConfig()
+	c, err := logger.GetLogDriver(cfg.Type)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get logging factory: %v", err)
+	}
+	ctx := logger.Context{
+		ContainerID:   container.ID,
+		ContainerName: container.Name,
+	}
+
+	// Set logging file for "json-logger"
+	if cfg.Type == jsonfilelog.Name {
+		ctx.LogPath, err = container.GetRootResourcePath(fmt.Sprintf("%s-json.log", container.ID))
 		if err != nil {
-			return err
+			return nil, err
 		}
-		l = dl
-	case "syslog":
-		dl, err := syslog.New(container.ID[:12])
-		if err != nil {
-			return err
-		}
-		l = dl
-	case "journald":
-		dl, err := journald.New(container.ID, container.Name)
-		if err != nil {
-			return err
-		}
-		l = dl
-	case "none":
-		return nil
-	default:
-		return fmt.Errorf("Unknown logging driver: %s", cfg.Type)
+	}
+	return c(ctx)
+}
+
+func (container *Container) startLogging() error {
+	cfg := container.getLogConfig()
+	if cfg.Type == "none" {
+		return nil // do not start logging routines
+	}
+
+	l, err := container.getLogger()
+	if err != nil {
+		return fmt.Errorf("Failed to initialize logging driver: %v", err)
 	}
 
 	copier, err := logger.NewCopier(container.ID, map[string]io.Reader{"stdout": container.StdoutPipe(), "stderr": container.StderrPipe()}, l)
@@ -1465,6 +1484,11 @@ func (container *Container) startLogging() error {
 	container.logCopier = copier
 	copier.Run()
 	container.logDriver = l
+
+	// set LogPath field only for json-file logdriver
+	if jl, ok := l.(*jsonfilelog.JSONFileLogger); ok {
+		container.LogPath = jl.LogPath()
+	}
 
 	return nil
 }
@@ -1631,4 +1655,205 @@ func (container *Container) monitorExec(execConfig *execConfig, callback execdri
 	}
 
 	return err
+}
+
+func (c *Container) Attach(stdin io.ReadCloser, stdout io.Writer, stderr io.Writer) chan error {
+	return attach(&c.StreamConfig, c.Config.OpenStdin, c.Config.StdinOnce, c.Config.Tty, stdin, stdout, stderr)
+}
+
+func (c *Container) AttachWithLogs(stdin io.ReadCloser, stdout, stderr io.Writer, logs, stream bool) error {
+	if logs {
+		logDriver, err := c.getLogger()
+		cLog, err := logDriver.GetReader()
+
+		if err != nil {
+			logrus.Errorf("Error reading logs: %s", err)
+		} else if c.LogDriverType() != jsonfilelog.Name {
+			logrus.Errorf("Reading logs not implemented for driver %s", c.LogDriverType())
+		} else {
+			dec := json.NewDecoder(cLog)
+			for {
+				l := &jsonlog.JSONLog{}
+
+				if err := dec.Decode(l); err == io.EOF {
+					break
+				} else if err != nil {
+					logrus.Errorf("Error streaming logs: %s", err)
+					break
+				}
+				if l.Stream == "stdout" && stdout != nil {
+					io.WriteString(stdout, l.Log)
+				}
+				if l.Stream == "stderr" && stderr != nil {
+					io.WriteString(stderr, l.Log)
+				}
+			}
+		}
+	}
+
+	//stream
+	if stream {
+		var stdinPipe io.ReadCloser
+		if stdin != nil {
+			r, w := io.Pipe()
+			go func() {
+				defer w.Close()
+				defer logrus.Debugf("Closing buffered stdin pipe")
+				io.Copy(w, stdin)
+			}()
+			stdinPipe = r
+		}
+		<-c.Attach(stdinPipe, stdout, stderr)
+		// If we are in stdinonce mode, wait for the process to end
+		// otherwise, simply return
+		if c.Config.StdinOnce && !c.Config.Tty {
+			c.WaitStop(-1 * time.Second)
+		}
+	}
+	return nil
+}
+
+func attach(streamConfig *StreamConfig, openStdin, stdinOnce, tty bool, stdin io.ReadCloser, stdout io.Writer, stderr io.Writer) chan error {
+	var (
+		cStdout, cStderr io.ReadCloser
+		cStdin           io.WriteCloser
+		wg               sync.WaitGroup
+		errors           = make(chan error, 3)
+	)
+
+	if stdin != nil && openStdin {
+		cStdin = streamConfig.StdinPipe()
+		wg.Add(1)
+	}
+
+	if stdout != nil {
+		cStdout = streamConfig.StdoutPipe()
+		wg.Add(1)
+	}
+
+	if stderr != nil {
+		cStderr = streamConfig.StderrPipe()
+		wg.Add(1)
+	}
+
+	// Connect stdin of container to the http conn.
+	go func() {
+		if stdin == nil || !openStdin {
+			return
+		}
+		logrus.Debugf("attach: stdin: begin")
+		defer func() {
+			if stdinOnce && !tty {
+				cStdin.Close()
+			} else {
+				// No matter what, when stdin is closed (io.Copy unblock), close stdout and stderr
+				if cStdout != nil {
+					cStdout.Close()
+				}
+				if cStderr != nil {
+					cStderr.Close()
+				}
+			}
+			wg.Done()
+			logrus.Debugf("attach: stdin: end")
+		}()
+
+		var err error
+		if tty {
+			_, err = copyEscapable(cStdin, stdin)
+		} else {
+			_, err = io.Copy(cStdin, stdin)
+
+		}
+		if err == io.ErrClosedPipe {
+			err = nil
+		}
+		if err != nil {
+			logrus.Errorf("attach: stdin: %s", err)
+			errors <- err
+			return
+		}
+	}()
+
+	attachStream := func(name string, stream io.Writer, streamPipe io.ReadCloser) {
+		if stream == nil {
+			return
+		}
+		defer func() {
+			// Make sure stdin gets closed
+			if stdin != nil {
+				stdin.Close()
+			}
+			streamPipe.Close()
+			wg.Done()
+			logrus.Debugf("attach: %s: end", name)
+		}()
+
+		logrus.Debugf("attach: %s: begin", name)
+		_, err := io.Copy(stream, streamPipe)
+		if err == io.ErrClosedPipe {
+			err = nil
+		}
+		if err != nil {
+			logrus.Errorf("attach: %s: %v", name, err)
+			errors <- err
+		}
+	}
+
+	go attachStream("stdout", stdout, cStdout)
+	go attachStream("stderr", stderr, cStderr)
+
+	return promise.Go(func() error {
+		wg.Wait()
+		close(errors)
+		for err := range errors {
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Code c/c from io.Copy() modified to handle escape sequence
+func copyEscapable(dst io.Writer, src io.ReadCloser) (written int64, err error) {
+	buf := make([]byte, 32*1024)
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			// ---- Docker addition
+			// char 16 is C-p
+			if nr == 1 && buf[0] == 16 {
+				nr, er = src.Read(buf)
+				// char 17 is C-q
+				if nr == 1 && buf[0] == 17 {
+					if err := src.Close(); err != nil {
+						return 0, err
+					}
+					return 0, nil
+				}
+			}
+			// ---- End of docker
+			nw, ew := dst.Write(buf[0:nr])
+			if nw > 0 {
+				written += int64(nw)
+			}
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = io.ErrShortWrite
+				break
+			}
+		}
+		if er == io.EOF {
+			break
+		}
+		if er != nil {
+			err = er
+			break
+		}
+	}
+	return written, err
 }

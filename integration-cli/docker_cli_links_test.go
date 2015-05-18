@@ -15,7 +15,6 @@ import (
 )
 
 func (s *DockerSuite) TestLinksEtcHostsRegularFile(c *check.C) {
-
 	runCmd := exec.Command(dockerBinary, "run", "--net=host", "busybox", "ls", "-la", "/etc/hosts")
 	out, _, _, err := runCommandWithStdoutStderr(runCmd)
 	if err != nil {
@@ -252,7 +251,7 @@ func (s *DockerSuite) TestLinksNetworkHostContainer(c *check.C) {
 	}
 
 	out, _, err = runCommandWithOutput(exec.Command(dockerBinary, "run", "--name", "should_fail", "--link", "host_container:tester", "busybox", "true"))
-	if err == nil || !strings.Contains(out, "--net=host can't be used with links. This would result in undefined behavior.") {
+	if err == nil || !strings.Contains(out, "--net=host can't be used with links. This would result in undefined behavior") {
 		c.Fatalf("Running container linking to a container with --net host should have failed: %s", out)
 	}
 
@@ -330,4 +329,24 @@ func (s *DockerSuite) TestLinksEnvs(c *check.C) {
 		!strings.Contains(out, "FIRST_ENV_e3=v3=v3") {
 		c.Fatalf("Incorrect output: %s", out)
 	}
+}
+
+func (s *DockerSuite) TestLinkShortDefinition(c *check.C) {
+	runCmd := exec.Command(dockerBinary, "run", "-d", "--name", "shortlinkdef", "busybox", "top")
+	out, _, err := runCommandWithOutput(runCmd)
+	c.Assert(err, check.IsNil)
+
+	cid := strings.TrimSpace(out)
+	c.Assert(waitRun(cid), check.IsNil)
+
+	runCmd = exec.Command(dockerBinary, "run", "-d", "--name", "link2", "--link", "shortlinkdef", "busybox", "top")
+	out, _, err = runCommandWithOutput(runCmd)
+	c.Assert(err, check.IsNil)
+
+	cid2 := strings.TrimSpace(out)
+	c.Assert(waitRun(cid2), check.IsNil)
+
+	links, err := inspectFieldJSON(cid2, "HostConfig.Links")
+	c.Assert(err, check.IsNil)
+	c.Assert(links, check.Equals, "[\"/shortlinkdef:/link2/shortlinkdef\"]")
 }

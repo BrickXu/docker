@@ -50,6 +50,7 @@ clone git github.com/go-fsnotify/fsnotify v1.2.0
 clone git github.com/gorilla/context 14f550f51a
 clone git github.com/gorilla/mux e444e69cbd
 clone git github.com/kr/pty 05017fcccf
+clone git github.com/mistifyio/go-zfs v2.1.0
 clone git github.com/tchap/go-patricia v2.1.0
 clone hg code.google.com/p/go.net 84a4013f96e0
 clone hg code.google.com/p/gosqlite 74691fb6f837
@@ -64,8 +65,8 @@ mv tmp-digest src/github.com/docker/distribution/digest
 mkdir -p src/github.com/docker/distribution/registry
 mv tmp-api src/github.com/docker/distribution/registry/api
 
-clone git github.com/docker/libcontainer 90f8aa670f1f424041059060c7c63fe4dee2e441
+clone git github.com/docker/libcontainer a37b2a4f152e2a1c9de596f54c051cb889de0691
 # libcontainer deps (see src/github.com/docker/libcontainer/update-vendor.sh)
 clone git github.com/coreos/go-systemd v2
 clone git github.com/godbus/dbus v2
-clone git github.com/syndtr/gocapability 8e4cdcb
+clone git github.com/syndtr/gocapability 66ef2aa7a23ba682594e2b6f74cf40c0692b49fb

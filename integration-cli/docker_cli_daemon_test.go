@@ -233,7 +233,7 @@ func (s *DockerDaemonSuite) TestDaemonFlagD(c *check.C) {
 	}
 	content, _ := ioutil.ReadFile(s.d.logFile.Name())
 	if !strings.Contains(string(content), `level=debug`) {
-		c.Fatalf(`Missing level="debug" in log file using -D:\n%s`, string(content))
+		c.Fatalf(`Should have level="debug" in log file using -D:\n%s`, string(content))
 	}
 }
 
@@ -243,7 +243,7 @@ func (s *DockerDaemonSuite) TestDaemonFlagDebug(c *check.C) {
 	}
 	content, _ := ioutil.ReadFile(s.d.logFile.Name())
 	if !strings.Contains(string(content), `level=debug`) {
-		c.Fatalf(`Missing level="debug" in log file using --debug:\n%s`, string(content))
+		c.Fatalf(`Should have level="debug" in log file using --debug:\n%s`, string(content))
 	}
 }
 
@@ -253,7 +253,7 @@ func (s *DockerDaemonSuite) TestDaemonFlagDebugLogLevelFatal(c *check.C) {
 	}
 	content, _ := ioutil.ReadFile(s.d.logFile.Name())
 	if !strings.Contains(string(content), `level=debug`) {
-		c.Fatalf(`Missing level="debug" in log file when using both --debug and --log-level=fatal:\n%s`, string(content))
+		c.Fatalf(`Should have level="debug" in log file when using both --debug and --log-level=fatal:\n%s`, string(content))
 	}
 }
 
@@ -907,8 +907,8 @@ func (s *DockerDaemonSuite) TestDaemonLoggingDriverNoneLogsError(c *check.C) {
 	if err == nil {
 		c.Fatalf("Logs should fail with \"none\" driver")
 	}
-	if !strings.Contains(out, `\"logs\" command is supported only for \"json-file\" logging driver`) {
-		c.Fatalf("There should be error about non-json-file driver, got %s", out)
+	if !strings.Contains(out, `"logs" command is supported only for "json-file" logging driver`) {
+		c.Fatalf("There should be error about non-json-file driver, got: %s", out)
 	}
 }
 

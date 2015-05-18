@@ -17,9 +17,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
-	"github.com/docker/docker/graph"
+	"github.com/docker/docker/graph/tags"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/jsonmessage"
@@ -192,14 +191,14 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 	// windows: show error message about modified file permissions
 	// FIXME: this is not a valid warning when the daemon is running windows. should be removed once docker engine for windows can build.
 	if runtime.GOOS == "windows" {
-		logrus.Warn(`SECURITY WARNING: You are building a Docker image from Windows against a Linux Docker host. All files and directories added to build context will have '-rwxr-xr-x' permissions. It is recommended to double check and reset permissions for sensitive files and directories.`)
+		fmt.Fprintln(cli.err, `SECURITY WARNING: You are building a Docker image from Windows against a Linux Docker host. All files and directories added to build context will have '-rwxr-xr-x' permissions. It is recommended to double check and reset permissions for sensitive files and directories.`)
 	}
 
 	var body io.Reader
 	// Setup an upload progress bar
 	// FIXME: ProgressReader shouldn't be this annoying to use
 	if context != nil {
-		sf := streamformatter.NewStreamFormatter(false)
+		sf := streamformatter.NewStreamFormatter()
 		body = progressreader.New(progressreader.Config{
 			In:        context,
 			Out:       cli.out,
@@ -241,7 +240,7 @@ func (cli *DockerCli) CmdBuild(args ...string) error {
 			return err
 		}
 		if len(tag) > 0 {
-			if err := graph.ValidateTagName(tag); err != nil {
+			if err := tags.ValidateTagName(tag); err != nil {
 				return err
 			}
 		}

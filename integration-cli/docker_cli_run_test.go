@@ -1000,7 +1000,7 @@ func (s *DockerSuite) TestRunPrivilegedCanMknod(c *check.C) {
 	}
 }
 
-func (s *DockerSuite) TestRunUnPrivilegedCanMknod(c *check.C) {
+func (s *DockerSuite) TestRunUnprivilegedCanMknod(c *check.C) {
 	cmd := exec.Command(dockerBinary, "run", "busybox", "sh", "-c", "mknod /tmp/sda b 8 0 && echo ok")
 	out, _, err := runCommandWithOutput(cmd)
 	if err != nil {
@@ -1124,7 +1124,7 @@ func (s *DockerSuite) TestRunPrivilegedCanMount(c *check.C) {
 	}
 }
 
-func (s *DockerSuite) TestRunUnPrivilegedCannotMount(c *check.C) {
+func (s *DockerSuite) TestRunUnprivilegedCannotMount(c *check.C) {
 	cmd := exec.Command(dockerBinary, "run", "busybox", "sh", "-c", "mount -t tmpfs none /tmp && echo ok")
 	out, _, err := runCommandWithOutput(cmd)
 	if err == nil {
@@ -1734,7 +1734,7 @@ func (s *DockerSuite) TestRunAttachStdOutAndErrTTYMode(c *check.C) {
 
 // Test for #10388 - this will run the same test as TestRunAttachStdOutAndErrTTYMode
 // but using --attach instead of -a to make sure we read the flag correctly
-func (s *DockerSuite) TestRunAttachWithDettach(c *check.C) {
+func (s *DockerSuite) TestRunAttachWithDetach(c *check.C) {
 	cmd := exec.Command(dockerBinary, "run", "-d", "--attach", "stdout", "busybox", "true")
 	_, stderr, _, err := runCommandWithStdoutStderr(cmd)
 	if err == nil {
@@ -2051,7 +2051,7 @@ func (s *DockerSuite) TestRunWithBadDevice(c *check.C) {
 	if err == nil {
 		c.Fatal("Run should fail with bad device")
 	}
-	expected := `\"/etc\": not a device node`
+	expected := `"/etc": not a device node`
 	if !strings.Contains(out, expected) {
 		c.Fatalf("Output should contain %q, actual out: %q", expected, out)
 	}
@@ -2765,6 +2765,38 @@ func (s *DockerSuite) TestRunModePidHost(c *check.C) {
 	}
 }
 
+func (s *DockerSuite) TestRunModeUTSHost(c *check.C) {
+	testRequires(c, NativeExecDriver, SameHostDaemon)
+	defer deleteAllContainers()
+
+	hostUTS, err := os.Readlink("/proc/1/ns/uts")
+	if err != nil {
+		c.Fatal(err)
+	}
+
+	cmd := exec.Command(dockerBinary, "run", "--uts=host", "busybox", "readlink", "/proc/self/ns/uts")
+	out2, _, err := runCommandWithOutput(cmd)
+	if err != nil {
+		c.Fatal(err, out2)
+	}
+
+	out2 = strings.Trim(out2, "\n")
+	if hostUTS != out2 {
+		c.Fatalf("UTS different with --uts=host %s != %s\n", hostUTS, out2)
+	}
+
+	cmd = exec.Command(dockerBinary, "run", "busybox", "readlink", "/proc/self/ns/uts")
+	out2, _, err = runCommandWithOutput(cmd)
+	if err != nil {
+		c.Fatal(err, out2)
+	}
+
+	out2 = strings.Trim(out2, "\n")
+	if hostUTS == out2 {
+		c.Fatalf("UTS should be different without --uts=host %s == %s\n", hostUTS, out2)
+	}
+}
+
 func (s *DockerSuite) TestRunTLSverify(c *check.C) {
 	cmd := exec.Command(dockerBinary, "ps")
 	out, ec, err := runCommandWithOutput(cmd)
@@ -3213,8 +3245,8 @@ func (s *DockerSuite) TestMountIntoProc(c *check.C) {
 func (s *DockerSuite) TestMountIntoSys(c *check.C) {
 	testRequires(c, NativeExecDriver)
 	defer deleteAllContainers()
-	code, err := runCommand(exec.Command(dockerBinary, "run", "-v", "/sys/", "busybox", "true"))
-	if err == nil || code == 0 {
-		c.Fatal("container should not be able to mount into /sys")
+	_, err := runCommand(exec.Command(dockerBinary, "run", "-v", "/sys/fs/cgroup", "busybox", "true"))
+	if err != nil {
+		c.Fatal("container should be able to mount into /sys/fs/cgroup")
 	}
 }

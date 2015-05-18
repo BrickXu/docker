@@ -43,6 +43,7 @@ docker-run - Run a command in a new container
 [**-P**|**--publish-all**[=*false*]]
 [**-p**|**--publish**[=*[]*]]
 [**--pid**[=*[]*]]
+[**--uts**[=*[]*]]
 [**--privileged**[=*false*]]
 [**--read-only**[=*false*]]
 [**--restart**[=*RESTART*]]
@@ -238,7 +239,8 @@ ENTRYPOINT.
    Read in a line delimited file of labels
 
 **--link**=[]
-   Add link to another container in the form of <name or id>:alias
+   Add link to another container in the form of <name or id>:alias or just <name or id>
+in which case the alias will match the name
 
    If the operator
 uses **--link** when starting the new client container, then the client
@@ -321,6 +323,11 @@ ports and the exposed ports, use `docker port`.
    Set the PID mode for the container
      **host**: use the host's PID namespace inside the container.
      Note: the host mode gives the container full access to local PID and is therefore considered insecure.
+
+**--uts**=host
+   Set the UTS mode for the container
+     **host**: use the host's UTS namespace inside the container.
+     Note: the host mode gives the container access to changing the host's hostname and is therefore considered insecure.
 
 **--privileged**=*true*|*false*
    Give extended privileges to this container. The default is *false*.

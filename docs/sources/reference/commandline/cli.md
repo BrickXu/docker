@@ -151,6 +151,8 @@ expect an integer, and they can only be specified once.
       --dns-search=[]                        DNS search domains to use
       --default-ulimit=[]                    Set default ulimit settings for containers
       -e, --exec-driver="native"             Exec driver to use
+      --exec-opt=[]                          Set exec driver options
+      --exec-root="/var/run/docker"          Root of the Docker execdriver
       --fixed-cidr=""                        IPv4 subnet for fixed IPs
       --fixed-cidr-v6=""                     IPv6 subnet for fixed IPs
       -G, --group="docker"                   Group for the unix socket
@@ -250,7 +252,7 @@ precedence over `HTTP_PROXY`.
 ### Daemon storage-driver option
 
 The Docker daemon has support for several different image layer storage drivers: `aufs`,
-`devicemapper`, `btrfs` and `overlay`.
+`devicemapper`, `btrfs`, `zfs` and `overlay`.
 
 The `aufs` driver is the oldest, but is based on a Linux kernel patch-set that
 is unlikely to be merged into the main kernel. These are also known to cause some
@@ -272,6 +274,11 @@ explains how to tune your existing setup without the use of options.
 The `btrfs` driver is very fast for `docker build` - but like `devicemapper` does not
 share executable memory between devices. Use `docker -d -s btrfs -g /mnt/btrfs_partition`.
 
+The `zfs` driver is probably not fast as `btrfs` but has a longer track record
+on stability. Thanks to `Single Copy ARC` shared blocks between clones will be
+cached only once. Use `docker -d -s zfs`. To select a different zfs filesystem
+set `zfs.fsname` option as described in [Storage driver options](#storage-driver-options):
+
 The `overlay` is a very fast union filesystem. It is now merged in the main
 Linux kernel as of [3.18.0](https://lkml.org/lkml/2014/10/26/137).
 Call `docker -d -s overlay` to use it.
@@ -282,10 +289,10 @@ Call `docker -d -s overlay` to use it.
 #### Storage driver options
 
 Particular storage-driver can be configured with options specified with
-`--storage-opt` flags. The only driver accepting options is `devicemapper` as
-of now. All its options are prefixed with `dm`.
+`--storage-opt` flags. Options for `devicemapper` are prefixed with `dm` and
+options for `zfs` start with `zfs`.
 
-Currently supported options are:
+Currently supported options of `devicemapper`:
 
  *  `dm.basesize`
 
@@ -444,6 +451,17 @@ Currently supported options are:
     > daemon with a supported environment.
 
 ### Docker execdriver option
+Currently supported options of `zfs`:
+
+ * `zfs.fsname`
+
+    Set zfs filesystem under which docker will create its own datasets.
+    By default docker will pick up the zfs filesystem where docker graph
+    (`/var/lib/docker`) is located.
+
+    Example use:
+
+       $ docker -d -s zfs --storage-opt zfs.fsname=zroot/docker
 
 The Docker daemon uses a specifically built `libcontainer` execution driver as its
 interface to the Linux kernel `namespaces`, `cgroups`, and `SELinux`.
@@ -974,6 +992,8 @@ Creates a new container.
       --oom-kill-disable=false   Whether to disable OOM Killer for the container or not
       -P, --publish-all=false    Publish all exposed ports to random ports
       -p, --publish=[]           Publish a container's port(s) to the host
+      --pid=""                   PID namespace to use
+      --uts=""                   UTS namespace to use
       --privileged=false         Give extended privileges to this container
       --read-only=false          Mount the container's root filesystem as read only
       --restart="no"             Restart policy (no, on-failure[:max-retry], always)
@@ -1616,6 +1636,7 @@ For example:
     Fetch the logs of a container
 
       -f, --follow=false        Follow log output
+      --since=""                Show logs since timestamp
       -t, --timestamps=false    Show timestamps
       --tail="all"              Number of lines to show from the end of the logs
 
@@ -1634,6 +1655,10 @@ The `docker logs --timestamp` commands will add an RFC3339Nano
 timestamp, for example `2014-09-16T06:17:46.000000000Z`, to each
 log entry. To ensure that the timestamps for are aligned the
 nano-second part of the timestamp will be padded with zero when necessary.
+
+The `--since` option shows logs of a container generated only after
+the given date, specified as RFC 3339 or UNIX timestamp. The `--since` option
+can be combined with the `--follow` and `--tail` options.
 
 ## pause
 
@@ -1936,6 +1961,7 @@ To remove an image using its digest:
       -P, --publish-all=false    Publish all exposed ports to random ports
       -p, --publish=[]           Publish a container's port(s) to the host
       --pid=""                   PID namespace to use
+      --uts=""                   UTS namespace to use
       --privileged=false         Give extended privileges to this container
       --read-only=false          Mount the container's root filesystem as read only
       --restart="no"             Restart policy (no, on-failure[:max-retry], always)
@@ -2138,6 +2164,12 @@ Guide.
 The `--link` flag will link the container named `/redis` into the newly
 created container with the alias `redis`. The new container can access the
 network and environment of the `redis` container via environment variables.
+The `--link` flag will also just accept the form `<name or id>` in which case
+the alias will match the name. For instance, you could have written the previous
+example as:
+
+    $ docker run --link redis --name console ubuntu bash
+
 The `--name` flag will assign the name `console` to the newly created
 container.
 
