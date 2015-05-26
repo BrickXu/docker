@@ -23,7 +23,6 @@ import (
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/daemon"
-	"github.com/docker/docker/daemon/networkdriver/bridge"
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/jsonmessage"
@@ -31,11 +30,13 @@ import (
 	"github.com/docker/docker/pkg/parsers/filters"
 	"github.com/docker/docker/pkg/parsers/kernel"
 	"github.com/docker/docker/pkg/signal"
+	"github.com/docker/docker/pkg/sockets"
 	"github.com/docker/docker/pkg/stdcopy"
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/version"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
+	"github.com/docker/libnetwork/portallocator"
 )
 
 type ServerConfig struct {
@@ -1402,6 +1403,26 @@ func (s *Server) ping(version version.Version, w http.ResponseWriter, r *http.Re
 	return err
 }
 
+func (s *Server) initTcpSocket(addr string) (l net.Listener, err error) {
+	if !s.cfg.TlsVerify {
+		logrus.Warn("/!\\ DON'T BIND ON ANY IP ADDRESS WITHOUT setting -tlsverify IF YOU DON'T KNOW WHAT YOU'RE DOING /!\\")
+	}
+
+	var c *sockets.TlsConfig
+	if s.cfg.Tls || s.cfg.TlsVerify {
+		c = sockets.NewTlsConfig(s.cfg.TlsCert, s.cfg.TlsKey, s.cfg.TlsCa, s.cfg.TlsVerify)
+	}
+
+	if l, err = sockets.NewTcpSocket(addr, c, s.start); err != nil {
+		return nil, err
+	}
+	if err := allocateDaemonPort(addr); err != nil {
+		return nil, err
+	}
+
+	return
+}
+
 func makeHttpHandler(logging bool, localMethod string, localRoute string, handlerFunc HttpApiFunc, corsHeaders string, dockerVersion version.Version) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// log the request
@@ -1426,7 +1447,7 @@ func makeHttpHandler(logging bool, localMethod string, localRoute string, handle
 		}
 
 		if version.GreaterThan(api.APIVERSION) {
-			http.Error(w, fmt.Errorf("client and server don't have same version (client API version: %s, server API version: %s)", version, api.APIVERSION).Error(), http.StatusNotFound)
+			http.Error(w, fmt.Errorf("client and server don't have same version (client API version: %s, server API version: %s)", version, api.APIVERSION).Error(), http.StatusBadRequest)
 			return
 		}
 
@@ -1548,8 +1569,9 @@ func allocateDaemonPort(addr string) error {
 		return fmt.Errorf("failed to lookup %s address in host specification", host)
 	}
 
+	pa := portallocator.Get()
 	for _, hostIP := range hostIPs {
-		if _, err := bridge.RequestPort(hostIP, "tcp", intPort); err != nil {
+		if _, err := pa.RequestPort(hostIP, "tcp", intPort); err != nil {
 			return fmt.Errorf("failed to allocate daemon listening port %d (err: %v)", intPort, err)
 		}
 	}

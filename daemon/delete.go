@@ -35,13 +35,14 @@ func (daemon *Daemon) ContainerRm(name string, config *ContainerRmConfig) error 
 		}
 		parentContainer, _ := daemon.Get(pe.ID())
 
+		if err := daemon.ContainerGraph().Delete(name); err != nil {
+			return err
+		}
+
 		if parentContainer != nil {
 			parentContainer.DisableLink(n)
 		}
 
-		if err := daemon.ContainerGraph().Delete(name); err != nil {
-			return err
-		}
 		return nil
 	}
 
@@ -69,20 +70,12 @@ func (daemon *Daemon) ContainerRm(name string, config *ContainerRmConfig) error 
 			}
 		}
 		container.LogEvent("destroy")
+
 		if config.RemoveVolume {
-			daemon.DeleteVolumes(container.VolumePaths())
+			container.removeMountPoints()
 		}
 	}
 	return nil
-}
-
-func (daemon *Daemon) DeleteVolumes(volumeIDs map[string]struct{}) {
-	for id := range volumeIDs {
-		if err := daemon.volumes.Delete(id); err != nil {
-			logrus.Infof("%s", err)
-			continue
-		}
-	}
 }
 
 func (daemon *Daemon) Rm(container *Container) (err error) {
@@ -133,7 +126,6 @@ func (daemon *Daemon) commonRm(container *Container, forceRemove bool) (err erro
 		}
 	}()
 
-	container.derefVolumes()
 	if _, err := daemon.containerGraph.Purge(container.ID); err != nil {
 		logrus.Debugf("Unable to remove container from link graph: %s", err)
 	}
@@ -160,4 +152,8 @@ func (daemon *Daemon) commonRm(container *Container, forceRemove bool) (err erro
 	daemon.containers.Delete(container.ID)
 
 	return nil
+}
+
+func (daemon *Daemon) DeleteVolumes(c *Container) error {
+	return c.removeMountPoints()
 }

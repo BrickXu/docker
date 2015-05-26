@@ -88,5 +88,9 @@ func (cli *DockerCli) CmdInfo(args ...string) error {
 		}
 	}
 
+	if info.ExperimentalBuild {
+		fmt.Fprintf(cli.out, "Experimental: true\n")
+	}
+
 	return nil
 }

@@ -922,7 +922,7 @@ Supported `Dockerfile` instructions:
     197387f1b436        ubuntu:12.04        /bin/bash           7 days ago          Up 25 hours
     $ docker commit c3f279d17e0a  SvenDowideit/testimage:version3
     f5283438590d
-    $ docker images | head
+    $ docker images
     REPOSITORY                        TAG                 ID                  CREATED             VIRTUAL SIZE
     SvenDowideit/testimage            version3            f5283438590d        16 seconds ago      335.7 MB
 
@@ -1326,7 +1326,7 @@ uses up the `VIRTUAL SIZE` listed only once.
 
 #### Listing the most recently created images
 
-    $ docker images | head
+    $ docker images
     REPOSITORY                TAG                 IMAGE ID            CREATED             VIRTUAL SIZE
     <none>                    <none>              77af4d6b9913        19 hours ago        1.089 GB
     committ                   latest              b6fa739cedf5        19 hours ago        1.089 GB
@@ -1341,7 +1341,7 @@ uses up the `VIRTUAL SIZE` listed only once.
 
 #### Listing the full length image IDs
 
-    $ docker images --no-trunc | head
+    $ docker images --no-trunc
     REPOSITORY                    TAG                 IMAGE ID                                                           CREATED             VIRTUAL SIZE
     <none>                        <none>              77af4d6b9913e693e8d0b4b294fa62ade6054e6b2f1ffb617ac955dd63fb0182   19 hours ago        1.089 GB
     committest                    latest              b6fa739cedf5ea12a620a439402b6004d057da800f91c7524b5086a5e4749c9f   19 hours ago        1.089 GB
@@ -1360,7 +1360,7 @@ called a `digest`. As long as the input used to generate the image is
 unchanged, the digest value is predictable. To list image digest values, use
 the `--digests` flag:
 
-    $ docker images --digests | head
+    $ docker images --digests
     REPOSITORY                         TAG                 DIGEST                                                                    IMAGE ID            CREATED             VIRTUAL SIZE
     localhost:5000/test/busybox        <none>              sha256:cbbf2f9a99b47fc460d422812b6a5adff7dfee951d8fa2e4a98caa0382cfbdbf   4986bf8c1536        9 weeks ago         2.43 MB
 
@@ -2204,10 +2204,10 @@ logs could be retrieved using `docker logs`. This is
 useful if you need to pipe a file or something else into a container and
 retrieve the container's ID once the container has finished running.
 
-   $ docker run --device=/dev/sdc:/dev/xvdc --device=/dev/sdd --device=/dev/zero:/dev/nulo -i -t ubuntu ls -l /dev/{xvdc,sdd,nulo}
-   brw-rw---- 1 root disk 8, 2 Feb  9 16:05 /dev/xvdc
-   brw-rw---- 1 root disk 8, 3 Feb  9 16:05 /dev/sdd
-   crw-rw-rw- 1 root root 1, 5 Feb  9 16:05 /dev/nulo
+    $ docker run --device=/dev/sdc:/dev/xvdc --device=/dev/sdd --device=/dev/zero:/dev/nulo -i -t ubuntu ls -l /dev/{xvdc,sdd,nulo}
+    brw-rw---- 1 root disk 8, 2 Feb  9 16:05 /dev/xvdc
+    brw-rw---- 1 root disk 8, 3 Feb  9 16:05 /dev/sdd
+    crw-rw-rw- 1 root root 1, 5 Feb  9 16:05 /dev/nulo
 
 It is often necessary to directly expose devices to a container. The `--device`
 option enables that.  For example, a specific block storage device or loop
@@ -2400,7 +2400,7 @@ It is used to create a backup that can then be used with `docker load`
 
 It is even useful to cherry-pick particular tags of an image repository
 
-   $ docker save -o ubuntu.tar ubuntu:lucid ubuntu:saucy
+    $ docker save -o ubuntu.tar ubuntu:lucid ubuntu:saucy
 
 ## search
 

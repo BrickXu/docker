@@ -35,9 +35,6 @@ func (s *DockerSuite) TestLogsContainerSmallerThanPage(c *check.C) {
 	if len(out) != testLen+1 {
 		c.Fatalf("Expected log length of %d, received %d\n", testLen+1, len(out))
 	}
-
-	deleteContainer(cleanedContainerID)
-
 }
 
 // Regression test: When going over the PageSize, it used to panic (gh#4851)
@@ -61,9 +58,6 @@ func (s *DockerSuite) TestLogsContainerBiggerThanPage(c *check.C) {
 	if len(out) != testLen+1 {
 		c.Fatalf("Expected log length of %d, received %d\n", testLen+1, len(out))
 	}
-
-	deleteContainer(cleanedContainerID)
-
 }
 
 // Regression test: When going much over the PageSize, it used to block (gh#4851)
@@ -87,9 +81,6 @@ func (s *DockerSuite) TestLogsContainerMuchBiggerThanPage(c *check.C) {
 	if len(out) != testLen+1 {
 		c.Fatalf("Expected log length of %d, received %d\n", testLen+1, len(out))
 	}
-
-	deleteContainer(cleanedContainerID)
-
 }
 
 func (s *DockerSuite) TestLogsTimestamps(c *check.C) {
@@ -129,9 +120,6 @@ func (s *DockerSuite) TestLogsTimestamps(c *check.C) {
 			}
 		}
 	}
-
-	deleteContainer(cleanedContainerID)
-
 }
 
 func (s *DockerSuite) TestLogsSeparateStderr(c *check.C) {
@@ -160,9 +148,6 @@ func (s *DockerSuite) TestLogsSeparateStderr(c *check.C) {
 	if stderr != msg {
 		c.Fatalf("Expected %v in stderr stream, got %v", msg, stderr)
 	}
-
-	deleteContainer(cleanedContainerID)
-
 }
 
 func (s *DockerSuite) TestLogsStderrInStdout(c *check.C) {
@@ -191,9 +176,6 @@ func (s *DockerSuite) TestLogsStderrInStdout(c *check.C) {
 	if stdout != msg {
 		c.Fatalf("Expected %v in stdout stream, got %v", msg, stdout)
 	}
-
-	deleteContainer(cleanedContainerID)
-
 }
 
 func (s *DockerSuite) TestLogsTail(c *check.C) {
@@ -243,8 +225,6 @@ func (s *DockerSuite) TestLogsTail(c *check.C) {
 	if len(lines) != testLen+1 {
 		c.Fatalf("Expected log %d lines, received %d\n", testLen+1, len(lines))
 	}
-
-	deleteContainer(cleanedContainerID)
 }
 
 func (s *DockerSuite) TestLogsFollowStopped(c *check.C) {
@@ -275,8 +255,6 @@ func (s *DockerSuite) TestLogsFollowStopped(c *check.C) {
 	case <-time.After(1 * time.Second):
 		c.Fatal("Following logs is hanged")
 	}
-
-	deleteContainer(cleanedContainerID)
 }
 
 func (s *DockerSuite) TestLogsSince(c *check.C) {
@@ -436,9 +414,11 @@ func (s *DockerSuite) TestLogsFollowGoroutinesWithStdout(c *check.C) {
 	for {
 		select {
 		case <-t:
-			c.Assert(nroutines, check.Equals, getNGoroutines())
+			if n := getNGoroutines(); n > nroutines {
+				c.Fatalf("leaked goroutines: expected less than or equal to %d, got: %d", nroutines, n)
+			}
 		default:
-			if nroutines == getNGoroutines() {
+			if n := getNGoroutines(); n <= nroutines {
 				return
 			}
 			time.Sleep(200 * time.Millisecond)
