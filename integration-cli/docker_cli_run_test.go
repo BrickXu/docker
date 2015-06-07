@@ -53,6 +53,7 @@ func (s *DockerSuite) TestRunEchoStdoutWithMemoryLimit(c *check.C) {
 
 // should run without memory swap
 func (s *DockerSuite) TestRunWithoutMemoryswapLimit(c *check.C) {
+	testRequires(c, NativeExecDriver)
 	runCmd := exec.Command(dockerBinary, "run", "-m", "16m", "--memory-swap", "-1", "busybox", "true")
 	out, _, err := runCommandWithOutput(runCmd)
 	if err != nil {
@@ -83,29 +84,6 @@ func (s *DockerSuite) TestRunEchoStdoutWithCPUAndMemoryLimit(c *check.C) {
 
 	if out != "test\n" {
 		c.Errorf("container should've printed 'test', got %q instead", out)
-	}
-}
-
-// "test" should be printed
-func (s *DockerSuite) TestRunEchoStdoutWithCPUQuota(c *check.C) {
-	runCmd := exec.Command(dockerBinary, "run", "--cpu-quota", "8000", "--name", "test", "busybox", "echo", "test")
-	out, _, _, err := runCommandWithStdoutStderr(runCmd)
-	if err != nil {
-		c.Fatalf("failed to run container: %v, output: %q", err, out)
-	}
-	out = strings.TrimSpace(out)
-	if strings.Contains(out, "Your kernel does not support CPU cfs quota") {
-		c.Skip("Your kernel does not support CPU cfs quota, skip this test")
-	}
-	if out != "test" {
-		c.Errorf("container should've printed 'test'")
-	}
-
-	out, err = inspectField("test", "HostConfig.CpuQuota")
-	c.Assert(err, check.IsNil)
-
-	if out != "8000" {
-		c.Errorf("setting the CPU CFS quota failed")
 	}
 }
 
@@ -1112,24 +1090,6 @@ func (s *DockerSuite) TestRunProcWritableInPrivilegedContainers(c *check.C) {
 	cmd := exec.Command(dockerBinary, "run", "--privileged", "busybox", "touch", "/proc/sysrq-trigger")
 	if code, err := runCommand(cmd); err != nil || code != 0 {
 		c.Fatalf("proc should be writable in privileged container")
-	}
-}
-
-func (s *DockerSuite) TestRunWithCpuPeriod(c *check.C) {
-	runCmd := exec.Command(dockerBinary, "run", "--cpu-period", "50000", "--name", "test", "busybox", "true")
-	out, _, _, err := runCommandWithStdoutStderr(runCmd)
-	if err != nil {
-		c.Fatalf("failed to run container: %v, output: %q", err, out)
-	}
-	out = strings.TrimSpace(out)
-	if strings.Contains(out, "Your kernel does not support CPU cfs period") {
-		c.Skip("Your kernel does not support CPU cfs period, skip this test")
-	}
-
-	out, err = inspectField("test", "HostConfig.CpuPeriod")
-	c.Assert(err, check.IsNil)
-	if out != "50000" {
-		c.Errorf("setting the CPU CFS period failed")
 	}
 }
 
@@ -3169,4 +3129,51 @@ func (s *DockerSuite) TestTwoContainersInNetHost(c *check.C) {
 	dockerCmd(c, "run", "-d", "--net=host", "--name=second", "busybox", "top")
 	dockerCmd(c, "stop", "first")
 	dockerCmd(c, "stop", "second")
+}
+
+func (s *DockerSuite) TestRunUnshareProc(c *check.C) {
+	testRequires(c, Apparmor, NativeExecDriver)
+
+	name := "acidburn"
+	runCmd := exec.Command(dockerBinary, "run", "--name", name, "jess/unshare", "unshare", "-p", "-m", "-f", "-r", "--mount-proc=/proc", "mount")
+	if out, _, err := runCommandWithOutput(runCmd); err == nil || !strings.Contains(out, "Permission denied") {
+		c.Fatalf("unshare should have failed with permission denied, got: %s, %v", out, err)
+	}
+
+	name = "cereal"
+	runCmd = exec.Command(dockerBinary, "run", "--name", name, "jess/unshare", "unshare", "-p", "-m", "-f", "-r", "mount", "-t", "proc", "none", "/proc")
+	if out, _, err := runCommandWithOutput(runCmd); err == nil || !strings.Contains(out, "Permission denied") {
+		c.Fatalf("unshare should have failed with permission denied, got: %s, %v", out, err)
+	}
+
+	/* Ensure still fails if running privileged with the default policy */
+	name = "crashoverride"
+	runCmd = exec.Command(dockerBinary, "run", "--privileged", "--security-opt", "apparmor:docker-default", "--name", name, "jess/unshare", "unshare", "-p", "-m", "-f", "-r", "mount", "-t", "proc", "none", "/proc")
+	if out, _, err := runCommandWithOutput(runCmd); err == nil || !strings.Contains(out, "Permission denied") {
+		c.Fatalf("unshare should have failed with permission denied, got: %s, %v", out, err)
+	}
+}
+
+func (s *DockerSuite) TestRunPublishPort(c *check.C) {
+	out, _, err := runCommandWithOutput(exec.Command(dockerBinary, "run", "-d", "--name", "test", "--expose", "8080", "busybox", "top"))
+	c.Assert(err, check.IsNil)
+	out, _, err = runCommandWithOutput(exec.Command(dockerBinary, "port", "test"))
+	c.Assert(err, check.IsNil)
+	out = strings.Trim(out, "\r\n")
+	if out != "" {
+		c.Fatalf("run without --publish-all should not publish port, out should be nil, but got: %s", out)
+	}
+}
+
+// Issue #10184.
+func (s *DockerSuite) TestDevicePermissions(c *check.C) {
+	testRequires(c, NativeExecDriver)
+	const permissions = "crw-rw-rw-"
+	out, status := dockerCmd(c, "run", "--device", "/dev/fuse:/dev/fuse:mrw", "busybox:latest", "ls", "-l", "/dev/fuse")
+	if status != 0 {
+		c.Fatalf("expected status 0, got %d", status)
+	}
+	if !strings.HasPrefix(out, permissions) {
+		c.Fatalf("output should begin with %q, got %q", permissions, out)
+	}
 }

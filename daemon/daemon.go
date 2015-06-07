@@ -161,6 +161,7 @@ func (daemon *Daemon) load(id string) (*Container, error) {
 		CommonContainer: CommonContainer{
 			State:        NewState(),
 			root:         daemon.containerRoot(id),
+			MountPoints:  make(map[string]*mountPoint),
 			execCommands: newExecStore(),
 		},
 	}
@@ -212,7 +213,7 @@ func (daemon *Daemon) register(container *Container, updateSuffixarray bool) err
 	// we'll waste time if we update it for every container
 	daemon.idIndex.Add(container.ID)
 
-	if err := daemon.verifyOldVolumesInfo(container); err != nil {
+	if err := daemon.verifyVolumesInfo(container); err != nil {
 		return err
 	}
 
@@ -354,33 +355,16 @@ func (daemon *Daemon) restore() error {
 	return nil
 }
 
-func (daemon *Daemon) checkDeprecatedExpose(config *runconfig.Config) bool {
-	if config != nil {
-		if config.PortSpecs != nil {
-			for _, p := range config.PortSpecs {
-				if strings.Contains(p, ":") {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func (daemon *Daemon) mergeAndVerifyConfig(config *runconfig.Config, img *image.Image) ([]string, error) {
-	warnings := []string{}
-	if (img != nil && daemon.checkDeprecatedExpose(img.Config)) || daemon.checkDeprecatedExpose(config) {
-		warnings = append(warnings, "The mapping to public ports on your host via Dockerfile EXPOSE (host:port:port) has been deprecated. Use -p to publish the ports.")
-	}
+func (daemon *Daemon) mergeAndVerifyConfig(config *runconfig.Config, img *image.Image) error {
 	if img != nil && img.Config != nil {
 		if err := runconfig.Merge(config, img.Config); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if config.Entrypoint.Len() == 0 && config.Cmd.Len() == 0 {
-		return nil, fmt.Errorf("No command specified")
+		return fmt.Errorf("No command specified")
 	}
-	return warnings, nil
+	return nil
 }
 
 func (daemon *Daemon) generateIdAndName(name string) (string, string, error) {
@@ -962,6 +946,14 @@ func initNetworkController(config *Config) (libnetwork.NetworkController, error)
 		netOption["FixedCIDRv6"] = fCIDRv6
 	}
 
+	if config.Bridge.DefaultGatewayIPv4 != nil {
+		netOption["DefaultGatewayIPv4"] = config.Bridge.DefaultGatewayIPv4
+	}
+
+	if config.Bridge.DefaultGatewayIPv6 != nil {
+		netOption["DefaultGatewayIPv6"] = config.Bridge.DefaultGatewayIPv6
+	}
+
 	// --ip processing
 	if config.Bridge.DefaultIP != nil {
 		netOption["DefaultBindingIP"] = config.Bridge.DefaultIP
@@ -1002,8 +994,9 @@ func (daemon *Daemon) Shutdown() error {
 
 				go func() {
 					defer group.Done()
-					if err := c.KillSig(15); err != nil {
-						logrus.Debugf("kill 15 error for %s - %s", c.ID, err)
+					// If container failed to exit in 10 seconds of SIGTERM, then using the force
+					if err := c.Stop(10); err != nil {
+						logrus.Errorf("Stop container %s with error: %v", c.ID, err)
 					}
 					c.WaitStop(-1 * time.Second)
 					logrus.Debugf("container stopped %s", c.ID)
@@ -1220,16 +1213,21 @@ func (daemon *Daemon) verifyHostConfig(hostConfig *runconfig.HostConfig) ([]stri
 }
 
 func (daemon *Daemon) setHostConfig(container *Container, hostConfig *runconfig.HostConfig) error {
+	container.Lock()
+	if err := parseSecurityOpt(container, hostConfig); err != nil {
+		container.Unlock()
+		return err
+	}
+	container.Unlock()
+
+	// Do not lock while creating volumes since this could be calling out to external plugins
+	// Don't want to block other actions, like `docker ps` because we're waiting on an external plugin
 	if err := daemon.registerMountPoints(container, hostConfig); err != nil {
 		return err
 	}
 
 	container.Lock()
 	defer container.Unlock()
-	if err := parseSecurityOpt(container, hostConfig); err != nil {
-		return err
-	}
-
 	// Register any links from the host config before starting the container
 	if err := daemon.RegisterLinks(container, hostConfig); err != nil {
 		return err

@@ -39,7 +39,6 @@ func (daemon *Daemon) ContainerCreate(name string, config *runconfig.Config, hos
 		return "", warnings, err
 	}
 
-	container.LogEvent("create")
 	warnings = append(warnings, buildWarnings...)
 
 	return container.ID, warnings, nil
@@ -66,11 +65,11 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 		imgID = img.ID
 	}
 
-	if warnings, err = daemon.mergeAndVerifyConfig(config, img); err != nil {
+	if err := daemon.mergeAndVerifyConfig(config, img); err != nil {
 		return nil, nil, err
 	}
 	if !config.NetworkDisabled && daemon.SystemConfig().IPv4ForwardingDisabled {
-		warnings = append(warnings, "IPv4 forwarding is disabled.\n")
+		warnings = append(warnings, "IPv4 forwarding is disabled.")
 	}
 	if hostConfig == nil {
 		hostConfig = &runconfig.HostConfig{}
@@ -129,6 +128,9 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 		if err != nil {
 			return nil, nil, err
 		}
+		if err := label.Relabel(v.Path(), container.MountLabel, "z"); err != nil {
+			return nil, nil, err
+		}
 
 		if err := container.copyImagePathContent(v, destination); err != nil {
 			return nil, nil, err
@@ -139,6 +141,7 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 	if err := container.ToDisk(); err != nil {
 		return nil, nil, err
 	}
+	container.LogEvent("create")
 	return container, warnings, nil
 }
 

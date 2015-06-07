@@ -526,6 +526,49 @@ func (s *DockerDaemonSuite) TestDaemonBridgeFixedCidr(c *check.C) {
 	}
 }
 
+func (s *DockerDaemonSuite) TestDaemonDefaultGatewayIPv4Implicit(c *check.C) {
+	defaultNetworkBridge := "docker0"
+	deleteInterface(c, defaultNetworkBridge)
+
+	d := s.d
+
+	bridgeIp := "192.169.1.1"
+	bridgeIpNet := fmt.Sprintf("%s/24", bridgeIp)
+
+	err := d.StartWithBusybox("--bip", bridgeIpNet)
+	c.Assert(err, check.IsNil)
+	defer d.Restart()
+
+	expectedMessage := fmt.Sprintf("default via %s dev", bridgeIp)
+	out, err := d.Cmd("run", "busybox", "ip", "-4", "route", "list", "0/0")
+	c.Assert(strings.Contains(out, expectedMessage), check.Equals, true,
+		check.Commentf("Implicit default gateway should be bridge IP %s, but default route was '%s'",
+			bridgeIp, strings.TrimSpace(out)))
+	deleteInterface(c, defaultNetworkBridge)
+}
+
+func (s *DockerDaemonSuite) TestDaemonDefaultGatewayIPv4Explicit(c *check.C) {
+	defaultNetworkBridge := "docker0"
+	deleteInterface(c, defaultNetworkBridge)
+
+	d := s.d
+
+	bridgeIp := "192.169.1.1"
+	bridgeIpNet := fmt.Sprintf("%s/24", bridgeIp)
+	gatewayIp := "192.169.1.254"
+
+	err := d.StartWithBusybox("--bip", bridgeIpNet, "--default-gateway", gatewayIp)
+	c.Assert(err, check.IsNil)
+	defer d.Restart()
+
+	expectedMessage := fmt.Sprintf("default via %s dev", gatewayIp)
+	out, err := d.Cmd("run", "busybox", "ip", "-4", "route", "list", "0/0")
+	c.Assert(strings.Contains(out, expectedMessage), check.Equals, true,
+		check.Commentf("Explicit default gateway should be %s, but default route was '%s'",
+			gatewayIp, strings.TrimSpace(out)))
+	deleteInterface(c, defaultNetworkBridge)
+}
+
 func (s *DockerDaemonSuite) TestDaemonIP(c *check.C) {
 	d := s.d
 
@@ -1155,4 +1198,30 @@ func (s *DockerDaemonSuite) TestCleanupMountsAfterCrash(c *check.C) {
 	mountOut, err := exec.Command("mount").CombinedOutput()
 	c.Assert(err, check.IsNil, check.Commentf("Output: %s", mountOut))
 	c.Assert(strings.Contains(string(mountOut), id), check.Equals, false, check.Commentf("Something mounted from older daemon start: %s", mountOut))
+}
+
+func (s *DockerDaemonSuite) TestRunContainerWithBridgeNone(c *check.C) {
+	testRequires(c, NativeExecDriver)
+	c.Assert(s.d.StartWithBusybox("-b", "none"), check.IsNil)
+
+	out, err := s.d.Cmd("run", "--rm", "busybox", "ip", "l")
+	c.Assert(err, check.IsNil, check.Commentf("Output: %s", out))
+	c.Assert(strings.Contains(out, "eth0"), check.Equals, false,
+		check.Commentf("There shouldn't be eth0 in container when network is disabled: %s", out))
+}
+
+func (s *DockerDaemonSuite) TestDaemonRestartWithContainerRunning(t *check.C) {
+	if err := s.d.StartWithBusybox(); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := s.d.Cmd("run", "-ti", "-d", "--name", "test", "busybox"); err != nil {
+		t.Fatal(out, err)
+	}
+	if err := s.d.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	// Container 'test' should be removed without error
+	if out, err := s.d.Cmd("rm", "test"); err != nil {
+		t.Fatal(out, err)
+	}
 }

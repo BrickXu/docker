@@ -182,17 +182,20 @@ func getDevicesFromPath(deviceMapping runconfig.DeviceMapping) (devs []*configs.
 }
 
 func populateCommand(c *Container, env []string) error {
-	en := &execdriver.Network{
-		NamespacePath: c.NetworkSettings.SandboxKey,
-	}
-
-	parts := strings.SplitN(string(c.hostConfig.NetworkMode), ":", 2)
-	if parts[0] == "container" {
-		nc, err := c.getNetworkedContainer()
-		if err != nil {
-			return err
+	var en *execdriver.Network
+	if !c.Config.NetworkDisabled {
+		en = &execdriver.Network{
+			NamespacePath: c.NetworkSettings.SandboxKey,
 		}
-		en.ContainerID = nc.ID
+
+		parts := strings.SplitN(string(c.hostConfig.NetworkMode), ":", 2)
+		if parts[0] == "container" {
+			nc, err := c.getNetworkedContainer()
+			if err != nil {
+				return err
+			}
+			en.ContainerID = nc.ID
+		}
 	}
 
 	ipc := &execdriver.Ipc{}
@@ -224,9 +227,10 @@ func populateCommand(c *Container, env []string) error {
 
 		userSpecifiedDevices = append(userSpecifiedDevices, devs...)
 	}
-	allowedDevices := append(configs.DefaultAllowedDevices, userSpecifiedDevices...)
 
-	autoCreatedDevices := append(configs.DefaultAutoCreatedDevices, userSpecifiedDevices...)
+	allowedDevices := mergeDevices(configs.DefaultAllowedDevices, userSpecifiedDevices)
+
+	autoCreatedDevices := mergeDevices(configs.DefaultAutoCreatedDevices, userSpecifiedDevices)
 
 	// TODO: this can be removed after lxc-conf is fully deprecated
 	lxcConfig, err := mergeLxcConfIntoOptions(c.hostConfig)
@@ -304,6 +308,25 @@ func populateCommand(c *Container, env []string) error {
 	}
 
 	return nil
+}
+
+func mergeDevices(defaultDevices, userDevices []*configs.Device) []*configs.Device {
+	if len(userDevices) == 0 {
+		return defaultDevices
+	}
+
+	paths := map[string]*configs.Device{}
+	for _, d := range userDevices {
+		paths[d.Path] = d
+	}
+
+	var devs []*configs.Device
+	for _, d := range defaultDevices {
+		if _, defined := paths[d.Path]; !defined {
+			devs = append(devs, d)
+		}
+	}
+	return append(devs, userDevices...)
 }
 
 // GetSize, return real size, virtual size
@@ -490,13 +513,23 @@ func (container *Container) buildPortMapInfo(n libnetwork.Network, ep libnetwork
 		networkSettings.MacAddress = mac.(net.HardwareAddr).String()
 	}
 
+	networkSettings.Ports = nat.PortMap{}
+
+	if expData, ok := driverInfo[netlabel.ExposedPorts]; ok {
+		if exposedPorts, ok := expData.([]types.TransportPort); ok {
+			for _, tp := range exposedPorts {
+				natPort := nat.NewPort(tp.Proto.String(), strconv.Itoa(int(tp.Port)))
+				networkSettings.Ports[natPort] = nil
+			}
+		}
+	}
+
 	mapData, ok := driverInfo[netlabel.PortMap]
 	if !ok {
 		return networkSettings, nil
 	}
 
 	if portMapping, ok := mapData.([]types.PortBinding); ok {
-		networkSettings.Ports = nat.PortMap{}
 		for _, pp := range portMapping {
 			natPort := nat.NewPort(pp.Proto.String(), strconv.Itoa(int(pp.Port)))
 			natBndg := nat.PortBinding{HostIp: pp.HostIP.String(), HostPort: strconv.Itoa(int(pp.HostPort))}
@@ -638,16 +671,6 @@ func (container *Container) buildCreateEndpointOptions() ([]libnetwork.EndpointO
 		exposeList    []types.TransportPort
 		createOptions []libnetwork.EndpointOption
 	)
-
-	if container.Config.PortSpecs != nil {
-		if err := migratePortMappings(container.Config, container.hostConfig); err != nil {
-			return nil, err
-		}
-		container.Config.PortSpecs = nil
-		if err := container.WriteHostConfig(); err != nil {
-			return nil, err
-		}
-	}
 
 	if container.Config.ExposedPorts != nil {
 		portSpecs = container.Config.ExposedPorts
@@ -825,20 +848,15 @@ func (container *Container) verifyDaemonSettings() {
 }
 
 func (container *Container) ExportRw() (archive.Archive, error) {
-	if err := container.Mount(); err != nil {
-		return nil, err
-	}
 	if container.daemon == nil {
 		return nil, fmt.Errorf("Can't load storage driver for unregistered container %s", container.ID)
 	}
 	archive, err := container.daemon.Diff(container)
 	if err != nil {
-		container.Unmount()
 		return nil, err
 	}
 	return ioutils.NewReadCloserWrapper(archive, func() error {
 			err := archive.Close()
-			container.Unmount()
 			return err
 		}),
 		nil
@@ -906,7 +924,13 @@ func (container *Container) getNetworkedContainer() (*Container, error) {
 }
 
 func (container *Container) ReleaseNetwork() {
-	if container.hostConfig.NetworkMode.IsContainer() {
+	if container.hostConfig.NetworkMode.IsContainer() || container.daemon.config.DisableNetwork {
+		return
+	}
+
+	// If the container is not attached to any network do not try
+	// to release network and generate spurious error messages.
+	if container.NetworkSettings.NetworkID == "" {
 		return
 	}
 
@@ -953,4 +977,40 @@ func (container *Container) DisableLink(name string) {
 			logrus.Debugf("Could not find active link for %s", name)
 		}
 	}
+}
+
+func (container *Container) UnmountVolumes(forceSyscall bool) error {
+	var volumeMounts []mountPoint
+
+	for _, mntPoint := range container.MountPoints {
+		dest, err := container.GetResourcePath(mntPoint.Destination)
+		if err != nil {
+			return err
+		}
+
+		volumeMounts = append(volumeMounts, mountPoint{Destination: dest, Volume: mntPoint.Volume})
+	}
+
+	for _, mnt := range container.networkMounts() {
+		dest, err := container.GetResourcePath(mnt.Destination)
+		if err != nil {
+			return err
+		}
+
+		volumeMounts = append(volumeMounts, mountPoint{Destination: dest})
+	}
+
+	for _, volumeMount := range volumeMounts {
+		if forceSyscall {
+			syscall.Unmount(volumeMount.Destination, 0)
+		}
+
+		if volumeMount.Volume != nil {
+			if err := volumeMount.Volume.Unmount(); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

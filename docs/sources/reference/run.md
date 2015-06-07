@@ -873,18 +873,38 @@ this driver.
 Default logging driver for Docker. Writes JSON messages to file. `docker logs`
 command is available only for this logging driver
 
+The following logging options are supported for this logging driver: [none]
+
 #### Logging driver: syslog
 
 Syslog logging driver for Docker. Writes log messages to syslog. `docker logs`
 command is not available for this logging driver
 
+The following logging options are supported for this logging driver:
+
+    --log-opt syslog-address=[tcp|udp]://host:port
+    --log-opt syslog-address=unix://path
+    --log-opt syslog-tag="mailer"
+
+`syslog-address` specifies the remote syslog server address where the driver connects to.
+If not specified it defaults to the local unix socket of the running system.
+If transport is either `tcp` or `udp` and `port` is not specified it defaults to `514`
+The following example shows how to have the `syslog` driver connect to a `syslog`
+remote server at `192.168.0.42` on port `123`
+
+    $ docker run --log-driver=syslog --log-opt syslog-address=tcp://192.168.0.42:123
+
+`syslog-tag` specifies tag for syslog messages from container.
+
 #### Logging driver: journald
 
-Journald logging driver for Docker. Writes log messages to journald; the container id will be stored in the journal's `CONTAINER_ID` field. `docker logs` command is not available for this logging driver.  For detailed information on working with this logging driver, see [the journald logging driver](reference/logging/journald) reference documentation.
+Journald logging driver for Docker. Writes log messages to journald; the
+container id will be stored in the journal's `CONTAINER_ID` field. `docker logs`
+command is not available for this logging driver.  For detailed information on
+working with this logging driver, see [the journald logging driver](reference/logging/journald)
+reference documentation.
 
-#### Log Opts : 
-
-Logging options for configuring a log driver. The following log options are supported: [none]
+The following logging options are supported for this logging driver: [none]
 
 ## Overriding Dockerfile image defaults
 
@@ -1102,8 +1122,10 @@ container's `/etc/hosts` entry will be automatically updated.
 
 ## VOLUME (shared filesystems)
 
-    -v=[]: Create a bind mount with: [host-dir]:[container-dir]:[rw|ro].
-           If "container-dir" is missing, then docker creates a new volume.
+    -v=[]: Create a bind mount with: [host-dir:]container-dir[:rw|ro].
+           If 'host-dir' is missing, then docker creates a new volume.
+		   If neither 'rw' or 'ro' is specified then the volume is mounted
+		   in read-write mode.
     --volumes-from="": Mount all volumes from the given container(s)
 
 The volumes commands are complex enough to have their own documentation

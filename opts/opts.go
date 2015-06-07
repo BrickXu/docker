@@ -33,7 +33,7 @@ func MapVar(values map[string]string, names []string, usage string) {
 }
 
 func LogOptsVar(values map[string]string, names []string, usage string) {
-	flag.Var(newMapOpt(values, ValidateLogOpts), names, usage)
+	flag.Var(newMapOpt(values, nil), names, usage)
 }
 
 func HostListVar(values *[]string, names []string, usage string) {
@@ -176,15 +176,6 @@ func newMapOpt(values map[string]string, validator ValidatorFctType) *MapOpts {
 type ValidatorFctType func(val string) (string, error)
 type ValidatorFctListType func(val string) ([]string, error)
 
-func ValidateLogOpts(val string) (string, error) {
-	allowedKeys := map[string]string{}
-	vals := strings.Split(val, "=")
-	if allowedKeys[vals[0]] != "" {
-		return val, nil
-	}
-	return "", fmt.Errorf("%s is not a valid log opt", vals[0])
-}
-
 func ValidateAttach(val string) (string, error) {
 	s := strings.ToLower(val)
 	for _, str := range []string{"stdin", "stdout", "stderr"} {
@@ -202,6 +193,8 @@ func ValidateLink(val string) (string, error) {
 	return val, nil
 }
 
+// ValidatePath will make sure 'val' is in the form:
+//    [host-dir:]container-path[:rw|ro]  - but doesn't validate the mode part
 func ValidatePath(val string) (string, error) {
 	var containerPath string
 

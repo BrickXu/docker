@@ -84,7 +84,9 @@ unix://[/path/to/socket] to use.
   Default IP address to use when binding container ports. Default is `0.0.0.0`.
 
 **--ip-forward**=*true*|*false*
-  Docker will enable IP forwarding. Default is true. If `--fixed-cidr-v6` is set. IPv6 forwarding will be activated, too. This may reject Router Advertisements and interfere with the host's existing IPv6 configuration. For more information please consult the documentation about "Advanced Networking - IPv6".
+  Enables IP forwarding on the Docker host. The default is `true`. This flag interacts with the IP forwarding setting on your host system's kernel. If your system has IP forwarding disabled, this setting enables it. If your system has IP forwarding enabled, setting this flag to `--ip-forward=false` has no effect.
+
+  This setting will also enable IPv6 forwarding if you have both `--ip-forward=true` and `--fixed-cidr-v6` set. Note that this may reject Router Advertisements and interfere with the host's existing IPv6 configuration. For more information, please consult the documentation about "Advanced Networking - IPv6".
 
 **--ip-masq**=*true*|*false*
   Enable IP masquerading for bridge's IP range. Default is true.
@@ -104,6 +106,9 @@ unix://[/path/to/socket] to use.
 **--log-driver**="*json-file*|*syslog*|*journald*|*none*"
   Default driver for container logs. Default is `json-file`.
   **Warning**: `docker logs` command works only for `json-file` logging driver.
+
+**--log-opt**=[]
+  Logging driver specific options.
 
 **--mtu**=VALUE
   Set the containers network mtu. Default is `0`.

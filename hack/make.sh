@@ -96,7 +96,6 @@ fi
 if [ "$DOCKER_EXPERIMENTAL" ]; then
 	echo >&2 '# WARNING! DOCKER_EXPERIMENTAL is set: building experimental features'
 	echo >&2
-	VERSION+="-experimental"
 	DOCKER_BUILDTAGS+=" experimental"
 fi
 
@@ -198,13 +197,13 @@ go_test_dir() {
 		# if our current go install has -cover, we want to use it :)
 		mkdir -p "$DEST/coverprofiles"
 		coverprofile="docker${dir#.}"
-		coverprofile="$DEST/coverprofiles/${coverprofile//\//-}"
+		coverprofile="$ABS_DEST/coverprofiles/${coverprofile//\//-}"
 		testcover=( -cover -coverprofile "$coverprofile" $coverpkg )
 	fi
 	(
-		export DEST
 		echo '+ go test' $TESTFLAGS "${DOCKER_PKG}${dir#.}"
 		cd "$dir"
+		export DEST="$ABS_DEST" # we're in a subshell, so this is safe -- our integration-cli tests need DEST, and "cd" screws it up
 		test_env go test ${testcover[@]} -ldflags "$LDFLAGS" "${BUILDFLAGS[@]}" $TESTFLAGS
 	)
 }
@@ -217,8 +216,9 @@ test_env() {
 		DOCKER_USERLANDPROXY="$DOCKER_USERLANDPROXY" \
 		DOCKER_HOST="$DOCKER_HOST" \
 		GOPATH="$GOPATH" \
-		HOME="$DEST/fake-HOME" \
+		HOME="$ABS_DEST/fake-HOME" \
 		PATH="$PATH" \
+		TEMP="$TEMP" \
 		TEST_DOCKERINIT_PATH="$TEST_DOCKERINIT_PATH" \
 		"$@"
 }
@@ -271,11 +271,9 @@ hash_files() {
 }
 
 bundle() {
-	bundlescript=$1
-	bundle=$(basename $bundlescript)
-	echo "---> Making bundle: $bundle (in bundles/$VERSION/$bundle)"
-	mkdir -p "bundles/$VERSION/$bundle"
-	source "$bundlescript" "$(pwd)/bundles/$VERSION/$bundle"
+	local bundle="$1"; shift
+	echo "---> Making bundle: $(basename "$bundle") (in $DEST)"
+	source "$SCRIPTDIR/make/$bundle" "$@"
 }
 
 main() {
@@ -290,7 +288,9 @@ main() {
 
 	if [ "$(go env GOHOSTOS)" != 'windows' ]; then
 		# Windows and symlinks don't get along well
-		ln -sfT "$VERSION" bundles/latest
+
+		rm -f bundles/latest
+		ln -s "$VERSION" bundles/latest
 	fi
 
 	if [ $# -lt 1 ]; then
@@ -299,7 +299,14 @@ main() {
 		bundles=($@)
 	fi
 	for bundle in ${bundles[@]}; do
-		bundle "$SCRIPTDIR/make/$bundle"
+		export DEST="bundles/$VERSION/$(basename "$bundle")"
+		# Cygdrive paths don't play well with go build -o.
+		if [[ "$(uname -s)" == CYGWIN* ]]; then
+			export DEST="$(cygpath -mw "$DEST")"
+		fi
+		mkdir -p "$DEST"
+		ABS_DEST="$(cd "$DEST" && pwd -P)"
+		bundle "$bundle"
 		echo
 	done
 }

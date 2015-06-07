@@ -435,7 +435,6 @@ func (s *DockerSuite) TestCpVolumePath(c *check.C) {
 	}
 
 	cleanedContainerID := strings.TrimSpace(out)
-	defer dockerCmd(c, "rm", "-fv", cleanedContainerID)
 
 	out, _ = dockerCmd(c, "wait", cleanedContainerID)
 	if strings.TrimSpace(out) != "0" {
@@ -594,5 +593,42 @@ func (s *DockerSuite) TestCpNameHasColon(c *check.C) {
 	content, err := ioutil.ReadFile(tmpdir + "/te:s:t")
 	if string(content) != "lololol\n" {
 		c.Fatalf("Wrong content in copied file %q, should be %q", content, "lololol\n")
+	}
+}
+
+func (s *DockerSuite) TestCopyAndRestart(c *check.C) {
+	expectedMsg := "hello"
+	out, err := exec.Command(dockerBinary, "run", "-d", "busybox", "echo", expectedMsg).CombinedOutput()
+	if err != nil {
+		c.Fatal(string(out), err)
+	}
+	id := strings.TrimSpace(string(out))
+
+	if out, err = exec.Command(dockerBinary, "wait", id).CombinedOutput(); err != nil {
+		c.Fatalf("unable to wait for container: %s", err)
+	}
+
+	status := strings.TrimSpace(string(out))
+	if status != "0" {
+		c.Fatalf("container exited with status %s", status)
+	}
+
+	tmpDir, err := ioutil.TempDir("", "test-docker-restart-after-copy-")
+	if err != nil {
+		c.Fatalf("unable to make temporary directory: %s", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	if _, err = exec.Command(dockerBinary, "cp", fmt.Sprintf("%s:/etc/issue", id), tmpDir).CombinedOutput(); err != nil {
+		c.Fatalf("unable to copy from busybox container: %s", err)
+	}
+
+	if out, err = exec.Command(dockerBinary, "start", "-a", id).CombinedOutput(); err != nil {
+		c.Fatalf("unable to start busybox container after copy: %s - %s", err, out)
+	}
+
+	msg := strings.TrimSpace(string(out))
+	if msg != expectedMsg {
+		c.Fatalf("expected %q but got %q", expectedMsg, msg)
 	}
 }

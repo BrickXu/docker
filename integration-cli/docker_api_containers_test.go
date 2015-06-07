@@ -51,6 +51,39 @@ func (s *DockerSuite) TestContainerApiGetAll(c *check.C) {
 	}
 }
 
+// regression test for empty json field being omitted #13691
+func (s *DockerSuite) TestContainerApiGetJSONNoFieldsOmitted(c *check.C) {
+	runCmd := exec.Command(dockerBinary, "run", "busybox", "true")
+	_, err := runCommand(runCmd)
+	c.Assert(err, check.IsNil)
+
+	status, body, err := sockRequest("GET", "/containers/json?all=1", nil)
+	c.Assert(status, check.Equals, http.StatusOK)
+	c.Assert(err, check.IsNil)
+
+	// empty Labels field triggered this bug, make sense to check for everything
+	// cause even Ports for instance can trigger this bug
+	// better safe than sorry..
+	fields := []string{
+		"Id",
+		"Names",
+		"Image",
+		"Command",
+		"Created",
+		"Ports",
+		"Labels",
+		"Status",
+	}
+
+	// decoding into types.Container do not work since it eventually unmarshal
+	// and empty field to an empty go map, so we just check for a string
+	for _, f := range fields {
+		if !strings.Contains(string(body), f) {
+			c.Fatalf("Field %s is missing and it shouldn't", f)
+		}
+	}
+}
+
 func (s *DockerSuite) TestContainerApiGetExport(c *check.C) {
 	name := "exportcontainer"
 	runCmd := exec.Command(dockerBinary, "run", "--name", name, "busybox", "touch", "/test")
@@ -250,6 +283,125 @@ func (s *DockerSuite) TestGetContainerStats(c *check.C) {
 		// decode only one object from the stream
 		if err := dec.Decode(&s); err != nil {
 			c.Fatal(err)
+		}
+	}
+}
+
+func (s *DockerSuite) TestGetContainerStatsRmRunning(c *check.C) {
+	out, _ := dockerCmd(c, "run", "-d", "busybox", "top")
+	id := strings.TrimSpace(out)
+
+	buf := &channelBuffer{make(chan []byte, 1)}
+	defer buf.Close()
+	chErr := make(chan error)
+	go func() {
+		_, body, err := sockRequestRaw("GET", "/containers/"+id+"/stats?stream=1", nil, "application/json")
+		if err != nil {
+			chErr <- err
+		}
+		defer body.Close()
+		_, err = io.Copy(buf, body)
+		chErr <- err
+	}()
+	defer func() {
+		c.Assert(<-chErr, check.IsNil)
+	}()
+
+	b := make([]byte, 32)
+	// make sure we've got some stats
+	_, err := buf.ReadTimeout(b, 2*time.Second)
+	c.Assert(err, check.IsNil)
+
+	// Now remove without `-f` and make sure we are still pulling stats
+	_, err = runCommand(exec.Command(dockerBinary, "rm", id))
+	c.Assert(err, check.Not(check.IsNil), check.Commentf("rm should have failed but didn't"))
+	_, err = buf.ReadTimeout(b, 2*time.Second)
+	c.Assert(err, check.IsNil)
+	dockerCmd(c, "rm", "-f", id)
+
+	_, err = buf.ReadTimeout(b, 2*time.Second)
+	c.Assert(err, check.Not(check.IsNil))
+}
+
+// regression test for gh13421
+// previous test was just checking one stat entry so it didn't fail (stats with
+// stream false always return one stat)
+func (s *DockerSuite) TestGetContainerStatsStream(c *check.C) {
+	name := "statscontainer"
+	runCmd := exec.Command(dockerBinary, "run", "-d", "--name", name, "busybox", "top")
+	_, err := runCommand(runCmd)
+	c.Assert(err, check.IsNil)
+
+	type b struct {
+		status int
+		body   []byte
+		err    error
+	}
+	bc := make(chan b, 1)
+	go func() {
+		status, body, err := sockRequest("GET", "/containers/"+name+"/stats", nil)
+		bc <- b{status, body, err}
+	}()
+
+	// allow some time to stream the stats from the container
+	time.Sleep(4 * time.Second)
+	if _, err := runCommand(exec.Command(dockerBinary, "rm", "-f", name)); err != nil {
+		c.Fatal(err)
+	}
+
+	// collect the results from the stats stream or timeout and fail
+	// if the stream was not disconnected.
+	select {
+	case <-time.After(2 * time.Second):
+		c.Fatal("stream was not closed after container was removed")
+	case sr := <-bc:
+		c.Assert(sr.err, check.IsNil)
+		c.Assert(sr.status, check.Equals, http.StatusOK)
+
+		s := string(sr.body)
+		// count occurrences of "read" of types.Stats
+		if l := strings.Count(s, "read"); l < 2 {
+			c.Fatalf("Expected more than one stat streamed, got %d", l)
+		}
+	}
+}
+
+func (s *DockerSuite) TestGetContainerStatsNoStream(c *check.C) {
+	name := "statscontainer"
+	runCmd := exec.Command(dockerBinary, "run", "-d", "--name", name, "busybox", "top")
+	_, err := runCommand(runCmd)
+	c.Assert(err, check.IsNil)
+
+	type b struct {
+		status int
+		body   []byte
+		err    error
+	}
+	bc := make(chan b, 1)
+	go func() {
+		status, body, err := sockRequest("GET", "/containers/"+name+"/stats?stream=0", nil)
+		bc <- b{status, body, err}
+	}()
+
+	// allow some time to stream the stats from the container
+	time.Sleep(4 * time.Second)
+	if _, err := runCommand(exec.Command(dockerBinary, "rm", "-f", name)); err != nil {
+		c.Fatal(err)
+	}
+
+	// collect the results from the stats stream or timeout and fail
+	// if the stream was not disconnected.
+	select {
+	case <-time.After(2 * time.Second):
+		c.Fatal("stream was not closed after container was removed")
+	case sr := <-bc:
+		c.Assert(sr.err, check.IsNil)
+		c.Assert(sr.status, check.Equals, http.StatusOK)
+
+		s := string(sr.body)
+		// count occurrences of "read" of types.Stats
+		if l := strings.Count(s, "read"); l != 1 {
+			c.Fatalf("Expected only one stat streamed, got %d", l)
 		}
 	}
 }
@@ -606,6 +758,57 @@ func (s *DockerSuite) TestContainerApiCommit(c *check.C) {
 	}
 }
 
+func (s *DockerSuite) TestContainerApiCommitWithLabelInConfig(c *check.C) {
+	cName := "testapicommitwithconfig"
+	out, err := exec.Command(dockerBinary, "run", "--name="+cName, "busybox", "/bin/sh", "-c", "touch /test").CombinedOutput()
+	if err != nil {
+		c.Fatal(err, out)
+	}
+
+	config := map[string]interface{}{
+		"Labels": map[string]string{"key1": "value1", "key2": "value2"},
+	}
+
+	name := "TestContainerApiCommitWithConfig"
+	status, b, err := sockRequest("POST", "/commit?repo="+name+"&container="+cName, config)
+	c.Assert(status, check.Equals, http.StatusCreated)
+	c.Assert(err, check.IsNil)
+
+	type resp struct {
+		Id string
+	}
+	var img resp
+	if err := json.Unmarshal(b, &img); err != nil {
+		c.Fatal(err)
+	}
+
+	label1, err := inspectFieldMap(img.Id, "Config.Labels", "key1")
+	if err != nil {
+		c.Fatal(err)
+	}
+	c.Assert(label1, check.Equals, "value1")
+
+	label2, err := inspectFieldMap(img.Id, "Config.Labels", "key2")
+	if err != nil {
+		c.Fatal(err)
+	}
+	c.Assert(label2, check.Equals, "value2")
+
+	cmd, err := inspectField(img.Id, "Config.Cmd")
+	if err != nil {
+		c.Fatal(err)
+	}
+	if cmd != "{[/bin/sh -c touch /test]}" {
+		c.Fatalf("got wrong Cmd from commit: %q", cmd)
+	}
+
+	// sanity check, make sure the image is what we think it is
+	out, err = exec.Command(dockerBinary, "run", img.Id, "ls", "/test").CombinedOutput()
+	if err != nil {
+		c.Fatalf("error checking committed image: %v - %q", err, string(out))
+	}
+}
+
 func (s *DockerSuite) TestContainerApiCreate(c *check.C) {
 	config := map[string]interface{}{
 		"Image": "busybox",
@@ -806,7 +1009,6 @@ func (s *DockerSuite) TestContainerApiPostCreateNull(c *check.C) {
 		"AttachStdin":true,
 		"AttachStdout":true,
 		"AttachStderr":true,
-		"PortSpecs":null,
 		"ExposedPorts":{},
 		"Tty":true,
 		"OpenStdin":true,

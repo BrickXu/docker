@@ -116,19 +116,6 @@ func parseOptions(opt []string) (ZfsOptions, error) {
 	return options, nil
 }
 
-func checkRootdirFs(rootdir string) error {
-	var buf syscall.Statfs_t
-	if err := syscall.Statfs(rootdir, &buf); err != nil {
-		return fmt.Errorf("Failed to access '%s': %s", rootdir, err)
-	}
-
-	if graphdriver.FsMagic(buf.Type) != graphdriver.FsMagicZfs {
-		log.Debugf("[zfs] no zfs dataset found for rootdir '%s'", rootdir)
-		return graphdriver.ErrPrerequisites
-	}
-	return nil
-}
-
 func lookupZfsDataset(rootdir string) (string, error) {
 	var stat syscall.Stat_t
 	if err := syscall.Stat(rootdir, &stat); err != nil {
@@ -225,7 +212,7 @@ func (d *Driver) ZfsPath(id string) string {
 }
 
 func (d *Driver) MountPath(id string) string {
-	return path.Join(d.options.mountPath, "graph", id)
+	return path.Join(d.options.mountPath, "graph", getMountpoint(id))
 }
 
 func (d *Driver) Create(id string, parent string) error {

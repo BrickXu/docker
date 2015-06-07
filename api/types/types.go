@@ -101,16 +101,16 @@ type Port struct {
 }
 
 type Container struct {
-	ID         string            `json:"Id"`
-	Names      []string          `json:",omitempty"`
-	Image      string            `json:",omitempty"`
-	Command    string            `json:",omitempty"`
-	Created    int               `json:",omitempty"`
-	Ports      []Port            `json:",omitempty"`
-	SizeRw     int               `json:",omitempty"`
-	SizeRootFs int               `json:",omitempty"`
-	Labels     map[string]string `json:",omitempty"`
-	Status     string            `json:",omitempty"`
+	ID         string `json:"Id"`
+	Names      []string
+	Image      string
+	Command    string
+	Created    int
+	Ports      []Port
+	SizeRw     int `json:",omitempty"`
+	SizeRootFs int `json:",omitempty"`
+	Labels     map[string]string
+	Status     string
 }
 
 // POST "/containers/"+containerID+"/copy"
@@ -132,6 +132,7 @@ type Version struct {
 	Os            string
 	Arch          string
 	KernelVersion string `json:",omitempty"`
+	Experimental  bool   `json:",omitempty"`
 }
 
 // GET "/info"
@@ -194,12 +195,11 @@ type ContainerState struct {
 }
 
 // GET "/containers/{name:.*}/json"
-type ContainerJSON struct {
+type ContainerJSONBase struct {
 	Id              string
 	Created         time.Time
 	Path            string
 	Args            []string
-	Config          *runconfig.Config
 	State           *ContainerState
 	Image           string
 	NetworkSettings *network.Settings
@@ -218,4 +218,25 @@ type ContainerJSON struct {
 	AppArmorProfile string
 	ExecIDs         []string
 	HostConfig      *runconfig.HostConfig
+}
+
+type ContainerJSON struct {
+	*ContainerJSONBase
+	Config *runconfig.Config
+}
+
+// backcompatibility struct along with ContainerConfig
+type ContainerJSONRaw struct {
+	*ContainerJSONBase
+	Config *ContainerConfig
+}
+
+type ContainerConfig struct {
+	*runconfig.Config
+
+	// backward compatibility, they now live in HostConfig
+	Memory     int64
+	MemorySwap int64
+	CpuShares  int64
+	Cpuset     string
 }

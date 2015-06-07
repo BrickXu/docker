@@ -242,6 +242,7 @@ func (container *Container) Start() (err error) {
 			}
 			container.toDisk()
 			container.cleanup()
+			container.LogEvent("die")
 		}
 	}()
 
@@ -347,7 +348,7 @@ func (container *Container) cleanup() {
 		container.daemon.unregisterExecCommand(eConfig)
 	}
 
-	container.UnmountVolumes(true)
+	container.UnmountVolumes(false)
 }
 
 func (container *Container) KillSig(sig int) error {
@@ -375,7 +376,11 @@ func (container *Container) KillSig(sig int) error {
 		return nil
 	}
 
-	return container.daemon.Kill(container, sig)
+	if err := container.daemon.Kill(container, sig); err != nil {
+		return err
+	}
+	container.LogEvent("kill")
+	return nil
 }
 
 // Wrapper aroung KillSig() suppressing "no such process" error.
@@ -406,6 +411,7 @@ func (container *Container) Pause() error {
 		return err
 	}
 	container.Paused = true
+	container.LogEvent("pause")
 	return nil
 }
 
@@ -427,6 +433,7 @@ func (container *Container) Unpause() error {
 		return err
 	}
 	container.Paused = false
+	container.LogEvent("unpause")
 	return nil
 }
 
@@ -437,7 +444,23 @@ func (container *Container) Kill() error {
 
 	// 1. Send SIGKILL
 	if err := container.killPossiblyDeadProcess(9); err != nil {
-		return err
+		// While normally we might "return err" here we're not going to
+		// because if we can't stop the container by this point then
+		// its probably because its already stopped. Meaning, between
+		// the time of the IsRunning() call above and now it stopped.
+		// Also, since the err return will be exec driver specific we can't
+		// look for any particular (common) error that would indicate
+		// that the process is already dead vs something else going wrong.
+		// So, instead we'll give it up to 2 more seconds to complete and if
+		// by that time the container is still running, then the error
+		// we got is probably valid and so we return it to the caller.
+
+		if container.IsRunning() {
+			container.WaitStop(2 * time.Second)
+			if container.IsRunning() {
+				return err
+			}
+		}
 	}
 
 	// 2. Wait for the process to die, in last resort, try to kill the process directly
@@ -472,6 +495,7 @@ func (container *Container) Stop(seconds int) error {
 		}
 	}
 
+	container.LogEvent("stop")
 	return nil
 }
 
@@ -486,14 +510,24 @@ func (container *Container) Restart(seconds int) error {
 	if err := container.Stop(seconds); err != nil {
 		return err
 	}
-	return container.Start()
+
+	if err := container.Start(); err != nil {
+		return err
+	}
+
+	container.LogEvent("restart")
+	return nil
 }
 
 func (container *Container) Resize(h, w int) error {
 	if !container.IsRunning() {
 		return fmt.Errorf("Cannot resize container %s, container is not running", container.ID)
 	}
-	return container.command.ProcessConfig.Terminal.Resize(h, w)
+	if err := container.command.ProcessConfig.Terminal.Resize(h, w); err != nil {
+		return err
+	}
+	container.LogEvent("resize")
+	return nil
 }
 
 func (container *Container) Export() (archive.Archive, error) {
@@ -506,12 +540,13 @@ func (container *Container) Export() (archive.Archive, error) {
 		container.Unmount()
 		return nil, err
 	}
-	return ioutils.NewReadCloserWrapper(archive, func() error {
-			err := archive.Close()
-			container.Unmount()
-			return err
-		}),
-		nil
+	arch := ioutils.NewReadCloserWrapper(archive, func() error {
+		err := archive.Close()
+		container.Unmount()
+		return err
+	})
+	container.LogEvent("export")
+	return arch, err
 }
 
 func (container *Container) Mount() error {
@@ -612,13 +647,14 @@ func (container *Container) Copy(resource string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ioutils.NewReadCloserWrapper(archive, func() error {
-			err := archive.Close()
-			container.UnmountVolumes(true)
-			container.Unmount()
-			return err
-		}),
-		nil
+	reader := ioutils.NewReadCloserWrapper(archive, func() error {
+		err := archive.Close()
+		container.UnmountVolumes(true)
+		container.Unmount()
+		return err
+	})
+	container.LogEvent("copy")
+	return reader, nil
 }
 
 // Returns true if the container exposes a certain port
@@ -810,6 +846,7 @@ func (c *Container) Attach(stdin io.ReadCloser, stdout io.Writer, stderr io.Writ
 }
 
 func (c *Container) AttachWithLogs(stdin io.ReadCloser, stdout, stderr io.Writer, logs, stream bool) error {
+
 	if logs {
 		logDriver, err := c.getLogger()
 		cLog, err := logDriver.GetReader()
@@ -838,6 +875,8 @@ func (c *Container) AttachWithLogs(stdin io.ReadCloser, stdout, stderr io.Writer
 			}
 		}
 	}
+
+	c.LogEvent("attach")
 
 	//stream
 	if stream {
@@ -1009,6 +1048,7 @@ func copyEscapable(dst io.Writer, src io.ReadCloser) (written int64, err error) 
 func (container *Container) networkMounts() []execdriver.Mount {
 	var mounts []execdriver.Mount
 	if container.ResolvConfPath != "" {
+		label.SetFileLabel(container.ResolvConfPath, container.MountLabel)
 		mounts = append(mounts, execdriver.Mount{
 			Source:      container.ResolvConfPath,
 			Destination: "/etc/resolv.conf",
@@ -1017,6 +1057,7 @@ func (container *Container) networkMounts() []execdriver.Mount {
 		})
 	}
 	if container.HostnamePath != "" {
+		label.SetFileLabel(container.HostnamePath, container.MountLabel)
 		mounts = append(mounts, execdriver.Mount{
 			Source:      container.HostnamePath,
 			Destination: "/etc/hostname",
@@ -1025,6 +1066,7 @@ func (container *Container) networkMounts() []execdriver.Mount {
 		})
 	}
 	if container.HostsPath != "" {
+		label.SetFileLabel(container.HostsPath, container.MountLabel)
 		mounts = append(mounts, execdriver.Mount{
 			Source:      container.HostsPath,
 			Destination: "/etc/hosts",
@@ -1033,6 +1075,15 @@ func (container *Container) networkMounts() []execdriver.Mount {
 		})
 	}
 	return mounts
+}
+
+func (container *Container) addBindMountPoint(name, source, destination string, rw bool) {
+	container.MountPoints[destination] = &mountPoint{
+		Name:        name,
+		Source:      source,
+		Destination: destination,
+		RW:          rw,
+	}
 }
 
 func (container *Container) addLocalMountPoint(name, destination string, rw bool) {
@@ -1085,26 +1136,6 @@ func (container *Container) removeMountPoints() error {
 func (container *Container) shouldRestart() bool {
 	return container.hostConfig.RestartPolicy.Name == "always" ||
 		(container.hostConfig.RestartPolicy.Name == "on-failure" && container.ExitCode != 0)
-}
-
-func (container *Container) UnmountVolumes(forceSyscall bool) error {
-	for _, m := range container.MountPoints {
-		dest, err := container.GetResourcePath(m.Destination)
-		if err != nil {
-			return err
-		}
-
-		if forceSyscall {
-			syscall.Unmount(dest, 0)
-		}
-
-		if m.Volume != nil {
-			if err := m.Volume.Unmount(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func (container *Container) copyImagePathContent(v volume.Volume, destination string) error {
