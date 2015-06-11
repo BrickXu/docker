@@ -395,6 +395,7 @@ func (s *Server) getEvents(version version.Version, w http.ResponseWriter, r *ht
 		}
 		until = u
 	}
+
 	timer := time.NewTimer(0)
 	timer.Stop()
 	if until > 0 {
@@ -453,6 +454,9 @@ func (s *Server) getEvents(version version.Version, w http.ResponseWriter, r *ht
 	}
 
 	current, l := es.Subscribe()
+	if since == -1 {
+		current = nil
+	}
 	defer es.Evict(l)
 	for _, ev := range current {
 		if ev.Time < since {
@@ -656,10 +660,6 @@ func (s *Server) postCommit(version version.Version, w http.ResponseWriter, r *h
 	c, _, err := runconfig.DecodeContainerConfig(r.Body)
 	if err != nil && err != io.EOF { //Do not fail if body is empty.
 		return err
-	}
-
-	if c == nil {
-		c = &runconfig.Config{}
 	}
 
 	containerCommitConfig := &daemon.ContainerCommitConfig{

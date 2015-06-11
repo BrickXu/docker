@@ -492,7 +492,7 @@ change them using `docker run --env <key>=<value>`.
 ADD has two forms:
 
 - `ADD <src>... <dest>`
-- `ADD ["<src>"... "<dest>"]` (this form is required for paths containing
+- `ADD ["<src>",... "<dest>"]` (this form is required for paths containing
 whitespace)
 
 The `ADD` instruction copies new files, directories or remote file URLs from `<src>`
@@ -519,8 +519,8 @@ All new files and directories are created with a UID and GID of 0.
 In the case where `<src>` is a remote file URL, the destination will
 have permissions of 600. If the remote file being retrieved has an HTTP
 `Last-Modified` header, the timestamp from that header will be used
-to set the `mtime` on the destination file. Then, like any other file
-processed during an `ADD`, `mtime` will be included in the determination
+to set the `mtime` on the destination file. However, like any other file
+processed during an `ADD`, `mtime` will not be included in the determination
 of whether or not the file has changed and the cache should be updated.
 
 > **Note**:
@@ -596,7 +596,7 @@ The copy obeys the following rules:
 COPY has two forms:
 
 - `COPY <src>... <dest>`
-- `COPY ["<src>"... "<dest>"]` (this form is required for paths containing
+- `COPY ["<src>",... "<dest>"]` (this form is required for paths containing
 whitespace)
 
 The `COPY` instruction copies new files or directories from `<src>`
