@@ -12,8 +12,6 @@ import (
 	"github.com/docker/libnetwork"
 )
 
-var runDir = os.Getenv("TEMP")
-
 func (daemon *Daemon) Changes(container *Container) ([]archive.Change, error) {
 	return daemon.driver.Changes(container.ID, container.ImageID)
 }
@@ -42,7 +40,7 @@ func checkKernel() error {
 	return nil
 }
 
-func (daemon *Daemon) verifyContainerSettings(hostConfig *runconfig.HostConfig) ([]string, error) {
+func (daemon *Daemon) verifyContainerSettings(hostConfig *runconfig.HostConfig, config *runconfig.Config) ([]string, error) {
 	// TODO Windows. Verifications TBC
 	return nil, nil
 }

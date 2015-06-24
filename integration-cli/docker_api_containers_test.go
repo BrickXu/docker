@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +83,45 @@ func (s *DockerSuite) TestContainerApiGetJSONNoFieldsOmitted(c *check.C) {
 			c.Fatalf("Field %s is missing and it shouldn't", f)
 		}
 	}
+}
+
+type containerPs struct {
+	Names []string
+	Ports []map[string]interface{}
+}
+
+// regression test for non-empty fields from #13901
+func (s *DockerSuite) TestContainerPsOmitFields(c *check.C) {
+	name := "pstest"
+	port := 80
+	runCmd := exec.Command(dockerBinary, "run", "-d", "--name", name, "--expose", strconv.Itoa(port), "busybox", "top")
+	_, err := runCommand(runCmd)
+	c.Assert(err, check.IsNil)
+
+	status, body, err := sockRequest("GET", "/containers/json?all=1", nil)
+	c.Assert(status, check.Equals, http.StatusOK)
+	c.Assert(err, check.IsNil)
+
+	var resp []containerPs
+	err = json.Unmarshal(body, &resp)
+	c.Assert(err, check.IsNil)
+
+	var foundContainer *containerPs
+	for _, container := range resp {
+		for _, testName := range container.Names {
+			if "/"+name == testName {
+				foundContainer = &container
+				break
+			}
+		}
+	}
+
+	c.Assert(len(foundContainer.Ports), check.Equals, 1)
+	c.Assert(foundContainer.Ports[0]["PrivatePort"], check.Equals, float64(port))
+	_, ok := foundContainer.Ports[0]["PublicPort"]
+	c.Assert(ok, check.Not(check.Equals), true)
+	_, ok = foundContainer.Ports[0]["IP"]
+	c.Assert(ok, check.Not(check.Equals), true)
 }
 
 func (s *DockerSuite) TestContainerApiGetExport(c *check.C) {
@@ -494,6 +534,91 @@ RUN find /tmp/`,
 	}
 }
 
+func (s *DockerSuite) TestBuildApiRemoteTarballContext(c *check.C) {
+	buffer := new(bytes.Buffer)
+	tw := tar.NewWriter(buffer)
+	defer tw.Close()
+
+	dockerfile := []byte("FROM busybox")
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "Dockerfile",
+		Size: int64(len(dockerfile)),
+	}); err != nil {
+		c.Fatalf("failed to write tar file header: %v", err)
+	}
+	if _, err := tw.Write(dockerfile); err != nil {
+		c.Fatalf("failed to write tar file content: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		c.Fatalf("failed to close tar archive: %v", err)
+	}
+
+	server, err := fakeBinaryStorage(map[string]*bytes.Buffer{
+		"testT.tar": buffer,
+	})
+	c.Assert(err, check.IsNil)
+
+	defer server.Close()
+
+	res, _, err := sockRequestRaw("POST", "/build?remote="+server.URL()+"/testT.tar", nil, "application/tar")
+	c.Assert(err, check.IsNil)
+	c.Assert(res.StatusCode, check.Equals, http.StatusOK)
+}
+
+func (s *DockerSuite) TestBuildApiRemoteTarballContextWithCustomDockerfile(c *check.C) {
+	buffer := new(bytes.Buffer)
+	tw := tar.NewWriter(buffer)
+	defer tw.Close()
+
+	dockerfile := []byte(`FROM busybox
+RUN echo 'wrong'`)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "Dockerfile",
+		Size: int64(len(dockerfile)),
+	}); err != nil {
+		c.Fatalf("failed to write tar file header: %v", err)
+	}
+	if _, err := tw.Write(dockerfile); err != nil {
+		c.Fatalf("failed to write tar file content: %v", err)
+	}
+
+	custom := []byte(`FROM busybox
+RUN echo 'right'
+`)
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "custom",
+		Size: int64(len(custom)),
+	}); err != nil {
+		c.Fatalf("failed to write tar file header: %v", err)
+	}
+	if _, err := tw.Write(custom); err != nil {
+		c.Fatalf("failed to write tar file content: %v", err)
+	}
+
+	if err := tw.Close(); err != nil {
+		c.Fatalf("failed to close tar archive: %v", err)
+	}
+
+	server, err := fakeBinaryStorage(map[string]*bytes.Buffer{
+		"testT.tar": buffer,
+	})
+	c.Assert(err, check.IsNil)
+
+	defer server.Close()
+	url := "/build?dockerfile=custom&remote=" + server.URL() + "/testT.tar"
+	res, body, err := sockRequestRaw("POST", url, nil, "application/tar")
+	c.Assert(err, check.IsNil)
+	c.Assert(res.StatusCode, check.Equals, http.StatusOK)
+
+	defer body.Close()
+	content, err := readBody(body)
+	c.Assert(err, check.IsNil)
+
+	if strings.Contains(string(content), "wrong") {
+		c.Fatalf("Build used the wrong dockerfile.")
+	}
+}
+
 func (s *DockerSuite) TestBuildApiLowerDockerfile(c *check.C) {
 	git, err := fakeGIT("repo", map[string]string{
 		"dockerfile": `FROM busybox
@@ -829,7 +954,7 @@ func (s *DockerSuite) TestContainerApiCreate(c *check.C) {
 
 	out, err := exec.Command(dockerBinary, "start", "-a", container.Id).CombinedOutput()
 	if err != nil {
-		c.Fatal(out, err)
+		c.Fatal(string(out), err)
 	}
 	if strings.TrimSpace(string(out)) != "/test" {
 		c.Fatalf("expected output `/test`, got %q", out)

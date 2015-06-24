@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"code.google.com/p/go.net/websocket"
 	"github.com/gorilla/mux"
+	"golang.org/x/net/websocket"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
@@ -244,11 +244,12 @@ func (s *Server) postAuth(version version.Version, w http.ResponseWriter, r *htt
 func (s *Server) getVersion(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	v := &types.Version{
 		Version:    dockerversion.VERSION,
-		ApiVersion: api.APIVERSION,
+		ApiVersion: api.Version,
 		GitCommit:  dockerversion.GITCOMMIT,
 		GoVersion:  runtime.Version(),
 		Os:         runtime.GOOS,
 		Arch:       runtime.GOARCH,
+		BuildTime:  dockerversion.BUILDTIME,
 	}
 
 	if version.GreaterThanOrEqualTo("1.19") {
@@ -572,7 +573,27 @@ func (s *Server) getContainersStats(version version.Version, w http.ResponseWrit
 		return fmt.Errorf("Missing parameter")
 	}
 
-	return s.daemon.ContainerStats(vars["name"], boolValueOrDefault(r, "stream", true), ioutils.NewWriteFlusher(w))
+	stream := boolValueOrDefault(r, "stream", true)
+	var out io.Writer
+	if !stream {
+		w.Header().Set("Content-Type", "application/json")
+		out = w
+	} else {
+		out = ioutils.NewWriteFlusher(w)
+	}
+
+	var closeNotifier <-chan bool
+	if notifier, ok := w.(http.CloseNotifier); ok {
+		closeNotifier = notifier.CloseNotify()
+	}
+
+	config := &daemon.ContainerStatsConfig{
+		Stream:    stream,
+		OutStream: out,
+		Stop:      closeNotifier,
+	}
+
+	return s.daemon.ContainerStats(vars["name"], config)
 }
 
 func (s *Server) getContainersLogs(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
@@ -897,6 +918,7 @@ func (s *Server) postContainersCreate(version version.Version, w http.ResponseWr
 	if err != nil {
 		return err
 	}
+	adjustCpuShares(version, hostConfig)
 
 	containerId, warnings, err := s.daemon.ContainerCreate(name, config, hostConfig)
 	if err != nil {
@@ -1114,7 +1136,6 @@ func (s *Server) postContainersAttach(version version.Version, w http.ResponseWr
 		UseStderr: boolValue(r, "stderr"),
 		Logs:      boolValue(r, "logs"),
 		Stream:    boolValue(r, "stream"),
-		Multiplex: version.GreaterThanOrEqualTo("1.6"),
 	}
 
 	if err := s.daemon.ContainerAttachWithLogs(vars["name"], attachWithLogsConfig); err != nil {
@@ -1455,20 +1476,31 @@ func makeHttpHandler(logging bool, localMethod string, localRoute string, handle
 
 		if strings.Contains(r.Header.Get("User-Agent"), "Docker-Client/") {
 			userAgent := strings.Split(r.Header.Get("User-Agent"), "/")
+
+			// v1.20 onwards includes the GOOS of the client after the version
+			// such as Docker/1.7.0 (linux)
+			if len(userAgent) == 2 && strings.Contains(userAgent[1], " ") {
+				userAgent[1] = strings.Split(userAgent[1], " ")[0]
+			}
+
 			if len(userAgent) == 2 && !dockerVersion.Equal(version.Version(userAgent[1])) {
 				logrus.Debugf("Warning: client and server don't have the same version (client: %s, server: %s)", userAgent[1], dockerVersion)
 			}
 		}
 		version := version.Version(mux.Vars(r)["version"])
 		if version == "" {
-			version = api.APIVERSION
+			version = api.Version
 		}
 		if corsHeaders != "" {
 			writeCorsHeaders(w, r, corsHeaders)
 		}
 
-		if version.GreaterThan(api.APIVERSION) {
-			http.Error(w, fmt.Errorf("client is newer than server (client API version: %s, server API version: %s)", version, api.APIVERSION).Error(), http.StatusBadRequest)
+		if version.GreaterThan(api.Version) {
+			http.Error(w, fmt.Errorf("client is newer than server (client API version: %s, server API version: %s)", version, api.Version).Error(), http.StatusBadRequest)
+			return
+		}
+		if version.LessThan(api.MinVersion) {
+			http.Error(w, fmt.Errorf("client is too old, minimum supported API version is %s, please upgrade your client to a newer version", api.MinVersion).Error(), http.StatusBadRequest)
 			return
 		}
 

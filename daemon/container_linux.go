@@ -652,7 +652,7 @@ func (container *Container) UpdateNetwork() error {
 		return fmt.Errorf("Update network failed: %v", err)
 	}
 
-	if _, err := ep.Join(container.ID, joinOptions...); err != nil {
+	if err := ep.Join(container.ID, joinOptions...); err != nil {
 		return fmt.Errorf("endpoint join failed: %v", err)
 	}
 
@@ -737,27 +737,122 @@ func (container *Container) buildCreateEndpointOptions() ([]libnetwork.EndpointO
 	return createOptions, nil
 }
 
+func parseService(controller libnetwork.NetworkController, service string) (string, string, string) {
+	dn := controller.Config().Daemon.DefaultNetwork
+	dd := controller.Config().Daemon.DefaultDriver
+
+	snd := strings.Split(service, ".")
+	if len(snd) > 2 {
+		return strings.Join(snd[:len(snd)-2], "."), snd[len(snd)-2], snd[len(snd)-1]
+	}
+	if len(snd) > 1 {
+		return snd[0], snd[1], dd
+	}
+	return snd[0], dn, dd
+}
+
+func createNetwork(controller libnetwork.NetworkController, dnet string, driver string) (libnetwork.Network, error) {
+	createOptions := []libnetwork.NetworkOption{}
+	genericOption := options.Generic{}
+
+	// Bridge driver is special due to legacy reasons
+	if runconfig.NetworkMode(driver).IsBridge() {
+		genericOption[netlabel.GenericData] = map[string]interface{}{
+			"BridgeName":            dnet,
+			"AllowNonDefaultBridge": "true",
+		}
+		networkOption := libnetwork.NetworkOptionGeneric(genericOption)
+		createOptions = append(createOptions, networkOption)
+	}
+
+	return controller.NewNetwork(driver, dnet, createOptions...)
+}
+
+func (container *Container) secondaryNetworkRequired(primaryNetworkType string) bool {
+	switch primaryNetworkType {
+	case "bridge", "none", "host", "container":
+		return false
+	}
+	if container.Config.ExposedPorts != nil && len(container.Config.ExposedPorts) > 0 {
+		return true
+	}
+	if container.hostConfig.PortBindings != nil && len(container.hostConfig.PortBindings) > 0 {
+		return true
+	}
+	return false
+}
+
 func (container *Container) AllocateNetwork() error {
 	mode := container.hostConfig.NetworkMode
+	controller := container.daemon.netController
 	if container.Config.NetworkDisabled || mode.IsContainer() {
 		return nil
 	}
 
-	var err error
-
-	n, err := container.daemon.netController.NetworkByName(string(mode))
-	if err != nil {
-		return fmt.Errorf("error locating network with name %s: %v", string(mode), err)
+	networkDriver := string(mode)
+	service := container.Config.PublishService
+	networkName := mode.NetworkName()
+	if mode.IsDefault() {
+		if service != "" {
+			service, networkName, networkDriver = parseService(controller, service)
+		} else {
+			networkName = controller.Config().Daemon.DefaultNetwork
+			networkDriver = controller.Config().Daemon.DefaultDriver
+		}
+	} else if service != "" {
+		return fmt.Errorf("conflicting options: publishing a service and network mode")
 	}
 
-	createOptions, err := container.buildCreateEndpointOptions()
-	if err != nil {
+	if service == "" {
+		// dot character "." has a special meaning to support SERVICE[.NETWORK] format.
+		// For backward compatiblity, replacing "." with "-", instead of failing
+		service = strings.Replace(container.Name, ".", "-", -1)
+		// Service names dont like "/" in them. removing it instead of failing for backward compatibility
+		service = strings.Replace(service, "/", "", -1)
+	}
+
+	if container.secondaryNetworkRequired(networkDriver) {
+		// Configure Bridge as secondary network for port binding purposes
+		if err := container.configureNetwork("bridge", service, "bridge", false); err != nil {
+			return err
+		}
+	}
+
+	if err := container.configureNetwork(networkName, service, networkDriver, mode.IsDefault()); err != nil {
 		return err
 	}
 
-	ep, err := n.CreateEndpoint(container.Name, createOptions...)
+	return container.WriteHostConfig()
+}
+
+func (container *Container) configureNetwork(networkName, service, networkDriver string, canCreateNetwork bool) error {
+	controller := container.daemon.netController
+	n, err := controller.NetworkByName(networkName)
 	if err != nil {
-		return err
+		if _, ok := err.(libnetwork.ErrNoSuchNetwork); !ok || !canCreateNetwork {
+			return err
+		}
+
+		if n, err = createNetwork(controller, networkName, networkDriver); err != nil {
+			return err
+		}
+	}
+
+	ep, err := n.EndpointByName(service)
+	if err != nil {
+		if _, ok := err.(libnetwork.ErrNoSuchEndpoint); !ok {
+			return err
+		}
+
+		createOptions, err := container.buildCreateEndpointOptions()
+		if err != nil {
+			return err
+		}
+
+		ep, err = n.CreateEndpoint(service, createOptions...)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := container.updateNetworkSettings(n, ep); err != nil {
@@ -769,16 +864,12 @@ func (container *Container) AllocateNetwork() error {
 		return err
 	}
 
-	if _, err := ep.Join(container.ID, joinOptions...); err != nil {
+	if err := ep.Join(container.ID, joinOptions...); err != nil {
 		return err
 	}
 
 	if err := container.updateJoinInfo(ep); err != nil {
 		return fmt.Errorf("Updating join info failed: %v", err)
-	}
-
-	if err := container.WriteHostConfig(); err != nil {
-		return err
 	}
 
 	return nil
@@ -790,9 +881,8 @@ func (container *Container) initializeNetworking() error {
 	// Make sure NetworkMode has an acceptable value before
 	// initializing networking.
 	if container.hostConfig.NetworkMode == runconfig.NetworkMode("") {
-		container.hostConfig.NetworkMode = runconfig.NetworkMode("bridge")
+		container.hostConfig.NetworkMode = runconfig.NetworkMode("default")
 	}
-
 	if container.hostConfig.NetworkMode.IsContainer() {
 		// we need to get the hosts files from the container to join
 		nc, err := container.getNetworkedContainer()
@@ -913,33 +1003,33 @@ func (container *Container) ReleaseNetwork() {
 		return
 	}
 
-	// If the container is not attached to any network do not try
-	// to release network and generate spurious error messages.
-	if container.NetworkSettings.NetworkID == "" {
-		return
-	}
-
-	n, err := container.daemon.netController.NetworkByID(container.NetworkSettings.NetworkID)
+	err := container.daemon.netController.LeaveAll(container.ID)
 	if err != nil {
-		logrus.Errorf("error locating network id %s: %v", container.NetworkSettings.NetworkID, err)
+		logrus.Errorf("Leave all failed for  %s: %v", container.ID, err)
 		return
 	}
 
-	ep, err := n.EndpointByID(container.NetworkSettings.EndpointID)
-	if err != nil {
-		logrus.Errorf("error locating endpoint id %s: %v", container.NetworkSettings.EndpointID, err)
-		return
-	}
-
-	if err := ep.Leave(container.ID); err != nil {
-		logrus.Errorf("leaving endpoint failed: %v", err)
-	}
-
-	if err := ep.Delete(); err != nil {
-		logrus.Errorf("deleting endpoint failed: %v", err)
-	}
+	eid := container.NetworkSettings.EndpointID
+	nid := container.NetworkSettings.NetworkID
 
 	container.NetworkSettings = &network.Settings{}
+
+	// In addition to leaving all endpoints, delete implicitly created endpoint
+	if container.Config.PublishService == "" && eid != "" && nid != "" {
+		n, err := container.daemon.netController.NetworkByID(nid)
+		if err != nil {
+			logrus.Errorf("error locating network id %s: %v", nid, err)
+			return
+		}
+		ep, err := n.EndpointByID(eid)
+		if err != nil {
+			logrus.Errorf("error locating endpoint id %s: %v", eid, err)
+			return
+		}
+		if err := ep.Delete(); err != nil {
+			logrus.Errorf("deleting endpoint failed: %v", err)
+		}
+	}
 }
 
 func disableAllActiveLinks(container *Container) {

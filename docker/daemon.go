@@ -24,8 +24,6 @@ import (
 	"github.com/docker/docker/utils"
 )
 
-const CanDaemon = true
-
 var (
 	daemonCfg   = &daemon.Config{}
 	registryCfg = &registry.Options{}
@@ -90,6 +88,10 @@ func mainDaemon() {
 	}
 
 	logrus.SetFormatter(&logrus.TextFormatter{TimestampFormat: timeutils.RFC3339NanoFixed})
+
+	if err := setDefaultUmask(); err != nil {
+		logrus.Fatalf("Failed to set umask: %v", err)
+	}
 
 	var pfile *pidfile.PidFile
 	if daemonCfg.Pidfile != "" {

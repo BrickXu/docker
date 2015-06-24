@@ -14,7 +14,7 @@ func (s *TagStore) LookupRaw(name string) ([]byte, error) {
 		return nil, fmt.Errorf("No such image %s", name)
 	}
 
-	imageInspectRaw, err := image.RawJson()
+	imageInspectRaw, err := s.graph.RawJSON(image.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -42,16 +42,23 @@ func (s *TagStore) Lookup(name string) (*types.ImageInspect, error) {
 		Architecture:    image.Architecture,
 		Os:              image.OS,
 		Size:            image.Size,
-		VirtualSize:     image.GetParentsSize(0) + image.Size,
+		VirtualSize:     s.graph.GetParentsSize(image, 0) + image.Size,
 	}
 
+	imageInspect.GraphDriver.Name = s.graph.driver.String()
+
+	graphDriverData, err := s.graph.driver.GetMetadata(image.ID)
+	if err != nil {
+		return nil, err
+	}
+	imageInspect.GraphDriver.Data = graphDriverData
 	return imageInspect, nil
 }
 
 // ImageTarLayer return the tarLayer of the image
 func (s *TagStore) ImageTarLayer(name string, dest io.Writer) error {
 	if image, err := s.LookupImage(name); err == nil && image != nil {
-		fs, err := image.TarLayer()
+		fs, err := s.graph.TarLayer(image)
 		if err != nil {
 			return err
 		}

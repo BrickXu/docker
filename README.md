@@ -18,7 +18,7 @@ It benefits directly from the experience accumulated over several years
 of large-scale operation and support of hundreds of thousands of
 applications and databases.
 
-![Docker L](docs/sources/static_files/docker-logo-compressed.png "Docker")
+![Docker L](docs/static_files/docker-logo-compressed.png "Docker")
 
 ## Security Disclosure
 
@@ -30,7 +30,7 @@ security@docker.com and not by creating a github issue.
 
 A common method for distributing applications and sandboxing their
 execution is to use virtual machines, or VMs. Typical VM formats are
-VMware's vmdk, Oracle Virtualbox's vdi, and Amazon EC2's ami. In theory
+VMWare's vmdk, Oracle VirtualBox's vdi, and Amazon EC2's ami. In theory
 these formats should allow every developer to automatically package
 their application into a "machine" for easy distribution and deployment.
 In practice, that almost never happens, for a few reasons:

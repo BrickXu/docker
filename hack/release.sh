@@ -92,7 +92,7 @@ write_to_s3() {
 
 s3_url() {
 	case "$BUCKET" in
-		get.docker.com|test.docker.com)
+		get.docker.com|test.docker.com|experimental.docker.com)
 			echo "https://$BUCKET"
 			;;
 		*)
@@ -284,6 +284,8 @@ EOF
 	local gpgFingerprint=36A1D7869245C8950F966E92D8576A8BA88D21E9
 	if [[ $BUCKET == test* ]]; then
 		gpgFingerprint=740B314AE3941731B942C66ADF4FD13717AAD7D6
+	elif [[ $BUCKET == experimental* ]]; then
+		gpgFingerprint=E33FF7BF5C91D50A6F91FFFD4CC38D40F9A96B49
 	fi
 
 	# Upload repo
