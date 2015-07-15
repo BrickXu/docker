@@ -41,6 +41,7 @@ your kernel version:
 >run Docker, see the prerequisites on this page that apply to your Ubuntu
 >version.
 
+
 ### For Trusty 14.04
 
 There are no prerequisites for this version.
@@ -175,6 +176,12 @@ To create the `docker` group and add your user:
 
         $ docker run hello-world
 
+	If this fails with a message similar to this:
+
+		Cannot connect to the Docker daemon. Is 'docker -d' running on this host?
+
+	Check that the `DOCKER_HOST` environment variable is not set for your shell.
+	If it is, unset it.
 
 ### Adjust memory and swap accounting
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/docker/docker/nat"
 	flag "github.com/docker/docker/pkg/mflag"
+	"github.com/docker/docker/pkg/nat"
 )
 
 // CmdPort lists port mappings for a container.
@@ -16,12 +16,15 @@ import (
 func (cli *DockerCli) CmdPort(args ...string) error {
 	cmd := cli.Subcmd("port", []string{"CONTAINER [PRIVATE_PORT[/PROTO]]"}, "List port mappings for the CONTAINER, or lookup the public-facing port that\nis NAT-ed to the PRIVATE_PORT", true)
 	cmd.Require(flag.Min, 1)
+
 	cmd.ParseFlags(args, true)
 
-	stream, _, _, err := cli.call("GET", "/containers/"+cmd.Arg(0)+"/json", nil, nil)
+	serverResp, err := cli.call("GET", "/containers/"+cmd.Arg(0)+"/json", nil, nil)
 	if err != nil {
 		return err
 	}
+
+	defer serverResp.body.Close()
 
 	var c struct {
 		NetworkSettings struct {
@@ -29,7 +32,7 @@ func (cli *DockerCli) CmdPort(args ...string) error {
 		}
 	}
 
-	if err := json.NewDecoder(stream).Decode(&c); err != nil {
+	if err := json.NewDecoder(serverResp.body).Decode(&c); err != nil {
 		return err
 	}
 

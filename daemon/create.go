@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/graph"
-	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/runconfig"
@@ -46,7 +46,7 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 	var (
 		container *Container
 		warnings  []string
-		img       *image.Image
+		img       *graph.Image
 		imgID     string
 		err       error
 	)
@@ -136,6 +136,7 @@ func (daemon *Daemon) Create(config *runconfig.Config, hostConfig *runconfig.Hos
 		container.addMountPointWithVolume(destination, v, true)
 	}
 	if err := container.ToDisk(); err != nil {
+		logrus.Errorf("Error saving new container to disk: %v", err)
 		return nil, nil, err
 	}
 	container.LogEvent("create")

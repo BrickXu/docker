@@ -160,6 +160,7 @@ Create a container
              "CpusetCpus": "0,1",
              "CpusetMems": "0,1",
              "BlkioWeight": 300,
+             "MemorySwappiness": 60,
              "OomKillDisable": false,
              "PortBindings": { "22/tcp": [{ "HostPort": "11022" }] },
              "PublishAllPorts": false,
@@ -208,6 +209,7 @@ Json Parameters:
 -   **CpusetCpus** - String value containing the `cgroups CpusetCpus` to use.
 -   **CpusetMems** - Memory nodes (MEMs) in which to allow execution (0-3, 0,1). Only effective on NUMA systems.
 -   **BlkioWeight** - Block IO weight (relative weight) accepts a weight value between 10 and 1000.
+-   **MemorySwappiness** - Tune a container's memory swappiness behavior. Accepts an integer between 0 and 100.
 -   **OomKillDisable** - Boolean value, whether to disable OOM Killer for the container or not.
 -   **AttachStdin** - Boolean value, attaches to `stdin`.
 -   **AttachStdout** - Boolean value, attaches to `stdout`.
@@ -1319,16 +1321,36 @@ Return the history of the image `name`
     Content-Type: application/json
 
     [
-         {
-                 "Id": "b750fe79269d",
-                 "Created": 1364102658,
-                 "CreatedBy": "/bin/bash"
-         },
-         {
-                 "Id": "27cf78414709",
-                 "Created": 1364068391,
-                 "CreatedBy": ""
-         }
+        {
+            "Id": "3db9c44f45209632d6050b35958829c3a2aa256d81b9a7be45b362ff85c54710",
+            "Created": 1398108230,
+            "CreatedBy": "/bin/sh -c #(nop) ADD file:eb15dbd63394e063b805a3c32ca7bf0266ef64676d5a6fab4801f2e81e2a5148 in /",
+            "Tags": [
+                "ubuntu:lucid",
+                "ubuntu:10.04"
+            ],
+            "Size": 182964289,
+            "Comment": ""
+        },
+        {
+            "Id": "6cfa4d1f33fb861d4d114f43b25abd0ac737509268065cdfd69d544a59c85ab8",
+            "Created": 1398108222,
+            "CreatedBy": "/bin/sh -c #(nop) MAINTAINER Tianon Gravi <admwiggin@gmail.com> - mkimage-debootstrap.sh -i iproute,iputils-ping,ubuntu-minimal -t lucid.tar.xz lucid http://archive.ubuntu.com/ubuntu/",
+            "Tags": null,
+            "Size": 0,
+            "Comment": ""
+        },
+        {
+            "Id": "511136ea3c5a64f264b78b5433614aec563103b4d4702f3ba7d4d2698e22c158",
+            "Created": 1371157430,
+            "CreatedBy": "",
+            "Tags": [
+                "scratch12:latest",
+                "scratch:latest"
+            ],
+            "Size": 0,
+            "Comment": "Imported from -"
+        }
     ]
 
 Status Codes:
@@ -1721,11 +1743,11 @@ polling (using since).
 
 Docker containers report the following events:
 
-    create, destroy, die, exec_create, exec_start, export, kill, oom, pause, restart, start, stop, unpause
+    attach, commit, copy, create, destroy, die, exec_create, exec_start, export, kill, oom, pause, rename, resize, restart, start, stop, top, unpause
 
 and Docker images report:
 
-    untag, delete
+    delete, import, pull, push, tag, untag
 
 **Example request**:
 
@@ -1875,7 +1897,7 @@ Sets up an exec instance in a running container `id`
        "Tty": false,
        "Cmd": [
                      "date"
-             ],
+             ]
       }
 
 **Example response**:
@@ -1917,7 +1939,7 @@ interactive session with the `exec` command.
 
     {
      "Detach": false,
-     "Tty": false,
+     "Tty": false
     }
 
 **Example response**:

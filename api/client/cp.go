@@ -16,7 +16,7 @@ import (
 //
 // Usage: docker cp CONTAINER:PATH HOSTDIR
 func (cli *DockerCli) CmdCp(args ...string) error {
-	cmd := cli.Subcmd("cp", []string{"CONTAINER:PATH HOSTDIR|-"}, "Copy files/folders from a PATH on the container to a HOSTDIR on the host\nrunning the command. Use '-' to write the data as a tar file to STDOUT.", true)
+	cmd := cli.Subcmd("cp", []string{"CONTAINER:PATH HOSTDIR|-"}, "Copy files/folders from a container's PATH to a HOSTDIR on the host\nrunning the command. Use '-' to write the data as a tar file to STDOUT.", true)
 	cmd.Require(flag.Exact, 2)
 
 	cmd.ParseFlags(args, true)
@@ -31,11 +31,11 @@ func (cli *DockerCli) CmdCp(args ...string) error {
 	cfg := &types.CopyConfig{
 		Resource: info[1],
 	}
-	stream, _, statusCode, err := cli.call("POST", "/containers/"+info[0]+"/copy", cfg, nil)
-	if stream != nil {
-		defer stream.Close()
+	serverResp, err := cli.call("POST", "/containers/"+info[0]+"/copy", cfg, nil)
+	if serverResp.body != nil {
+		defer serverResp.body.Close()
 	}
-	if statusCode == 404 {
+	if serverResp.statusCode == 404 {
 		return fmt.Errorf("No such container: %v", info[0])
 	}
 	if err != nil {
@@ -43,11 +43,11 @@ func (cli *DockerCli) CmdCp(args ...string) error {
 	}
 
 	hostPath := cmd.Arg(1)
-	if statusCode == 200 {
+	if serverResp.statusCode == 200 {
 		if hostPath == "-" {
-			_, err = io.Copy(cli.out, stream)
+			_, err = io.Copy(cli.out, serverResp.body)
 		} else {
-			err = archive.Untar(stream, hostPath, &archive.TarOptions{NoLchown: true})
+			err = archive.Untar(serverResp.body, hostPath, &archive.TarOptions{NoLchown: true})
 		}
 		if err != nil {
 			return err
