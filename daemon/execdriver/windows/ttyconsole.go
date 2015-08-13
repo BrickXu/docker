@@ -6,12 +6,13 @@ import (
 	"github.com/microsoft/hcsshim"
 )
 
-// TtyConsole is for when using a container interactively
+// TtyConsole implements the exec driver Terminal interface.
 type TtyConsole struct {
 	id        string
 	processid uint32
 }
 
+// NewTtyConsole returns a new TtyConsole struct.
 func NewTtyConsole(id string, processid uint32) *TtyConsole {
 	tty := &TtyConsole{
 		id:        id,
@@ -20,12 +21,12 @@ func NewTtyConsole(id string, processid uint32) *TtyConsole {
 	return tty
 }
 
+// Resize implements Resize method of Terminal interface.
 func (t *TtyConsole) Resize(h, w int) error {
-	// TODO Windows: This is not implemented in HCS. Needs plumbing through
-	// along with mechanism for buffering
 	return hcsshim.ResizeConsoleInComputeSystem(t.id, t.processid, h, w)
 }
 
+// Close implements Close method of Terminal interface.
 func (t *TtyConsole) Close() error {
 	return nil
 }

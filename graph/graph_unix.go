@@ -10,14 +10,15 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/system"
 )
 
-// setupInitLayer populates a directory with mountpoints suitable
+// SetupInitLayer populates a directory with mountpoints suitable
 // for bind-mounting dockerinit into the container. The mountpoint is simply an
 // empty file at /.dockerinit
-//
 // This extra layer is used by all containers as the top-most ro layer. It protects
 // the container from unwanted side-effects on the rw layer.
 func SetupInitLayer(initLayer string) error {
@@ -72,7 +73,7 @@ func SetupInitLayer(initLayer string) error {
 	return nil
 }
 
-func createRootFilesystemInDriver(graph *Graph, img *Image, layerData archive.ArchiveReader) error {
+func createRootFilesystemInDriver(graph *Graph, img *image.Image, layerData archive.Reader) error {
 	if err := graph.driver.Create(img.ID, img.Parent); err != nil {
 		return fmt.Errorf("Driver %s failed to create image rootfs %s: %s", graph.driver, img.ID, err)
 	}
@@ -86,15 +87,15 @@ func (graph *Graph) restoreBaseImages() ([]string, error) {
 // storeImage stores file system layer data for the given image to the
 // graph's storage driver. Image metadata is stored in a file
 // at the specified root directory.
-func (graph *Graph) storeImage(img *Image, layerData archive.ArchiveReader, root string) (err error) {
+func (graph *Graph) storeImage(img *image.Image, layerData archive.Reader, root string) (err error) {
 	// Store the layer. If layerData is not nil, unpack it into the new layer
 	if layerData != nil {
-		if img.Size, err = graph.driver.ApplyDiff(img.ID, img.Parent, layerData); err != nil {
+		if err := graph.disassembleAndApplyTarLayer(img, layerData, root); err != nil {
 			return err
 		}
 	}
 
-	if err := graph.saveSize(root, int(img.Size)); err != nil {
+	if err := graph.saveSize(root, img.Size); err != nil {
 		return err
 	}
 
@@ -109,6 +110,11 @@ func (graph *Graph) storeImage(img *Image, layerData archive.ArchiveReader, root
 }
 
 // TarLayer returns a tar archive of the image's filesystem layer.
-func (graph *Graph) TarLayer(img *Image) (arch archive.Archive, err error) {
-	return graph.driver.Diff(img.ID, img.Parent)
+func (graph *Graph) TarLayer(img *image.Image) (arch archive.Archive, err error) {
+	rdr, err := graph.assembleTarLayer(img)
+	if err != nil {
+		logrus.Debugf("[graph] TarLayer with traditional differ: %s", img.ID)
+		return graph.driver.Diff(img.ID, img.Parent)
+	}
+	return rdr, nil
 }

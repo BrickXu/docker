@@ -114,12 +114,6 @@ images.
 
 ### Environment replacement
 
-> **Note**: prior to 1.3, `Dockerfile` environment variables were handled
-> similarly, in that they would be replaced as described below. However, there
-> was no formal definition on as to which instructions handled environment
-> replacement at the time. After 1.3 this behavior will be preserved and
-> canonical.
-
 Environment variables (declared with [the `ENV` statement](#env)) can also be
 used in certain instructions as variables to be interpreted by the
 `Dockerfile`. Escapes are also handled for including variable-like syntax
@@ -152,18 +146,24 @@ Example (parsed representation is displayed after the `#`):
     ADD . $foo       # ADD . /bar
     COPY \$foo /quux # COPY $foo /quux
 
-The instructions that handle environment variables in the `Dockerfile` are:
+Environment variables are supported by the following list of instructions in 
+the `Dockerfile`:
 
-* `ENV`
 * `ADD`
 * `COPY`
-* `WORKDIR`
+* `ENV`
 * `EXPOSE`
-* `VOLUME`
 * `USER`
+* `WORKDIR`
+* `VOLUME`
 
-`ONBUILD` instructions are **NOT** supported for environment replacement, even
-the instructions above.
+as well as:
+
+* `ONBUILD` (when combined with one of the supported instructions above)
+
+> **Note**:
+> prior to 1.4, `ONBUILD` instructions did **NOT** support environment 
+> variable, even when combined with any of the instructions listed above.
 
 Environment variable substitution will use the same value for each variable
 throughout the entire command.  In other words, in this example:
@@ -201,7 +201,7 @@ The following is an example `.dockerignore` file:
     */*/temp*
     temp?
     *.md
-    !LICENCSE.md
+    !LICENSE.md
 ```
 
 This file causes the following build behavior:
@@ -224,7 +224,7 @@ example:
     */temp*
     */*/temp*
     temp?
-    !LICENCSE.md
+    !LICENSE.md
     *.md
 ```
 

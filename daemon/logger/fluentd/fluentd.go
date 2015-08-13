@@ -1,8 +1,10 @@
+// Package fluentd provides the log driver for forwarding server logs
+// to fluentd endpoints.
 package fluentd
 
 import (
 	"bytes"
-	"io"
+	"fmt"
 	"math"
 	"net"
 	"strconv"
@@ -14,14 +16,14 @@ import (
 	"github.com/fluent/fluent-logger-golang/fluent"
 )
 
-type Fluentd struct {
+type fluentd struct {
 	tag           string
 	containerID   string
 	containerName string
 	writer        *fluent.Fluent
 }
 
-type Receiver struct {
+type receiver struct {
 	ID     string
 	FullID string
 	Name   string
@@ -36,6 +38,9 @@ const (
 
 func init() {
 	if err := logger.RegisterLogDriver(name, New); err != nil {
+		logrus.Fatal(err)
+	}
+	if err := logger.RegisterLogOptValidator(name, ValidateLogOpt); err != nil {
 		logrus.Fatal(err)
 	}
 }
@@ -64,7 +69,7 @@ func parseConfig(ctx logger.Context) (string, int, string, error) {
 	}
 
 	if config["fluentd-tag"] != "" {
-		receiver := &Receiver{
+		receiver := &receiver{
 			ID:     ctx.ContainerID[:12],
 			FullID: ctx.ContainerID,
 			Name:   ctx.ContainerName,
@@ -83,6 +88,9 @@ func parseConfig(ctx logger.Context) (string, int, string, error) {
 	return host, port, tag, nil
 }
 
+// New creates a fluentd logger using the configuration passed in on
+// the context. Supported context configuration variables are
+// fluentd-address & fluentd-tag.
 func New(ctx logger.Context) (logger.Logger, error) {
 	host, port, tag, err := parseConfig(ctx)
 	if err != nil {
@@ -90,13 +98,13 @@ func New(ctx logger.Context) (logger.Logger, error) {
 	}
 	logrus.Debugf("logging driver fluentd configured for container:%s, host:%s, port:%d, tag:%s.", ctx.ContainerID, host, port, tag)
 
-	// logger tries to recoonect 2**64 - 1 times
+	// logger tries to recoonect 2**32 - 1 times
 	// failed (and panic) after 204 years [ 1.5 ** (2**32 - 1) - 1 seconds]
-	log, err := fluent.New(fluent.Config{FluentPort: port, FluentHost: host, RetryWait: 1000, MaxRetry: math.MaxUint32})
+	log, err := fluent.New(fluent.Config{FluentPort: port, FluentHost: host, RetryWait: 1000, MaxRetry: math.MaxInt32})
 	if err != nil {
 		return nil, err
 	}
-	return &Fluentd{
+	return &fluentd{
 		tag:           tag,
 		containerID:   ctx.ContainerID,
 		containerName: ctx.ContainerName,
@@ -104,7 +112,7 @@ func New(ctx logger.Context) (logger.Logger, error) {
 	}, nil
 }
 
-func (f *Fluentd) Log(msg *logger.Message) error {
+func (f *fluentd) Log(msg *logger.Message) error {
 	data := map[string]string{
 		"container_id":   f.containerID,
 		"container_name": f.containerName,
@@ -116,14 +124,23 @@ func (f *Fluentd) Log(msg *logger.Message) error {
 	return f.writer.PostWithTime(f.tag, msg.Timestamp, data)
 }
 
-func (f *Fluentd) Close() error {
+// ValidateLogOpt looks for fluentd specific log options fluentd-address & fluentd-tag.
+func ValidateLogOpt(cfg map[string]string) error {
+	for key := range cfg {
+		switch key {
+		case "fluentd-address":
+		case "fluentd-tag":
+		default:
+			return fmt.Errorf("unknown log opt '%s' for fluentd log driver", key)
+		}
+	}
+	return nil
+}
+
+func (f *fluentd) Close() error {
 	return f.writer.Close()
 }
 
-func (f *Fluentd) Name() string {
+func (f *fluentd) Name() string {
 	return name
-}
-
-func (s *Fluentd) GetReader() (io.Reader, error) {
-	return nil, logger.ReadLogsNotSupported
 }

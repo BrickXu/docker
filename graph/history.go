@@ -5,12 +5,13 @@ import (
 	"strings"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/image"
 	"github.com/docker/docker/utils"
 )
 
 // WalkHistory calls the handler function for each image in the
 // provided images lineage starting from immediate parent.
-func (graph *Graph) WalkHistory(img *Image, handler func(Image) error) (err error) {
+func (graph *Graph) WalkHistory(img *image.Image, handler func(image.Image) error) (err error) {
 	currentImg := img
 	for currentImg != nil {
 		if handler != nil {
@@ -28,7 +29,7 @@ func (graph *Graph) WalkHistory(img *Image, handler func(Image) error) (err erro
 
 // depth returns the number of parents for a
 // current image
-func (graph *Graph) depth(img *Image) (int, error) {
+func (graph *Graph) depth(img *image.Image) (int, error) {
 	var (
 		count  = 0
 		parent = img
@@ -53,7 +54,7 @@ const MaxImageDepth = 127
 // CheckDepth returns an error if the depth of an image, as returned
 // by ImageDepth, is too large to support creating a container from it
 // on this daemon.
-func (graph *Graph) CheckDepth(img *Image) error {
+func (graph *Graph) CheckDepth(img *image.Image) error {
 	// We add 2 layers to the depth because the container's rw and
 	// init layer add to the restriction
 	depth, err := graph.depth(img)
@@ -66,6 +67,8 @@ func (graph *Graph) CheckDepth(img *Image) error {
 	return nil
 }
 
+// History returns a slice of ImageHistory structures for the specified image
+// name by walking the image lineage.
 func (s *TagStore) History(name string) ([]*types.ImageHistory, error) {
 	foundImage, err := s.LookupImage(name)
 	if err != nil {
@@ -85,7 +88,7 @@ func (s *TagStore) History(name string) ([]*types.ImageHistory, error) {
 
 	history := []*types.ImageHistory{}
 
-	err = s.graph.WalkHistory(foundImage, func(img Image) error {
+	err = s.graph.WalkHistory(foundImage, func(img image.Image) error {
 		history = append(history, &types.ImageHistory{
 			ID:        img.ID,
 			Created:   img.Created.Unix(),
@@ -100,18 +103,20 @@ func (s *TagStore) History(name string) ([]*types.ImageHistory, error) {
 	return history, err
 }
 
-func (graph *Graph) GetParent(img *Image) (*Image, error) {
+// GetParent returns the parent image for the specified image.
+func (graph *Graph) GetParent(img *image.Image) (*image.Image, error) {
 	if img.Parent == "" {
 		return nil, nil
 	}
 	return graph.Get(img.Parent)
 }
 
-func (graph *Graph) GetParentsSize(img *Image, size int64) int64 {
+// GetParentsSize returns the combined size of all parent images. If there is
+// no parent image or it's unavailable, it returns 0.
+func (graph *Graph) GetParentsSize(img *image.Image) int64 {
 	parentImage, err := graph.GetParent(img)
 	if err != nil || parentImage == nil {
-		return size
+		return 0
 	}
-	size += parentImage.Size
-	return graph.GetParentsSize(parentImage, size)
+	return parentImage.Size + graph.GetParentsSize(parentImage)
 }

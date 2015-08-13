@@ -15,6 +15,11 @@ import (
 	"github.com/microsoft/hcsshim"
 )
 
+const (
+	DefaultVirtualSwitch = "Virtual Switch"
+	platformSupported    = true
+)
+
 func (daemon *Daemon) Changes(container *Container) ([]archive.Change, error) {
 	return daemon.driver.Changes(container.ID, container.ImageID)
 }
@@ -71,8 +76,14 @@ func checkKernel() error {
 	return nil
 }
 
-func (daemon *Daemon) verifyContainerSettings(hostConfig *runconfig.HostConfig, config *runconfig.Config) ([]string, error) {
-	// TODO Windows. Verifications TBC
+// adaptContainerSettings is called during container creation to modify any
+// settings necessary in the HostConfig structure.
+func (daemon *Daemon) adaptContainerSettings(hostConfig *runconfig.HostConfig, adjustCPUShares bool) {
+}
+
+// verifyPlatformContainerSettings performs platform-specific validation of the
+// hostconfig and config structures.
+func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *runconfig.HostConfig, config *runconfig.Config) ([]string, error) {
 	return nil, nil
 }
 
@@ -125,7 +136,10 @@ func isBridgeNetworkDisabled(config *Config) bool {
 }
 
 func initNetworkController(config *Config) (libnetwork.NetworkController, error) {
-	// TODO Windows
+	// Set the name of the virtual switch if not specified by -b on daemon start
+	if config.Bridge.VirtualSwitchName == "" {
+		config.Bridge.VirtualSwitchName = DefaultVirtualSwitch
+	}
 	return nil, nil
 }
 
@@ -159,4 +173,15 @@ func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.
 		return err
 	}
 	return nil
+}
+
+func (daemon *Daemon) newBaseContainer(id string) Container {
+	return Container{
+		CommonContainer: CommonContainer{
+			ID:           id,
+			State:        NewState(),
+			execCommands: newExecStore(),
+			root:         daemon.containerRoot(id),
+		},
+	}
 }

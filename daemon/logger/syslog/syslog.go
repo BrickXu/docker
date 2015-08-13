@@ -1,10 +1,11 @@
 // +build linux
 
+// Package syslog provides the logdriver for forwarding server logs to syslog endpoints.
 package syslog
 
 import (
 	"errors"
-	"io"
+	"fmt"
 	"log/syslog"
 	"net"
 	"net/url"
@@ -43,7 +44,7 @@ var facilities = map[string]syslog.Priority{
 	"local7":   syslog.LOG_LOCAL7,
 }
 
-type Syslog struct {
+type syslogger struct {
 	writer *syslog.Writer
 }
 
@@ -51,8 +52,14 @@ func init() {
 	if err := logger.RegisterLogDriver(name, New); err != nil {
 		logrus.Fatal(err)
 	}
+	if err := logger.RegisterLogOptValidator(name, ValidateLogOpt); err != nil {
+		logrus.Fatal(err)
+	}
 }
 
+// New creates a syslog logger using the configuration passed in on
+// the context. Supported context configuration variables are
+// syslog-address, syslog-facility, & syslog-tag.
 func New(ctx logger.Context) (logger.Logger, error) {
 	tag := ctx.Config["syslog-tag"]
 	if tag == "" {
@@ -79,28 +86,24 @@ func New(ctx logger.Context) (logger.Logger, error) {
 		return nil, err
 	}
 
-	return &Syslog{
+	return &syslogger{
 		writer: log,
 	}, nil
 }
 
-func (s *Syslog) Log(msg *logger.Message) error {
+func (s *syslogger) Log(msg *logger.Message) error {
 	if msg.Source == "stderr" {
 		return s.writer.Err(string(msg.Line))
 	}
 	return s.writer.Info(string(msg.Line))
 }
 
-func (s *Syslog) Close() error {
+func (s *syslogger) Close() error {
 	return s.writer.Close()
 }
 
-func (s *Syslog) Name() string {
+func (s *syslogger) Name() string {
 	return name
-}
-
-func (s *Syslog) GetReader() (io.Reader, error) {
-	return nil, logger.ReadLogsNotSupported
 }
 
 func parseAddress(address string) (string, string, error) {
@@ -131,6 +134,21 @@ func parseAddress(address string) (string, string, error) {
 	}
 
 	return "", "", nil
+}
+
+// ValidateLogOpt looks for syslog specific log options
+// syslog-address, syslog-facility, & syslog-tag.
+func ValidateLogOpt(cfg map[string]string) error {
+	for key := range cfg {
+		switch key {
+		case "syslog-address":
+		case "syslog-facility":
+		case "syslog-tag":
+		default:
+			return fmt.Errorf("unknown log opt '%s' for syslog log driver", key)
+		}
+	}
+	return nil
 }
 
 func parseFacility(facility string) (syslog.Priority, error) {

@@ -70,6 +70,7 @@ BUCKET=$AWS_S3_BUCKET
 #	GPG_KEY="740B314AE3941731B942C66ADF4FD13717AAD7D6"
 
 setup_s3() {
+	echo "Setting up S3"
 	# Try creating the bucket. Ignore errors (it might already exist).
 	s3cmd mb "s3://$BUCKET" 2>/dev/null || true
 	# Check access to the bucket.
@@ -102,6 +103,7 @@ s3_url() {
 }
 
 build_all() {
+	echo "Building release"
 	if ! ./hack/make.sh "${RELEASE_BUNDLES[@]}"; then
 		echo >&2
 		echo >&2 'The build or tests appear to have failed.'
@@ -162,6 +164,7 @@ upload_release_build() {
 }
 
 release_build() {
+	echo "Releasing binaries"
 	GOOS=$1
 	GOARCH=$2
 
@@ -246,6 +249,7 @@ release_build() {
 # 1. A full APT repository is published at $BUCKET/ubuntu/
 # 2. Instructions for using the APT repository are uploaded at $BUCKET/ubuntu/index
 release_ubuntu() {
+	echo "Releasing ubuntu"
 	[ -e "bundles/$VERSION/ubuntu" ] || {
 		echo >&2 './hack/make.sh must be run before release_ubuntu'
 		exit 1
@@ -293,30 +297,8 @@ EOF
 	# Upload repo
 	s3cmd --acl-public "$s3Headers" sync "$APTDIR/" "s3://$BUCKET/ubuntu/"
 	cat <<EOF | write_to_s3 s3://$BUCKET/ubuntu/index
-echo "# WARNING! This script is not going to install aufs on your"
-echo "# system. If you want to use aufs please check the script"
-echo "# at https://get.docker.com"
-echo "# You may press Ctrl+C to abort this script."
-(set -x; sleep 20)
-# Check that HTTPS transport is available to APT
-if [ ! -e /usr/lib/apt/methods/https ]; then
-	apt-get update
-	apt-get install -y apt-transport-https
-fi
-
-# Add the repository to your APT sources
-echo deb $(s3_url)/ubuntu docker main > /etc/apt/sources.list.d/docker.list
-
-# Then import the repository key
-apt-key adv --keyserver hkp://p80.pool.sks-keyservers.net:80 --recv-keys $gpgFingerprint
-
-# Install docker
-apt-get update
-apt-get install -y lxc-docker
-
-#
-# Alternatively, just use the curl-able install.sh script provided at $(s3_url)
-#
+echo "# WARNING! This script is deprecated. Please use the script"
+echo "# at https://get.docker.com/"
 EOF
 
 	# Add redirect at /ubuntu/info for URL-backwards-compatibility
@@ -345,7 +327,7 @@ release_binaries() {
 # To install, run the following command as root:
 curl -sSL -O $(s3_url)/builds/Linux/x86_64/docker-$VERSION && chmod +x docker-$VERSION && sudo mv docker-$VERSION /usr/local/bin/docker
 # Then start docker in daemon mode:
-sudo /usr/local/bin/docker -d
+sudo /usr/local/bin/docker daemon
 EOF
 
 	# Add redirect at /builds/info for URL-backwards-compatibility
@@ -360,16 +342,19 @@ EOF
 
 # Upload the index script
 release_index() {
+	echo "Releasing index"
 	sed "s,url='https://get.docker.com/',url='$(s3_url)/'," hack/install.sh | write_to_s3 "s3://$BUCKET/index"
 }
 
 release_test() {
+	echo "Releasing tests"
 	if [ -e "bundles/$VERSION/test" ]; then
 		s3cmd --acl-public sync "bundles/$VERSION/test/" "s3://$BUCKET/test/"
 	fi
 }
 
 setup_gpg() {
+	echo "Setting up GPG"
 	# Make sure that we have our keys
 	mkdir -p "$HOME/.gnupg/"
 	s3cmd sync "s3://$BUCKET/ubuntu/.gnupg/" "$HOME/.gnupg/" || true

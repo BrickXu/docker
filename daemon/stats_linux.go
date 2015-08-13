@@ -2,8 +2,8 @@ package daemon
 
 import (
 	"github.com/docker/docker/api/types"
-	"github.com/docker/libcontainer"
-	"github.com/docker/libcontainer/cgroups"
+	"github.com/opencontainers/runc/libcontainer"
+	"github.com/opencontainers/runc/libcontainer/cgroups"
 )
 
 // convertStatsToAPITypes converts the libcontainer.Stats to the api specific
@@ -11,7 +11,7 @@ import (
 func convertStatsToAPITypes(ls *libcontainer.Stats) *types.Stats {
 	s := &types.Stats{}
 	if ls.Interfaces != nil {
-		s.Network = types.Network{}
+		s.Network = types.NetworkStats{}
 		for _, iface := range ls.Interfaces {
 			s.Network.RxBytes += iface.RxBytes
 			s.Network.RxPackets += iface.RxPackets
@@ -37,8 +37,8 @@ func convertStatsToAPITypes(ls *libcontainer.Stats) *types.Stats {
 			SectorsRecursive:        copyBlkioEntry(cs.BlkioStats.SectorsRecursive),
 		}
 		cpu := cs.CpuStats
-		s.CpuStats = types.CpuStats{
-			CpuUsage: types.CpuUsage{
+		s.CPUStats = types.CPUStats{
+			CPUUsage: types.CPUUsage{
 				TotalUsage:        cpu.CpuUsage.TotalUsage,
 				PercpuUsage:       cpu.CpuUsage.PercpuUsage,
 				UsageInKernelmode: cpu.CpuUsage.UsageInKernelmode,

@@ -8,13 +8,14 @@ import (
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/autogen/dockerversion"
+	Cli "github.com/docker/docker/cli"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/utils"
 )
 
-var VersionTemplate = `Client:
+var versionTemplate = `Client:
  Version:      {{.Client.Version}}
- API version:  {{.Client.ApiVersion}}
+ API version:  {{.Client.APIVersion}}
  Go version:   {{.Client.GoVersion}}
  Git commit:   {{.Client.GitCommit}}
  Built:        {{.Client.BuildTime}}
@@ -23,14 +24,14 @@ var VersionTemplate = `Client:
 
 Server:
  Version:      {{.Server.Version}}
- API version:  {{.Server.ApiVersion}}
+ API version:  {{.Server.APIVersion}}
  Go version:   {{.Server.GoVersion}}
  Git commit:   {{.Server.GitCommit}}
  Built:        {{.Server.BuildTime}}
  OS/Arch:      {{.Server.Os}}/{{.Server.Arch}}{{if .Server.Experimental}}
  Experimental: {{.Server.Experimental}}{{end}}{{end}}`
 
-type VersionData struct {
+type versionData struct {
 	Client   types.Version
 	ServerOK bool
 	Server   types.Version
@@ -42,25 +43,25 @@ type VersionData struct {
 //
 // Usage: docker version
 func (cli *DockerCli) CmdVersion(args ...string) (err error) {
-	cmd := cli.Subcmd("version", nil, "Show the Docker version information.", true)
+	cmd := Cli.Subcmd("version", nil, "Show the Docker version information.", true)
 	tmplStr := cmd.String([]string{"f", "#format", "-format"}, "", "Format the output using the given go template")
 	cmd.Require(flag.Exact, 0)
 
 	cmd.ParseFlags(args, true)
 	if *tmplStr == "" {
-		*tmplStr = VersionTemplate
+		*tmplStr = versionTemplate
 	}
 
 	var tmpl *template.Template
 	if tmpl, err = template.New("").Funcs(funcMap).Parse(*tmplStr); err != nil {
-		return StatusError{StatusCode: 64,
+		return Cli.StatusError{StatusCode: 64,
 			Status: "Template parsing error: " + err.Error()}
 	}
 
-	vd := VersionData{
+	vd := versionData{
 		Client: types.Version{
 			Version:      dockerversion.VERSION,
-			ApiVersion:   api.Version,
+			APIVersion:   api.Version,
 			GoVersion:    runtime.Version(),
 			GitCommit:    dockerversion.GITCOMMIT,
 			BuildTime:    dockerversion.BUILDTIME,
@@ -85,7 +86,7 @@ func (cli *DockerCli) CmdVersion(args ...string) (err error) {
 	defer serverResp.body.Close()
 
 	if err = json.NewDecoder(serverResp.body).Decode(&vd.Server); err != nil {
-		return StatusError{StatusCode: 1,
+		return Cli.StatusError{StatusCode: 1,
 			Status: "Error reading remote version: " + err.Error()}
 	}
 

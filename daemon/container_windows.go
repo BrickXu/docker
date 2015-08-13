@@ -9,7 +9,7 @@ import (
 
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/graphdriver/windows"
-	"github.com/docker/docker/graph"
+	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/microsoft/hcsshim"
 )
@@ -22,18 +22,6 @@ type Container struct {
 	CommonContainer
 
 	// Fields below here are platform specific.
-
-	// TODO Windows. Further factoring out of unused fields will be necessary.
-
-	// ---- START OF TEMPORARY DECLARATION ----
-	// TODO Windows. Temporarily keeping fields in to assist in compilation
-	// of the daemon on Windows without affecting many other files in a single
-	// PR, thus making code review significantly harder. These lines will be
-	// removed in subsequent PRs.
-
-	AppArmorProfile string
-	// ---- END OF TEMPORARY DECLARATION ----
-
 }
 
 func killProcessDirectly(container *Container) error {
@@ -67,19 +55,23 @@ func (container *Container) setupWorkingDirectory() error {
 
 func populateCommand(c *Container, env []string) error {
 	en := &execdriver.Network{
-		Mtu:       c.daemon.config.Mtu,
 		Interface: nil,
 	}
 
 	parts := strings.SplitN(string(c.hostConfig.NetworkMode), ":", 2)
 	switch parts[0] {
-
 	case "none":
 	case "default", "": // empty string to support existing containers
 		if !c.Config.NetworkDisabled {
-			network := c.NetworkSettings
 			en.Interface = &execdriver.NetworkInterface{
-				MacAddress: network.MacAddress,
+				MacAddress:   c.Config.MacAddress,
+				Bridge:       c.daemon.config.Bridge.VirtualSwitchName,
+				PortBindings: c.hostConfig.PortBindings,
+
+				// TODO Windows. Include IPAddress. There already is a
+				// property IPAddress on execDrive.CommonNetworkInterface,
+				// but there is no CLI option in docker to pass through
+				// an IPAddress on docker run.
 			}
 		}
 	default:
@@ -113,7 +105,7 @@ func populateCommand(c *Container, env []string) error {
 	// enable VFS to continue operating for development purposes.
 	if wd, ok := c.daemon.driver.(*windows.WindowsGraphDriver); ok {
 		var err error
-		var img *graph.Image
+		var img *image.Image
 		var ids []string
 
 		if img, err = c.daemon.graph.Get(c.ImageID); err != nil {
@@ -156,12 +148,6 @@ func (container *Container) GetSize() (int64, int64) {
 }
 
 func (container *Container) AllocateNetwork() error {
-
-	// TODO Windows. This needs reworking with libnetwork. In the
-	// proof-of-concept for //build conference, the Windows daemon
-	// invoked eng.Job("allocate_interface) passing through
-	// RequestedMac.
-
 	return nil
 }
 
@@ -173,19 +159,15 @@ func (container *Container) ExportRw() (archive.Archive, error) {
 	return nil, nil
 }
 
-func (container *Container) ReleaseNetwork() {
-	// TODO Windows. Rework with libnetwork
-}
-
-func (container *Container) RestoreNetwork() error {
-	// TODO Windows. Rework with libnetwork
+func (container *Container) UpdateNetwork() error {
 	return nil
 }
 
-func disableAllActiveLinks(container *Container) {
+func (container *Container) ReleaseNetwork() {
 }
 
-func (container *Container) DisableLink(name string) {
+func (container *Container) RestoreNetwork() error {
+	return nil
 }
 
 func (container *Container) UnmountVolumes(forceSyscall bool) error {
@@ -219,5 +201,15 @@ func (container *Container) CleanupStorage() error {
 	if wd, ok := container.daemon.driver.(*windows.WindowsGraphDriver); ok {
 		return hcsshim.UnprepareLayer(wd.Info(), container.ID)
 	}
+	return nil
+}
+
+// prepareMountPoints is a no-op on Windows
+func (container *Container) prepareMountPoints() error {
+	return nil
+}
+
+// removeMountPoints is a no-op on Windows.
+func (container *Container) removeMountPoints() error {
 	return nil
 }

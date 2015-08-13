@@ -6,8 +6,8 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/daemon/execdriver"
-	"github.com/docker/libcontainer"
 	"github.com/docker/libnetwork/sandbox"
+	"github.com/opencontainers/runc/libcontainer"
 )
 
 type ContainerStatsConfig struct {
@@ -26,7 +26,7 @@ func (daemon *Daemon) ContainerStats(name string, config *ContainerStatsConfig) 
 		config.OutStream.Write(nil)
 	}
 
-	var preCpuStats types.CpuStats
+	var preCpuStats types.CPUStats
 	getStat := func(v interface{}) *types.Stats {
 		update := v.(*execdriver.ResourceStats)
 		// Retrieve the nw statistics from libnetwork and inject them in the Stats
@@ -34,11 +34,11 @@ func (daemon *Daemon) ContainerStats(name string, config *ContainerStatsConfig) 
 			update.Stats.Interfaces = nwStats
 		}
 		ss := convertStatsToAPITypes(update.Stats)
-		ss.PreCpuStats = preCpuStats
+		ss.PreCPUStats = preCpuStats
 		ss.MemoryStats.Limit = uint64(update.MemoryLimit)
 		ss.Read = update.Read
-		ss.CpuStats.SystemUsage = update.SystemUsage
-		preCpuStats = ss.CpuStats
+		ss.CPUStats.SystemUsage = update.SystemUsage
+		preCpuStats = ss.CPUStats
 		return ss
 	}
 

@@ -56,9 +56,8 @@ func TestInit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Map() should be empty
-	if l, err := graph.Map(); err != nil {
-		t.Fatal(err)
-	} else if len(l) != 0 {
+	l := graph.Map()
+	if len(l) != 0 {
 		t.Fatalf("len(Map()) should return %d, not %d", 0, len(l))
 	}
 }
@@ -68,8 +67,8 @@ func TestInterruptedRegister(t *testing.T) {
 	graph, _ := tempGraph(t)
 	defer nukeGraph(graph)
 	badArchive, w := io.Pipe() // Use a pipe reader as a fake archive which never yields data
-	image := &Image{
-		ID:      stringid.GenerateRandomID(),
+	image := &image.Image{
+		ID:      stringid.GenerateNonCryptoID(),
 		Comment: "testing",
 		Created: time.Now(),
 	}
@@ -110,10 +109,8 @@ func TestGraphCreate(t *testing.T) {
 	if img.DockerVersion != dockerversion.VERSION {
 		t.Fatalf("Wrong docker_version: should be '%s', not '%s'", dockerversion.VERSION, img.DockerVersion)
 	}
-	images, err := graph.Map()
-	if err != nil {
-		t.Fatal(err)
-	} else if l := len(images); l != 1 {
+	images := graph.Map()
+	if l := len(images); l != 1 {
 		t.Fatalf("Wrong number of images. Should be %d, not %d", 1, l)
 	}
 	if images[img.ID] == nil {
@@ -128,8 +125,8 @@ func TestRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	image := &Image{
-		ID:      stringid.GenerateRandomID(),
+	image := &image.Image{
+		ID:      stringid.GenerateNonCryptoID(),
 		Comment: "testing",
 		Created: time.Now(),
 	}
@@ -137,9 +134,8 @@ func TestRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if images, err := graph.Map(); err != nil {
-		t.Fatal(err)
-	} else if l := len(images); l != 1 {
+	images := graph.Map()
+	if l := len(images); l != 1 {
 		t.Fatalf("Wrong number of images. Should be %d, not %d", 1, l)
 	}
 	if resultImg, err := graph.Get(image.ID); err != nil {
@@ -232,20 +228,20 @@ func TestByParent(t *testing.T) {
 
 	graph, _ := tempGraph(t)
 	defer nukeGraph(graph)
-	parentImage := &Image{
-		ID:      stringid.GenerateRandomID(),
+	parentImage := &image.Image{
+		ID:      stringid.GenerateNonCryptoID(),
 		Comment: "parent",
 		Created: time.Now(),
 		Parent:  "",
 	}
-	childImage1 := &Image{
-		ID:      stringid.GenerateRandomID(),
+	childImage1 := &image.Image{
+		ID:      stringid.GenerateNonCryptoID(),
 		Comment: "child1",
 		Created: time.Now(),
 		Parent:  parentImage.ID,
 	}
-	childImage2 := &Image{
-		ID:      stringid.GenerateRandomID(),
+	childImage2 := &image.Image{
+		ID:      stringid.GenerateNonCryptoID(),
 		Comment: "child2",
 		Created: time.Now(),
 		Parent:  parentImage.ID,
@@ -254,17 +250,14 @@ func TestByParent(t *testing.T) {
 	_ = graph.Register(childImage1, archive2)
 	_ = graph.Register(childImage2, archive3)
 
-	byParent, err := graph.ByParent()
-	if err != nil {
-		t.Fatal(err)
-	}
+	byParent := graph.ByParent()
 	numChildren := len(byParent[parentImage.ID])
 	if numChildren != 2 {
 		t.Fatalf("Expected 2 children, found %d", numChildren)
 	}
 }
 
-func createTestImage(graph *Graph, t *testing.T) *Image {
+func createTestImage(graph *Graph, t *testing.T) *image.Image {
 	archive, err := fakeTar()
 	if err != nil {
 		t.Fatal(err)
@@ -277,9 +270,8 @@ func createTestImage(graph *Graph, t *testing.T) *Image {
 }
 
 func assertNImages(graph *Graph, t *testing.T, n int) {
-	if images, err := graph.Map(); err != nil {
-		t.Fatal(err)
-	} else if actualN := len(images); actualN != n {
+	images := graph.Map()
+	if actualN := len(images); actualN != n {
 		t.Fatalf("Expected %d images, found %d", n, actualN)
 	}
 }

@@ -8,18 +8,16 @@ import (
 	"regexp"
 	"strings"
 
-	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/parsers"
-	"github.com/docker/docker/pkg/ulimit"
 	"github.com/docker/docker/volume"
 )
 
 var (
 	alphaRegexp  = regexp.MustCompile(`[a-zA-Z]`)
 	domainRegexp = regexp.MustCompile(`^(:?(:?[a-zA-Z0-9]|(:?[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9]))(:?\.(:?[a-zA-Z0-9]|(:?[a-zA-Z0-9][a-zA-Z0-9\-]*[a-zA-Z0-9])))*)\.?\s*$`)
-	// DefaultHTTPHost Default HTTP Host used if only port is provided to -H flag e.g. docker -d -H tcp://:8080
+	// DefaultHTTPHost Default HTTP Host used if only port is provided to -H flag e.g. docker daemon -H tcp://:8080
 	DefaultHTTPHost = "127.0.0.1"
-	// DefaultHTTPPort Default HTTP Port used if only the protocol is provided to -H flag e.g. docker -d -H tcp://
+	// DefaultHTTPPort Default HTTP Port used if only the protocol is provided to -H flag e.g. docker daemon -H tcp://
 	// TODO Windows. DefaultHTTPPort is only used on Windows if a -H parameter
 	// is not supplied. A better longer term solution would be to use a named
 	// pipe as the default on the Windows daemon.
@@ -28,60 +26,6 @@ var (
 	// Docker daemon by default always listens on the default unix socket
 	DefaultUnixSocket = "/var/run/docker.sock"
 )
-
-// ListVar Defines a flag with the specified names and usage, and put the value
-// list into ListOpts that will hold the values.
-func ListVar(values *[]string, names []string, usage string) {
-	flag.Var(newListOptsRef(values, nil), names, usage)
-}
-
-// MapVar Defines a flag with the specified names and usage, and put the value
-// map into MapOpt that will hold the values (key,value).
-func MapVar(values map[string]string, names []string, usage string) {
-	flag.Var(newMapOpt(values, nil), names, usage)
-}
-
-// LogOptsVar Defines a flag with the specified names and usage for --log-opts,
-// and put the value map into MapOpt that will hold the values (key,value).
-func LogOptsVar(values map[string]string, names []string, usage string) {
-	flag.Var(newMapOpt(values, nil), names, usage)
-}
-
-// HostListVar Defines a flag with the specified names and usage and put the
-// value into a ListOpts that will hold the values, validating the Host format.
-func HostListVar(values *[]string, names []string, usage string) {
-	flag.Var(newListOptsRef(values, ValidateHost), names, usage)
-}
-
-// IPListVar Defines a flag with the specified names and usage and put the
-// value into a ListOpts that will hold the values, validating the IP format.
-func IPListVar(values *[]string, names []string, usage string) {
-	flag.Var(newListOptsRef(values, ValidateIPAddress), names, usage)
-}
-
-// DNSSearchListVar Defines a flag with the specified names and usage and put the
-// value into a ListOpts that will hold the values, validating the DNS search format.
-func DNSSearchListVar(values *[]string, names []string, usage string) {
-	flag.Var(newListOptsRef(values, ValidateDNSSearch), names, usage)
-}
-
-// IPVar Defines a flag with the specified names and usage for IP and will use
-// the specified defaultValue if the specified value is not valid.
-func IPVar(value *net.IP, names []string, defaultValue, usage string) {
-	flag.Var(NewIpOpt(value, defaultValue), names, usage)
-}
-
-// LabelListVar Defines a flag with the specified names and usage and put the
-// value into a ListOpts that will hold the values, validating the label format.
-func LabelListVar(values *[]string, names []string, usage string) {
-	flag.Var(newListOptsRef(values, ValidateLabel), names, usage)
-}
-
-// UlimitMapVar Defines a flag with the specified names and usage for --ulimit,
-// and put the value map into a UlimitOpt that will hold the values.
-func UlimitMapVar(values map[string]*ulimit.Ulimit, names []string, usage string) {
-	flag.Var(NewUlimitOpt(values), names, usage)
-}
 
 // ListOpts type that hold a list of values and a validation function.
 type ListOpts struct {
@@ -92,10 +36,10 @@ type ListOpts struct {
 // NewListOpts Create a new ListOpts with the specified validator.
 func NewListOpts(validator ValidatorFctType) ListOpts {
 	var values []string
-	return *newListOptsRef(&values, validator)
+	return *NewListOptsRef(&values, validator)
 }
 
-func newListOptsRef(values *[]string, validator ValidatorFctType) *ListOpts {
+func NewListOptsRef(values *[]string, validator ValidatorFctType) *ListOpts {
 	return &ListOpts{
 		values:    values,
 		validator: validator,
@@ -191,7 +135,10 @@ func (opts *MapOpts) String() string {
 	return fmt.Sprintf("%v", map[string]string((opts.values)))
 }
 
-func newMapOpt(values map[string]string, validator ValidatorFctType) *MapOpts {
+func NewMapOpts(values map[string]string, validator ValidatorFctType) *MapOpts {
+	if values == nil {
+		values = make(map[string]string)
+	}
 	return &MapOpts{
 		values:    values,
 		validator: validator,

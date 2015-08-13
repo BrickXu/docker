@@ -46,6 +46,7 @@ echo
 DEFAULT_BUNDLES=(
 	validate-dco
 	validate-gofmt
+	validate-lint
 	validate-pkg
 	validate-test
 	validate-toml
@@ -219,6 +220,7 @@ test_env() {
 		DOCKER_GRAPHDRIVER="$DOCKER_GRAPHDRIVER" \
 		DOCKER_USERLANDPROXY="$DOCKER_USERLANDPROXY" \
 		DOCKER_HOST="$DOCKER_HOST" \
+		DOCKER_REMOTE_DAEMON="$DOCKER_REMOTE_DAEMON" \
 		GOPATH="$GOPATH" \
 		HOME="$ABS_DEST/fake-HOME" \
 		PATH="$PATH" \

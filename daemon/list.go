@@ -152,13 +152,16 @@ func (daemon *Daemon) Containers(config *ContainersConfig) ([]*types.Container, 
 		} else {
 			newC.Command = fmt.Sprintf("%s", container.Path)
 		}
-		newC.Created = int(container.Created.Unix())
+		newC.Created = container.Created.Unix()
 		newC.Status = container.State.String()
-		newC.HostConfig.NetworkMode = string(container.HostConfig().NetworkMode)
+		newC.HostConfig.NetworkMode = string(container.hostConfig.NetworkMode)
 
 		newC.Ports = []types.Port{}
 		for port, bindings := range container.NetworkSettings.Ports {
-			p, _ := nat.ParsePort(port.Port())
+			p, err := nat.ParsePort(port.Port())
+			if err != nil {
+				return err
+			}
 			if len(bindings) == 0 {
 				newC.Ports = append(newC.Ports, types.Port{
 					PrivatePort: p,
@@ -167,20 +170,23 @@ func (daemon *Daemon) Containers(config *ContainersConfig) ([]*types.Container, 
 				continue
 			}
 			for _, binding := range bindings {
-				h, _ := nat.ParsePort(binding.HostPort)
+				h, err := nat.ParsePort(binding.HostPort)
+				if err != nil {
+					return err
+				}
 				newC.Ports = append(newC.Ports, types.Port{
 					PrivatePort: p,
 					PublicPort:  h,
 					Type:        port.Proto(),
-					IP:          binding.HostIp,
+					IP:          binding.HostIP,
 				})
 			}
 		}
 
 		if config.Size {
 			sizeRw, sizeRootFs := container.GetSize()
-			newC.SizeRw = int(sizeRw)
-			newC.SizeRootFs = int(sizeRootFs)
+			newC.SizeRw = sizeRw
+			newC.SizeRootFs = sizeRootFs
 		}
 		newC.Labels = container.Config.Labels
 		containers = append(containers, newC)

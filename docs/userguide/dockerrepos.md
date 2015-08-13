@@ -82,8 +82,7 @@ You now have an image from which you can run containers.
 
 Anyone can pull public images from the [Docker Hub](https://hub.docker.com)
 registry, but if you would like to share your own images, then you must
-register first, as we saw in the [first section of the Docker User
-Guide](/userguide/dockerhub/).
+[register first](/docker-hub/accounts).
 
 ## Pushing a repository to Docker Hub
 
@@ -145,9 +144,7 @@ build and, in a few minutes, you should see your new Automated Build on the [Doc
 Registry. It will stay in sync with your GitHub and Bitbucket repository until you
 deactivate the Automated Build.
 
-If you want to see the status of your Automated Builds, you can go to your
-[Automated Builds page](https://registry.hub.docker.com/builds/) on the Docker Hub,
-and it will show you the status of your builds and their build history.
+To check the output and status of your Automated Build repositories, click on a repository name within the ["Your Repositories" page](https://registry.hub.docker.com/repos/). Automated Builds are indicated by a check-mark icon next to the repository name. Within the repository details page, you may click on the "Build Details" tab to view the status and output of all builds triggered by the Docker Hub.
 
 Once you've created an Automated Build you can deactivate or delete it. You
 cannot, however, push to an Automated Build with the `docker push` command.
@@ -175,4 +172,3 @@ webhooks](https://docs.docker.com/docker-hub/repos/#webhooks)
 ## Next steps
 
 Go and use Docker!
-

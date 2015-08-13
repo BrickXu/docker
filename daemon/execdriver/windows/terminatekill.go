@@ -8,12 +8,14 @@ import (
 	"github.com/microsoft/hcsshim"
 )
 
-func (d *driver) Terminate(p *execdriver.Command) error {
+// Terminate implements the exec driver Driver interface.
+func (d *Driver) Terminate(p *execdriver.Command) error {
 	logrus.Debugf("WindowsExec: Terminate() id=%s", p.ID)
 	return kill(p.ID, p.ContainerPid)
 }
 
-func (d *driver) Kill(p *execdriver.Command, sig int) error {
+// Kill implements the exec driver Driver interface.
+func (d *Driver) Kill(p *execdriver.Command, sig int) error {
 	logrus.Debugf("WindowsExec: Kill() id=%s sig=%d", p.ID, sig)
 	return kill(p.ID, p.ContainerPid)
 }
@@ -37,7 +39,7 @@ func kill(id string, pid int) error {
 
 	} else {
 		// Shutdown the compute system
-		if err = hcsshim.TerminateComputeSystem(id); err != nil {
+		if err = hcsshim.ShutdownComputeSystem(id); err != nil {
 			logrus.Errorf("Failed to shutdown %s - %s", id, err)
 		}
 	}

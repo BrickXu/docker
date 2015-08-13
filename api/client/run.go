@@ -8,6 +8,7 @@ import (
 	"runtime"
 
 	"github.com/Sirupsen/logrus"
+	Cli "github.com/docker/docker/cli"
 	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/promise"
 	"github.com/docker/docker/pkg/signal"
@@ -39,7 +40,8 @@ func (cid *cidFile) Write(id string) error {
 //
 // Usage: docker run [OPTIONS] IMAGE [COMMAND] [ARG...]
 func (cli *DockerCli) CmdRun(args ...string) error {
-	cmd := cli.Subcmd("run", []string{"IMAGE [COMMAND] [ARG...]"}, "Run a command in a new container", true)
+	cmd := Cli.Subcmd("run", []string{"IMAGE [COMMAND] [ARG...]"}, "Run a command in a new container", true)
+	addTrustedFlags(cmd, true)
 
 	// These are flags not stored in Config/HostConfig
 	var (
@@ -61,11 +63,11 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		os.Exit(1)
 	}
 
-	if len(hostConfig.Dns) > 0 {
+	if len(hostConfig.DNS) > 0 {
 		// check the DNS settings passed via --dns against
 		// localhost regexp to warn if they are trying to
 		// set a DNS to a localhost address
-		for _, dnsIP := range hostConfig.Dns {
+		for _, dnsIP := range hostConfig.DNS {
 			if dns.IsLocalhost(dnsIP) {
 				fmt.Fprintf(cli.err, "WARNING: Localhost DNS setting (--dns=%s) may fail in containers.\n", dnsIP)
 				break
@@ -249,7 +251,7 @@ func (cli *DockerCli) CmdRun(args ...string) error {
 		}
 	}
 	if status != 0 {
-		return StatusError{StatusCode: status}
+		return Cli.StatusError{StatusCode: status}
 	}
 	return nil
 }

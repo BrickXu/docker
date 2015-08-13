@@ -1,4 +1,4 @@
-// +build !windows
+// +build linux freebsd
 
 package daemon
 
@@ -16,20 +16,27 @@ import (
 	"github.com/docker/docker/daemon/graphdriver"
 	"github.com/docker/docker/pkg/archive"
 	"github.com/docker/docker/pkg/fileutils"
-	"github.com/docker/docker/pkg/nat"
 	"github.com/docker/docker/pkg/parsers"
 	"github.com/docker/docker/pkg/parsers/kernel"
+	"github.com/docker/docker/pkg/sysinfo"
 	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
 	volumedrivers "github.com/docker/docker/volume/drivers"
 	"github.com/docker/docker/volume/local"
-	"github.com/docker/libcontainer/label"
 	"github.com/docker/libnetwork"
 	nwapi "github.com/docker/libnetwork/api"
 	nwconfig "github.com/docker/libnetwork/config"
 	"github.com/docker/libnetwork/netlabel"
 	"github.com/docker/libnetwork/options"
+	"github.com/opencontainers/runc/libcontainer/label"
+)
+
+const (
+	// See https://git.kernel.org/cgit/linux/kernel/git/tip/tip.git/tree/kernel/sched/sched.h?id=8cd9234c64c584432f6992fe944ca9e46ca8ea76#n269
+	linuxMinCPUShares = 2
+	linuxMaxCPUShares = 262144
+	platformSupported = true
 )
 
 func (daemon *Daemon) Changes(container *Container) ([]archive.Change, error) {
@@ -81,11 +88,15 @@ func (daemon *Daemon) createRootfs(container *Container) error {
 	if err != nil {
 		return err
 	}
-	defer daemon.driver.Put(initID)
 
 	if err := setupInitLayer(initPath); err != nil {
+		daemon.driver.Put(initID)
 		return err
 	}
+
+	// We want to unmount init layer before we take snapshot of it
+	// for the actual container.
+	daemon.driver.Put(initID)
 
 	if err := daemon.driver.Create(container.ID, initID); err != nil {
 		return err
@@ -104,7 +115,7 @@ func checkKernel() error {
 	if k, err := kernel.GetKernelVersion(); err != nil {
 		logrus.Warnf("%s", err)
 	} else {
-		if kernel.CompareKernelVersion(k, &kernel.KernelVersionInfo{Kernel: 3, Major: 10, Minor: 0}) < 0 {
+		if kernel.CompareKernelVersion(*k, kernel.VersionInfo{Kernel: 3, Major: 10, Minor: 0}) < 0 {
 			if os.Getenv("DOCKER_NOWARN_KERNEL_VERSION") == "" {
 				logrus.Warnf("You are running linux kernel version %s, which might be unstable running docker. Please upgrade your kernel to 3.10.0.", k.String())
 			}
@@ -113,40 +124,50 @@ func checkKernel() error {
 	return nil
 }
 
-func (daemon *Daemon) verifyContainerSettings(hostConfig *runconfig.HostConfig, config *runconfig.Config) ([]string, error) {
-	var warnings []string
-
-	if config != nil {
-		// The check for a valid workdir path is made on the server rather than in the
-		// client. This is because we don't know the type of path (Linux or Windows)
-		// to validate on the client.
-		if config.WorkingDir != "" && !filepath.IsAbs(config.WorkingDir) {
-			return warnings, fmt.Errorf("The working directory '%s' is invalid. It needs to be an absolute path.", config.WorkingDir)
-		}
-	}
-
+// adaptContainerSettings is called during container creation to modify any
+// settings necessary in the HostConfig structure.
+func (daemon *Daemon) adaptContainerSettings(hostConfig *runconfig.HostConfig, adjustCPUShares bool) {
 	if hostConfig == nil {
-		return warnings, nil
+		return
 	}
 
-	for port := range hostConfig.PortBindings {
-		_, portStr := nat.SplitProtoPort(string(port))
-		if _, err := nat.ParsePort(portStr); err != nil {
-			return warnings, fmt.Errorf("Invalid port specification: %s", portStr)
+	if adjustCPUShares && hostConfig.CPUShares > 0 {
+		// Handle unsupported CPUShares
+		if hostConfig.CPUShares < linuxMinCPUShares {
+			logrus.Warnf("Changing requested CPUShares of %d to minimum allowed of %d", hostConfig.CPUShares, linuxMinCPUShares)
+			hostConfig.CPUShares = linuxMinCPUShares
+		} else if hostConfig.CPUShares > linuxMaxCPUShares {
+			logrus.Warnf("Changing requested CPUShares of %d to maximum allowed of %d", hostConfig.CPUShares, linuxMaxCPUShares)
+			hostConfig.CPUShares = linuxMaxCPUShares
 		}
 	}
+	if hostConfig.Memory > 0 && hostConfig.MemorySwap == 0 {
+		// By default, MemorySwap is set to twice the size of Memory.
+		hostConfig.MemorySwap = hostConfig.Memory * 2
+	}
+}
+
+// verifyPlatformContainerSettings performs platform-specific validation of the
+// hostconfig and config structures.
+func verifyPlatformContainerSettings(daemon *Daemon, hostConfig *runconfig.HostConfig, config *runconfig.Config) ([]string, error) {
+	warnings := []string{}
+	sysInfo := sysinfo.New(false)
+
 	if hostConfig.LxcConf.Len() > 0 && !strings.Contains(daemon.ExecutionDriver().Name(), "lxc") {
 		return warnings, fmt.Errorf("Cannot use --lxc-conf with execdriver: %s", daemon.ExecutionDriver().Name())
 	}
+
+	// memory subsystem checks and adjustments
 	if hostConfig.Memory != 0 && hostConfig.Memory < 4194304 {
 		return warnings, fmt.Errorf("Minimum memory limit allowed is 4MB")
 	}
-	if hostConfig.Memory > 0 && !daemon.SystemConfig().MemoryLimit {
+	if hostConfig.Memory > 0 && !sysInfo.MemoryLimit {
 		warnings = append(warnings, "Your kernel does not support memory limit capabilities. Limitation discarded.")
 		logrus.Warnf("Your kernel does not support memory limit capabilities. Limitation discarded.")
 		hostConfig.Memory = 0
+		hostConfig.MemorySwap = -1
 	}
-	if hostConfig.Memory > 0 && hostConfig.MemorySwap != -1 && !daemon.SystemConfig().SwapLimit {
+	if hostConfig.Memory > 0 && hostConfig.MemorySwap != -1 && !sysInfo.SwapLimit {
 		warnings = append(warnings, "Your kernel does not support swap limit capabilities, memory limited without swap.")
 		logrus.Warnf("Your kernel does not support swap limit capabilities, memory limited without swap.")
 		hostConfig.MemorySwap = -1
@@ -157,32 +178,53 @@ func (daemon *Daemon) verifyContainerSettings(hostConfig *runconfig.HostConfig, 
 	if hostConfig.Memory == 0 && hostConfig.MemorySwap > 0 {
 		return warnings, fmt.Errorf("You should always set the Memory limit when using Memoryswap limit, see usage.")
 	}
-	if hostConfig.MemorySwappiness != -1 && !daemon.SystemConfig().MemorySwappiness {
+	if hostConfig.MemorySwappiness != nil && *hostConfig.MemorySwappiness != -1 && !sysInfo.MemorySwappiness {
 		warnings = append(warnings, "Your kernel does not support memory swappiness capabilities, memory swappiness discarded.")
 		logrus.Warnf("Your kernel does not support memory swappiness capabilities, memory swappiness discarded.")
-		hostConfig.MemorySwappiness = -1
+		hostConfig.MemorySwappiness = nil
 	}
-	if hostConfig.MemorySwappiness != -1 && (hostConfig.MemorySwappiness < 0 || hostConfig.MemorySwappiness > 100) {
-		return warnings, fmt.Errorf("Invalid value: %d, valid memory swappiness range is 0-100.", hostConfig.MemorySwappiness)
+	if hostConfig.MemorySwappiness != nil {
+		swappiness := *hostConfig.MemorySwappiness
+		if swappiness < -1 || swappiness > 100 {
+			return warnings, fmt.Errorf("Invalid value: %v, valid memory swappiness range is 0-100.", swappiness)
+		}
 	}
-	if hostConfig.CpuPeriod > 0 && !daemon.SystemConfig().CpuCfsPeriod {
+	if hostConfig.CPUShares > 0 && !sysInfo.CPUShares {
+		warnings = append(warnings, "Your kernel does not support CPU shares. Shares discarded.")
+		logrus.Warnf("Your kernel does not support CPU shares. Shares discarded.")
+		hostConfig.CPUShares = 0
+	}
+	if hostConfig.CPUPeriod > 0 && !sysInfo.CPUCfsPeriod {
 		warnings = append(warnings, "Your kernel does not support CPU cfs period. Period discarded.")
 		logrus.Warnf("Your kernel does not support CPU cfs period. Period discarded.")
-		hostConfig.CpuPeriod = 0
+		hostConfig.CPUPeriod = 0
 	}
-	if hostConfig.CpuQuota > 0 && !daemon.SystemConfig().CpuCfsQuota {
+	if hostConfig.CPUQuota > 0 && !sysInfo.CPUCfsQuota {
 		warnings = append(warnings, "Your kernel does not support CPU cfs quota. Quota discarded.")
 		logrus.Warnf("Your kernel does not support CPU cfs quota. Quota discarded.")
-		hostConfig.CpuQuota = 0
+		hostConfig.CPUQuota = 0
+	}
+	if (hostConfig.CpusetCpus != "" || hostConfig.CpusetMems != "") && !sysInfo.Cpuset {
+		warnings = append(warnings, "Your kernel does not support cpuset. Cpuset discarded.")
+		logrus.Warnf("Your kernel does not support cpuset. Cpuset discarded.")
+		hostConfig.CpusetCpus = ""
+		hostConfig.CpusetMems = ""
+	}
+	if hostConfig.BlkioWeight > 0 && !sysInfo.BlkioWeight {
+		warnings = append(warnings, "Your kernel does not support Block I/O weight. Weight discarded.")
+		logrus.Warnf("Your kernel does not support Block I/O weight. Weight discarded.")
+		hostConfig.BlkioWeight = 0
 	}
 	if hostConfig.BlkioWeight > 0 && (hostConfig.BlkioWeight < 10 || hostConfig.BlkioWeight > 1000) {
 		return warnings, fmt.Errorf("Range of blkio weight is from 10 to 1000.")
 	}
-	if hostConfig.OomKillDisable && !daemon.SystemConfig().OomKillDisable {
+
+	if hostConfig.OomKillDisable && !sysInfo.OomKillDisable {
 		hostConfig.OomKillDisable = false
 		return warnings, fmt.Errorf("Your kernel does not support oom kill disable.")
 	}
-	if daemon.SystemConfig().IPv4ForwardingDisabled {
+
+	if sysInfo.IPv4ForwardingDisabled {
 		warnings = append(warnings, "IPv4 forwarding is disabled. Networking will not work.")
 		logrus.Warnf("IPv4 forwarding is disabled. Networking will not work")
 	}
@@ -481,7 +523,6 @@ func (daemon *Daemon) NetworkApiRouter() func(w http.ResponseWriter, req *http.R
 }
 
 func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.HostConfig) error {
-
 	if hostConfig == nil || hostConfig.Links == nil {
 		return nil
 	}
@@ -519,4 +560,18 @@ func (daemon *Daemon) RegisterLinks(container *Container, hostConfig *runconfig.
 	}
 
 	return nil
+}
+
+func (daemon *Daemon) newBaseContainer(id string) Container {
+	return Container{
+		CommonContainer: CommonContainer{
+			ID:           id,
+			State:        NewState(),
+			execCommands: newExecStore(),
+			root:         daemon.containerRoot(id),
+		},
+		MountPoints: make(map[string]*mountPoint),
+		Volumes:     make(map[string]string),
+		VolumesRW:   make(map[string]bool),
+	}
 }

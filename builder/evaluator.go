@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Sirupsen/logrus"
@@ -37,6 +38,7 @@ import (
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/symlink"
 	"github.com/docker/docker/pkg/tarsum"
+	"github.com/docker/docker/pkg/ulimit"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/utils"
 )
@@ -53,10 +55,10 @@ var replaceEnvAllowed = map[string]struct{}{
 	command.User:    {},
 }
 
-var evaluateTable map[string]func(*Builder, []string, map[string]bool, string) error
+var evaluateTable map[string]func(*builder, []string, map[string]bool, string) error
 
 func init() {
-	evaluateTable = map[string]func(*Builder, []string, map[string]bool, string) error{
+	evaluateTable = map[string]func(*builder, []string, map[string]bool, string) error{
 		command.Env:        env,
 		command.Label:      label,
 		command.Maintainer: maintainer,
@@ -74,9 +76,9 @@ func init() {
 	}
 }
 
-// internal struct, used to maintain configuration of the Dockerfile's
+// builder is an internal struct, used to maintain configuration of the Dockerfile's
 // processing as it evaluates the parsing result.
-type Builder struct {
+type builder struct {
 	Daemon *daemon.Daemon
 
 	// effectively stdio for the run. Because it is not stdio, I said
@@ -115,7 +117,7 @@ type Builder struct {
 	image          string        // image name for commit processing
 	maintainer     string        // maintainer name. could probably be removed.
 	cmdSet         bool          // indicates is CMD was set in current Dockerfile
-	BuilderFlags   *BuilderFlags // current cmd's BuilderFlags - temporary
+	BuilderFlags   *BFlags       // current cmd's BuilderFlags - temporary
 	context        tarsum.TarSum // the context is a tarball that is uploaded by the client
 	contextPath    string        // the path of the temporary directory the local context is unpacked to (server side)
 	noBaseImage    bool          // indicates that this build does not start from any base image, but is being built from an empty file system.
@@ -129,8 +131,12 @@ type Builder struct {
 	cgroupParent string
 	memory       int64
 	memorySwap   int64
+	ulimits      []*ulimit.Ulimit
 
 	cancelled <-chan struct{} // When closed, job was cancelled.
+
+	activeImages []string
+	id           string // Used to hold reference images
 }
 
 // Run the builder with the context. This is the lynchpin of this package. This
@@ -145,7 +151,7 @@ type Builder struct {
 //   processing.
 // * Print a happy message and return the image ID.
 //
-func (b *Builder) Run(context io.Reader) (string, error) {
+func (b *builder) Run(context io.Reader) (string, error) {
 	if err := b.readContext(context); err != nil {
 		return "", err
 	}
@@ -196,7 +202,7 @@ func (b *Builder) Run(context io.Reader) (string, error) {
 
 // Reads a Dockerfile from the current context. It assumes that the
 // 'filename' is a relative path from the root of the context
-func (b *Builder) readDockerfile() error {
+func (b *builder) readDockerfile() error {
 	// If no -f was specified then look for 'Dockerfile'. If we can't find
 	// that then look for 'dockerfile'.  If neither are found then default
 	// back to 'Dockerfile' and use that in the error message.
@@ -274,8 +280,15 @@ func (b *Builder) readDockerfile() error {
 // such as `RUN` in ONBUILD RUN foo. There is special case logic in here to
 // deal with that, at least until it becomes more of a general concern with new
 // features.
-func (b *Builder) dispatch(stepN int, ast *parser.Node) error {
+func (b *builder) dispatch(stepN int, ast *parser.Node) error {
 	cmd := ast.Value
+
+	// To ensure the user is give a decent error message if the platform
+	// on which the daemon is running does not support a builder command.
+	if err := platformSupports(strings.ToLower(cmd)); err != nil {
+		return err
+	}
+
 	attrs := ast.Attributes
 	original := ast.Original
 	flags := ast.Flags
@@ -337,10 +350,23 @@ func (b *Builder) dispatch(stepN int, ast *parser.Node) error {
 	// XXX yes, we skip any cmds that are not valid; the parser should have
 	// picked these out already.
 	if f, ok := evaluateTable[cmd]; ok {
-		b.BuilderFlags = NewBuilderFlags()
+		b.BuilderFlags = NewBFlags()
 		b.BuilderFlags.Args = flags
 		return f(b, strList, attrs, original)
 	}
 
 	return fmt.Errorf("Unknown instruction: %s", strings.ToUpper(cmd))
+}
+
+// platformSupports is a short-term function to give users a quality error
+// message if a Dockerfile uses a command not supported on the platform.
+func platformSupports(command string) error {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	switch command {
+	case "expose", "volume", "user":
+		return fmt.Errorf("The daemon on this platform does not support the command '%s'", command)
+	}
+	return nil
 }

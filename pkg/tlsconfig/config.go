@@ -17,11 +17,18 @@ import (
 
 // Options represents the information needed to create client and server TLS configurations.
 type Options struct {
+	CAFile string
+
+	// If either CertFile or KeyFile is empty, Client() will not load them
+	// preventing the client from authenticating to the server.
+	// However, Server() requires them and will error out if they are empty.
+	CertFile string
+	KeyFile  string
+
+	// client-only option
 	InsecureSkipVerify bool
-	ClientAuth         tls.ClientAuthType
-	CAFile             string
-	CertFile           string
-	KeyFile            string
+	// server-only option
+	ClientAuth tls.ClientAuthType
 }
 
 // Extra (server-side) accepted CBC cipher suites - will phase out in the future
@@ -65,10 +72,10 @@ func certPool(caFile string) (*x509.CertPool, error) {
 	certPool := x509.NewCertPool()
 	pem, err := ioutil.ReadFile(caFile)
 	if err != nil {
-		return nil, fmt.Errorf("Could not read CA certificate %s: %v", caFile, err)
+		return nil, fmt.Errorf("Could not read CA certificate %q: %v", caFile, err)
 	}
 	if !certPool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("failed to append certificates from PEM file: %s", caFile)
+		return nil, fmt.Errorf("failed to append certificates from PEM file: %q", caFile)
 	}
 	s := certPool.Subjects()
 	subjects := make([]string, len(s))
@@ -109,9 +116,9 @@ func Server(options Options) (*tls.Config, error) {
 	tlsCert, err := tls.LoadX509KeyPair(options.CertFile, options.KeyFile)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("Could not load X509 key pair (%s, %s): %v", options.CertFile, options.KeyFile, err)
+			return nil, fmt.Errorf("Could not load X509 key pair (cert: %q, key: %q): %v", options.CertFile, options.KeyFile, err)
 		}
-		return nil, fmt.Errorf("Error reading X509 key pair (%s, %s): %v. Make sure the key is not encrypted.", options.CertFile, options.KeyFile, err)
+		return nil, fmt.Errorf("Error reading X509 key pair (cert: %q, key: %q): %v. Make sure the key is not encrypted.", options.CertFile, options.KeyFile, err)
 	}
 	tlsConfig.Certificates = []tls.Certificate{tlsCert}
 	if options.ClientAuth >= tls.VerifyClientCertIfGiven {

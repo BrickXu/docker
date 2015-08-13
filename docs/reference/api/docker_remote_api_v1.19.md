@@ -45,41 +45,53 @@ List containers
     [
          {
                  "Id": "8dfafdbc3a40",
+                 "Names":["/boring_feynman"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 1",
                  "Created": 1367854155,
                  "Status": "Exit 0",
                  "Ports": [{"PrivatePort": 2222, "PublicPort": 3333, "Type": "tcp"}],
+                 "Labels": {
+                         "com.example.vendor": "Acme",
+                         "com.example.license": "GPL",
+                         "com.example.version": "1.0"
+                 },
                  "SizeRw": 12288,
                  "SizeRootFs": 0
          },
          {
                  "Id": "9cd87474be90",
+                 "Names":["/coolName"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 222222",
                  "Created": 1367854155,
                  "Status": "Exit 0",
                  "Ports": [],
+                 "Labels": {},
                  "SizeRw": 12288,
                  "SizeRootFs": 0
          },
          {
                  "Id": "3176a2479c92",
+                 "Names":["/sleepy_dog"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 3333333333333333",
                  "Created": 1367854154,
                  "Status": "Exit 0",
                  "Ports":[],
+                 "Labels": {},
                  "SizeRw":12288,
                  "SizeRootFs":0
          },
          {
                  "Id": "4cb07b47f9fb",
+                 "Names":["/running_cat"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 444444444444444444444444444444444",
                  "Created": 1367854152,
                  "Status": "Exit 0",
                  "Ports": [],
+                 "Labels": {},
                  "SizeRw": 12288,
                  "SizeRootFs": 0
          }
@@ -100,7 +112,7 @@ Query Parameters:
 -   **filters** - a JSON encoded value of the filters (a `map[string][]string`) to process on the containers list. Available filters:
   -   `exited=<int>`; -- containers with exit code of  `<int>` ;
   -   `status=`(`restarting`|`running`|`paused`|`exited`)
-  -   `label=key` or `key=value` of a container label
+  -   `label=key` or `label="key=value"` of a container label
 
 Status Codes:
 
@@ -1141,7 +1153,8 @@ Query Parameters:
 -   **all** – 1/True/true or 0/False/false, default false
 -   **filters** – a JSON encoded value of the filters (a map[string][]string) to process on the images list. Available filters:
   -   `dangling=true`
-  -   `label=key` or `key=value` of an image label
+  -   `label=key` or `label="key=value"` of an image label
+-   **filter** - only return images with the specified name
 
 ### Build image from a Dockerfile
 

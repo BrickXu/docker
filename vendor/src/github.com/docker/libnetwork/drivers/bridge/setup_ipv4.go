@@ -31,9 +31,9 @@ func init() {
 		bridgeNetworks = append(bridgeNetworks, &net.IPNet{IP: []byte{10, byte(i), 42, 1}, Mask: mask})
 	}
 	// 192.168.[42-44].1/24
-	mask[2] = 255
+	mask24 := []byte{255, 255, 255, 0}
 	for i := 42; i < 45; i++ {
-		bridgeNetworks = append(bridgeNetworks, &net.IPNet{IP: []byte{192, 168, byte(i), 1}, Mask: mask})
+		bridgeNetworks = append(bridgeNetworks, &net.IPNet{IP: []byte{192, 168, byte(i), 1}, Mask: mask24})
 	}
 }
 
@@ -75,7 +75,12 @@ func setupBridgeIPv4(config *networkConfiguration, i *bridgeInterface) error {
 }
 
 func allocateBridgeIP(config *networkConfiguration, i *bridgeInterface) error {
-	ipAllocator.RequestIP(i.bridgeIPv4, i.bridgeIPv4.IP)
+	// Because of the way ipallocator manages the container address space,
+	// reserve bridge address only if it belongs to the container network
+	// (if defined), no need otherwise
+	if config.FixedCIDR == nil || config.FixedCIDR.Contains(i.bridgeIPv4.IP) {
+		ipAllocator.RequestIP(i.bridgeIPv4, i.bridgeIPv4.IP)
+	}
 	return nil
 }
 
@@ -109,8 +114,14 @@ func setupGatewayIPv4(config *networkConfiguration, i *bridgeInterface) error {
 	if !i.bridgeIPv4.Contains(config.DefaultGatewayIPv4) {
 		return &ErrInvalidGateway{}
 	}
-	if _, err := ipAllocator.RequestIP(i.bridgeIPv4, config.DefaultGatewayIPv4); err != nil {
-		return err
+
+	// Because of the way ipallocator manages the container address space,
+	// reserve default gw address only if it belongs to the container network
+	// (if defined), no need otherwise
+	if config.FixedCIDR == nil || config.FixedCIDR.Contains(config.DefaultGatewayIPv4) {
+		if _, err := ipAllocator.RequestIP(i.bridgeIPv4, config.DefaultGatewayIPv4); err != nil {
+			return err
+		}
 	}
 
 	// Store requested default gateway

@@ -58,7 +58,7 @@ First generate CA private and public keys:
     State or Province Name (full name) [Some-State]:Queensland
     Locality Name (eg, city) []:Brisbane
     Organization Name (eg, company) [Internet Widgits Pty Ltd]:Docker Inc
-    Organizational Unit Name (eg, section) []:Boot2Docker
+    Organizational Unit Name (eg, section) []:Sales
     Common Name (e.g. server FQDN or YOUR name) []:$HOST
     Email Address []:Sven@home.org.au
 
@@ -136,7 +136,7 @@ prevent accidental damage:
 Now you can make the Docker daemon only accept connections from clients
 providing a certificate trusted by our CA:
 
-    $ docker -d --tlsverify --tlscacert=ca.pem --tlscert=server-cert.pem --tlskey=server-key.pem \
+    $ docker daemon --tlsverify --tlscacert=ca.pem --tlscert=server-cert.pem --tlskey=server-key.pem \
       -H=0.0.0.0:2376
 
 To be able to connect to Docker and validate its certificate, you now

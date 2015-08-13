@@ -28,11 +28,12 @@ func (s *DockerSuite) TestCliStatsNoStreamGetCpu(c *check.C) {
 	var v *types.Stats
 	err = json.NewDecoder(body).Decode(&v)
 	c.Assert(err, check.IsNil)
+	body.Close()
 
 	var cpuPercent = 0.0
-	cpuDelta := float64(v.CpuStats.CpuUsage.TotalUsage - v.PreCpuStats.CpuUsage.TotalUsage)
-	systemDelta := float64(v.CpuStats.SystemUsage - v.PreCpuStats.SystemUsage)
-	cpuPercent = (cpuDelta / systemDelta) * float64(len(v.CpuStats.CpuUsage.PercpuUsage)) * 100.0
+	cpuDelta := float64(v.CPUStats.CPUUsage.TotalUsage - v.PreCPUStats.CPUUsage.TotalUsage)
+	systemDelta := float64(v.CPUStats.SystemUsage - v.PreCPUStats.SystemUsage)
+	cpuPercent = (cpuDelta / systemDelta) * float64(len(v.CPUStats.CPUUsage.PercpuUsage)) * 100.0
 	if cpuPercent == 0 {
 		c.Fatalf("docker stats with no-stream get cpu usage failed: was %v", cpuPercent)
 	}
@@ -105,7 +106,7 @@ func (s *DockerSuite) TestApiNetworkStats(c *check.C) {
 		check.Commentf("Reported less Txbytes than expected. Expected >= %d. Found %d. %s", expRxPkts, nwStatsPost.RxPackets, pingouts))
 }
 
-func getNetworkStats(c *check.C, id string) types.Network {
+func getNetworkStats(c *check.C, id string) types.NetworkStats {
 	var st *types.Stats
 
 	_, body, err := sockRequestRaw("GET", fmt.Sprintf("/containers/%s/stats?stream=false", id), nil, "")
@@ -113,6 +114,7 @@ func getNetworkStats(c *check.C, id string) types.Network {
 
 	err = json.NewDecoder(body).Decode(&st)
 	c.Assert(err, check.IsNil)
+	body.Close()
 
 	return st.Network
 }

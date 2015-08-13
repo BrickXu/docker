@@ -9,16 +9,17 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/daemon/graphdriver/windows"
+	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
 )
 
-// setupInitLayer populates a directory with mountpoints suitable
+// SetupInitLayer populates a directory with mountpoints suitable
 // for bind-mounting dockerinit into the container. T
 func SetupInitLayer(initLayer string) error {
 	return nil
 }
 
-func createRootFilesystemInDriver(graph *Graph, img *Image, layerData archive.ArchiveReader) error {
+func createRootFilesystemInDriver(graph *Graph, img *image.Image, layerData archive.Reader) error {
 	if wd, ok := graph.driver.(*windows.WindowsGraphDriver); ok {
 		if img.Container != "" && layerData == nil {
 			logrus.Debugf("Copying from container %s.", img.Container)
@@ -59,7 +60,7 @@ func (graph *Graph) restoreBaseImages() ([]string, error) {
 }
 
 // ParentLayerIds returns a list of all parent image IDs for the given image.
-func (graph *Graph) ParentLayerIds(img *Image) (ids []string, err error) {
+func (graph *Graph) ParentLayerIds(img *image.Image) (ids []string, err error) {
 	for i := img; i != nil && err == nil; i, err = graph.GetParent(i) {
 		ids = append(ids, i.ID)
 	}
@@ -70,7 +71,7 @@ func (graph *Graph) ParentLayerIds(img *Image) (ids []string, err error) {
 // storeImage stores file system layer data for the given image to the
 // graph's storage driver. Image metadata is stored in a file
 // at the specified root directory.
-func (graph *Graph) storeImage(img *Image, layerData archive.ArchiveReader, root string) (err error) {
+func (graph *Graph) storeImage(img *image.Image, layerData archive.Reader, root string) (err error) {
 
 	if wd, ok := graph.driver.(*windows.WindowsGraphDriver); ok {
 		// Store the layer. If layerData is not nil and this isn't a base image,
@@ -94,32 +95,7 @@ func (graph *Graph) storeImage(img *Image, layerData archive.ArchiveReader, root
 			}
 		}
 
-		if err := graph.saveSize(root, int(img.Size)); err != nil {
-			return err
-		}
-
-		f, err := os.OpenFile(jsonPath(root), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(0600))
-		if err != nil {
-			return err
-		}
-
-		defer f.Close()
-
-		return json.NewEncoder(f).Encode(img)
-	} else {
-		// We keep this functionality here so that we can still work with the
-		// VFS driver during development. This will not be used for actual running
-		// of Windows containers. Without this code, it would not be possible to
-		// docker pull using the VFS driver.
-
-		// Store the layer. If layerData is not nil, unpack it into the new layer
-		if layerData != nil {
-			if img.Size, err = graph.driver.ApplyDiff(img.ID, img.Parent, layerData); err != nil {
-				return err
-			}
-		}
-
-		if err := graph.saveSize(root, int(img.Size)); err != nil {
+		if err := graph.saveSize(root, img.Size); err != nil {
 			return err
 		}
 
@@ -132,10 +108,34 @@ func (graph *Graph) storeImage(img *Image, layerData archive.ArchiveReader, root
 
 		return json.NewEncoder(f).Encode(img)
 	}
+	// We keep this functionality here so that we can still work with the
+	// VFS driver during development. This will not be used for actual running
+	// of Windows containers. Without this code, it would not be possible to
+	// docker pull using the VFS driver.
+
+	// Store the layer. If layerData is not nil, unpack it into the new layer
+	if layerData != nil {
+		if err := graph.disassembleAndApplyTarLayer(img, layerData, root); err != nil {
+			return err
+		}
+	}
+
+	if err := graph.saveSize(root, img.Size); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(jsonPath(root), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(0600))
+	if err != nil {
+		return err
+	}
+
+	defer f.Close()
+
+	return json.NewEncoder(f).Encode(img)
 }
 
 // TarLayer returns a tar archive of the image's filesystem layer.
-func (graph *Graph) TarLayer(img *Image) (arch archive.Archive, err error) {
+func (graph *Graph) TarLayer(img *image.Image) (arch archive.Archive, err error) {
 	if wd, ok := graph.driver.(*windows.WindowsGraphDriver); ok {
 		var ids []string
 		if img.Parent != "" {
@@ -151,10 +151,14 @@ func (graph *Graph) TarLayer(img *Image) (arch archive.Archive, err error) {
 		}
 
 		return wd.Export(img.ID, wd.LayerIdsToPaths(ids))
-	} else {
-		// We keep this functionality here so that we can still work with the VFS
-		// driver during development. VFS is not supported (and just will not work)
-		// for Windows containers.
+	}
+	// We keep this functionality here so that we can still work with the VFS
+	// driver during development. VFS is not supported (and just will not work)
+	// for Windows containers.
+	rdr, err := graph.assembleTarLayer(img)
+	if err != nil {
+		logrus.Debugf("[graph] TarLayer with traditional differ: %s", img.ID)
 		return graph.driver.Diff(img.ID, img.Parent)
 	}
+	return rdr, nil
 }

@@ -38,8 +38,12 @@ func (s *DockerRegistrySuite) SetUpTest(c *check.C) {
 }
 
 func (s *DockerRegistrySuite) TearDownTest(c *check.C) {
-	s.reg.Close()
-	s.ds.TearDownTest(c)
+	if s.reg != nil {
+		s.reg.Close()
+	}
+	if s.ds != nil {
+		s.ds.TearDownTest(c)
+	}
 }
 
 func init() {
@@ -59,5 +63,28 @@ func (s *DockerDaemonSuite) SetUpTest(c *check.C) {
 
 func (s *DockerDaemonSuite) TearDownTest(c *check.C) {
 	s.d.Stop()
+	s.ds.TearDownTest(c)
+}
+
+func init() {
+	check.Suite(&DockerTrustSuite{
+		ds: &DockerSuite{},
+	})
+}
+
+type DockerTrustSuite struct {
+	ds  *DockerSuite
+	reg *testRegistryV2
+	not *testNotary
+}
+
+func (s *DockerTrustSuite) SetUpTest(c *check.C) {
+	s.reg = setupRegistry(c)
+	s.not = setupNotary(c)
+}
+
+func (s *DockerTrustSuite) TearDownTest(c *check.C) {
+	s.reg.Close()
+	s.not.Close()
 	s.ds.TearDownTest(c)
 }

@@ -8,14 +8,15 @@ import (
 
 	// TODO Windows: Factor out ulimit
 	"github.com/docker/docker/pkg/ulimit"
-	"github.com/docker/libcontainer"
-	"github.com/docker/libcontainer/configs"
+	"github.com/opencontainers/runc/libcontainer"
+	"github.com/opencontainers/runc/libcontainer/configs"
 )
 
 // Context is a generic key value pair that allows
 // arbatrary data to be sent
 type Context map[string]string
 
+// Define error messages
 var (
 	ErrNotRunning              = errors.New("Container is not running")
 	ErrWaitTimeoutReached      = errors.New("Wait timeout reached")
@@ -23,24 +24,22 @@ var (
 	ErrDriverNotFound          = errors.New("The requested docker init has not been found")
 )
 
+// StartCallback defines a callback function.
+// It's used by 'Run' and 'Exec', does some work in parent process
+// after child process is started.
 type StartCallback func(*ProcessConfig, int)
 
-// Driver specific information based on
+// Info is driver specific information based on
 // processes registered with the driver
 type Info interface {
 	IsRunning() bool
 }
 
-// Terminal in an interface for drivers to implement
-// if they want to support Close and Resize calls from
-// the core
+// Terminal represents a pseudo TTY, it is for when
+// using a container interactively.
 type Terminal interface {
 	io.Closer
 	Resize(height, width int) error
-}
-
-type TtyTerminal interface {
-	Master() libcontainer.Console
 }
 
 // ExitStatus provides exit reasons for a container.
@@ -52,74 +51,94 @@ type ExitStatus struct {
 	OOMKilled bool
 }
 
+// Driver is an interface for drivers to implement
+// including all basic functions a driver should have
 type Driver interface {
-	Run(c *Command, pipes *Pipes, startCallback StartCallback) (ExitStatus, error) // Run executes the process and blocks until the process exits and returns the exit code
-	// Exec executes the process in an existing container, blocks until the process exits and returns the exit code
+	// Run executes the process, blocks until the process exits and returns
+	// the exit code. It's the last stage on Docker side for running a container.
+	Run(c *Command, pipes *Pipes, startCallback StartCallback) (ExitStatus, error)
+
+	// Exec executes the process in an existing container, blocks until the
+	// process exits and returns the exit code.
 	Exec(c *Command, processConfig *ProcessConfig, pipes *Pipes, startCallback StartCallback) (int, error)
+
+	// Kill sends signals to process in container.
 	Kill(c *Command, sig int) error
+
+	// Pause pauses a container.
 	Pause(c *Command) error
+
+	// Unpause unpauses a container.
 	Unpause(c *Command) error
-	Name() string                                 // Driver name
-	Info(id string) Info                          // "temporary" hack (until we move state from core to plugins)
-	GetPidsForContainer(id string) ([]int, error) // Returns a list of pids for the given container.
-	Terminate(c *Command) error                   // kill it with fire
-	Clean(id string) error                        // clean all traces of container exec
-	Stats(id string) (*ResourceStats, error)      // Get resource stats for a running container
+
+	// Name returns the name of the driver.
+	Name() string
+
+	// Info returns the configuration stored in the driver struct,
+	// "temporary" hack (until we move state from core to plugins).
+	Info(id string) Info
+
+	// GetPidsForContainer returns a list of pid for the processes running in a container.
+	GetPidsForContainer(id string) ([]int, error)
+
+	// Terminate kills a container by sending signal SIGKILL.
+	Terminate(c *Command) error
+
+	// Clean removes all traces of container exec.
+	Clean(id string) error
+
+	// Stats returns resource stats for a running container
+	Stats(id string) (*ResourceStats, error)
 }
 
-// Network settings of the container
-type Network struct {
-	Interface      *NetworkInterface `json:"interface"` // if interface is nil then networking is disabled
-	Mtu            int               `json:"mtu"`
-	ContainerID    string            `json:"container_id"` // id of the container to join network.
-	NamespacePath  string            `json:"namespace_path"`
-	HostNetworking bool              `json:"host_networking"`
-}
-
-// IPC settings of the container
+// Ipc settings of the container
+// It is for IPC namespace setting. Usually different containers
+// have their own IPC namespace, however this specifies to use
+// an existing IPC namespace.
+// You can join the host's or a container's IPC namespace.
 type Ipc struct {
 	ContainerID string `json:"container_id"` // id of the container to join ipc.
 	HostIpc     bool   `json:"host_ipc"`
 }
 
-// PID settings of the container
+// Pid settings of the container
+// It is for PID namespace setting. Usually different containers
+// have their own PID namespace, however this specifies to use
+// an existing PID namespace.
+// Joining the host's PID namespace is currently the only supported
+// option.
 type Pid struct {
 	HostPid bool `json:"host_pid"`
 }
 
 // UTS settings of the container
+// It is for UTS namespace setting. Usually different containers
+// have their own UTS namespace, however this specifies to use
+// an existing UTS namespace.
+// Joining the host's UTS namespace is currently the only supported
+// option.
 type UTS struct {
 	HostUTS bool `json:"host_uts"`
 }
 
-type NetworkInterface struct {
-	Gateway              string `json:"gateway"`
-	IPAddress            string `json:"ip"`
-	IPPrefixLen          int    `json:"ip_prefix_len"`
-	MacAddress           string `json:"mac"`
-	Bridge               string `json:"bridge"`
-	GlobalIPv6Address    string `json:"global_ipv6"`
-	LinkLocalIPv6Address string `json:"link_local_ipv6"`
-	GlobalIPv6PrefixLen  int    `json:"global_ipv6_prefix_len"`
-	IPv6Gateway          string `json:"ipv6_gateway"`
-	HairpinMode          bool   `json:"hairpin_mode"`
-}
-
+// Resources contains all resource configs for a driver.
+// Currently these are all for cgroup configs.
 // TODO Windows: Factor out ulimit.Rlimit
 type Resources struct {
 	Memory           int64            `json:"memory"`
 	MemorySwap       int64            `json:"memory_swap"`
-	CpuShares        int64            `json:"cpu_shares"`
+	CPUShares        int64            `json:"cpu_shares"`
 	CpusetCpus       string           `json:"cpuset_cpus"`
 	CpusetMems       string           `json:"cpuset_mems"`
-	CpuPeriod        int64            `json:"cpu_period"`
-	CpuQuota         int64            `json:"cpu_quota"`
+	CPUPeriod        int64            `json:"cpu_period"`
+	CPUQuota         int64            `json:"cpu_quota"`
 	BlkioWeight      int64            `json:"blkio_weight"`
 	Rlimits          []*ulimit.Rlimit `json:"rlimits"`
 	OomKillDisable   bool             `json:"oom_kill_disable"`
 	MemorySwappiness int64            `json:"memory_swappiness"`
 }
 
+// ResourceStats contains information about resource usage by a container.
 type ResourceStats struct {
 	*libcontainer.Stats
 	Read        time.Time `json:"read"`
@@ -127,6 +146,7 @@ type ResourceStats struct {
 	SystemUsage uint64    `json:"system_usage"`
 }
 
+// Mount contains information for a mount operation.
 type Mount struct {
 	Source      string `json:"source"`
 	Destination string `json:"destination"`
@@ -135,7 +155,7 @@ type Mount struct {
 	Slave       bool   `json:"slave"`
 }
 
-// Describes a process that will be run inside a container.
+// ProcessConfig describes a process that will be run inside a container.
 type ProcessConfig struct {
 	exec.Cmd `json:"-"`
 
@@ -149,10 +169,10 @@ type ProcessConfig struct {
 	ConsoleSize [2]int   `json:"-"` // h,w of initial console size
 }
 
+// Command wrapps an os/exec.Cmd to add more metadata
+//
 // TODO Windows: Factor out unused fields such as LxcConfig, AppArmorProfile,
 // and CgroupParent.
-//
-// Process wrapps an os/exec.Cmd to add more metadata
 type Command struct {
 	ID                 string            `json:"id"`
 	Rootfs             string            `json:"rootfs"` // root fs of the container

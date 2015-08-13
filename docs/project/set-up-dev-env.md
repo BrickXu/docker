@@ -29,7 +29,7 @@ you continue working with your fork on this branch.
 
 ##  Clean your host of Docker artifacts
 
-Docker developers run the latest stable release of the Docker software (with Boot2Docker if their machine is Mac OS X). They clean their local
+Docker developers run the latest stable release of the Docker software (with Docker Machine if their machine is Mac OS X). They clean their local
 hosts of unnecessary Docker artifacts such as stopped containers or unused
 images. Cleaning unnecessary artifacts isn't strictly necessary, but it is
 good practice, so it is included here.
@@ -96,9 +96,9 @@ environment.
 
 1. Open a terminal.
 
-    Mac users, use `boot2docker status` to make sure Boot2Docker is running. You
-    may need to run `eval "$(boot2docker shellinit)"` to initialize your shell
-    environment.
+    Mac users, use `docker-machine status` to make sure your VM is running. You
+    may need to run `eval "$(docker-machine env your_vm_name)"` to initialize your
+    shell environment.
 
 3. Change into the root of your forked repository.
 
@@ -207,8 +207,8 @@ build and run a `docker` binary in your container.
 
     ![Multiple terminals](/project/images/three_terms.png)
 
-    Mac OS X users, make sure you run `eval "$(boot2docker shellinit)"` in any new
-    terminals.
+    Mac OS X users, make sure you run `eval "$(docker-machine env your_vm_name)"` in
+    any new terminals.
 
 2. In a terminal, create a new container from your `dry-run-test` image.
 
@@ -285,7 +285,7 @@ with the `make.sh` script.
 
 8. Start a `docker` daemon running inside your container.
 
-        root@5f8630b873fe:/go/src/github.com/docker/docker#  docker -dD
+        root@5f8630b873fe:/go/src/github.com/docker/docker#  docker daemon -D
 
     The `-dD` flag starts the daemon in debug mode. You'll find this useful
     when debugging your code.
@@ -411,7 +411,7 @@ onto the `/go` directory inside the container.
 
     * copy the binary inside the development container using
       `cp bundles/1.5.0-dev/binary/docker /usr/bin`
-    * start `docker -dD` to launch the Docker daemon inside the container
+    * start `docker daemon -D` to launch the Docker daemon inside the container
     * run `docker ps` on local host to get the development container's name
     * connect to your running container `docker exec -it container_name bash`
     * use the `docker run hello-world` command to create and run a container 

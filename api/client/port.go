@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	Cli "github.com/docker/docker/cli"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/nat"
 )
@@ -14,7 +15,7 @@ import (
 //
 // Usage: docker port CONTAINER [PRIVATE_PORT[/PROTO]]
 func (cli *DockerCli) CmdPort(args ...string) error {
-	cmd := cli.Subcmd("port", []string{"CONTAINER [PRIVATE_PORT[/PROTO]]"}, "List port mappings for the CONTAINER, or lookup the public-facing port that\nis NAT-ed to the PRIVATE_PORT", true)
+	cmd := Cli.Subcmd("port", []string{"CONTAINER [PRIVATE_PORT[/PROTO]]"}, "List port mappings for the CONTAINER, or lookup the public-facing port that\nis NAT-ed to the PRIVATE_PORT", true)
 	cmd.Require(flag.Min, 1)
 
 	cmd.ParseFlags(args, true)
@@ -48,9 +49,13 @@ func (cli *DockerCli) CmdPort(args ...string) error {
 			proto = parts[1]
 		}
 		natPort := port + "/" + proto
-		if frontends, exists := c.NetworkSettings.Ports[nat.Port(port+"/"+proto)]; exists && frontends != nil {
+		newP, err := nat.NewPort(proto, port)
+		if err != nil {
+			return err
+		}
+		if frontends, exists := c.NetworkSettings.Ports[newP]; exists && frontends != nil {
 			for _, frontend := range frontends {
-				fmt.Fprintf(cli.out, "%s:%s\n", frontend.HostIp, frontend.HostPort)
+				fmt.Fprintf(cli.out, "%s:%s\n", frontend.HostIP, frontend.HostPort)
 			}
 			return nil
 		}
@@ -59,7 +64,7 @@ func (cli *DockerCli) CmdPort(args ...string) error {
 
 	for from, frontends := range c.NetworkSettings.Ports {
 		for _, frontend := range frontends {
-			fmt.Fprintf(cli.out, "%s -> %s:%s\n", from, frontend.HostIp, frontend.HostPort)
+			fmt.Fprintf(cli.out, "%s -> %s:%s\n", from, frontend.HostIP, frontend.HostPort)
 		}
 	}
 

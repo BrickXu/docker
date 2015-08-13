@@ -3,13 +3,15 @@ package bridge
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 
 	"github.com/Sirupsen/logrus"
-	bri "github.com/docker/libcontainer/netlink"
 	"github.com/docker/libnetwork/driverapi"
 	"github.com/docker/libnetwork/ipallocator"
 	"github.com/docker/libnetwork/iptables"
@@ -594,21 +596,18 @@ func (d *driver) CreateNetwork(id types.UUID, option map[string]interface{}) err
 	// networks. This step is needed now because driver might have now set the bridge
 	// name on this config struct. And because we need to check for possible address
 	// conflicts, so we need to check against operationa lnetworks.
-	if err := config.conflictsWithNetworks(id, networkList); err != nil {
+	if err = config.conflictsWithNetworks(id, networkList); err != nil {
 		return err
 	}
 
 	setupNetworkIsolationRules := func(config *networkConfiguration, i *bridgeInterface) error {
-		defer func() {
-			if err != nil {
-				if err := network.isolateNetwork(networkList, false); err != nil {
-					logrus.Warnf("Failed on removing the inter-network iptables rules on cleanup: %v", err)
-				}
+		if err := network.isolateNetwork(networkList, true); err != nil {
+			if err := network.isolateNetwork(networkList, false); err != nil {
+				logrus.Warnf("Failed on removing the inter-network iptables rules on cleanup: %v", err)
 			}
-		}()
-
-		err := network.isolateNetwork(networkList, true)
-		return err
+			return err
+		}
+		return nil
 	}
 
 	// Prepare the bridge setup configuration
@@ -661,6 +660,10 @@ func (d *driver) CreateNetwork(id types.UUID, option map[string]interface{}) err
 		// Setup IPTables.
 		{config.EnableIPTables, network.setupIPTables},
 
+		//We want to track firewalld configuration so that
+		//if it is started/reloaded, the rules can be applied correctly
+		{config.EnableIPTables, network.setupFirewalld},
+
 		// Setup DefaultGatewayIPv4
 		{config.DefaultGatewayIPv4 != nil, setupGatewayIPv4},
 
@@ -669,6 +672,9 @@ func (d *driver) CreateNetwork(id types.UUID, option map[string]interface{}) err
 
 		// Add inter-network communication rules.
 		{config.EnableIPTables, setupNetworkIsolationRules},
+
+		//Configure bridge networking filtering if ICC is off and IP tables are enabled
+		{!config.EnableICC && config.EnableIPTables, setupBridgeNetFiltering},
 	} {
 		if step.Condition {
 			bridgeSetup.queueStep(step.Fn)
@@ -757,17 +763,57 @@ func (d *driver) DeleteNetwork(nid types.UUID) error {
 }
 
 func addToBridge(ifaceName, bridgeName string) error {
-	iface, err := net.InterfaceByName(ifaceName)
+	link, err := netlink.LinkByName(ifaceName)
 	if err != nil {
 		return fmt.Errorf("could not find interface %s: %v", ifaceName, err)
 	}
+	if err = netlink.LinkSetMaster(link,
+		&netlink.Bridge{LinkAttrs: netlink.LinkAttrs{Name: bridgeName}}); err != nil {
+		logrus.Debugf("Failed to add %s to bridge via netlink.Trying ioctl: %v", ifaceName, err)
+		iface, err := net.InterfaceByName(ifaceName)
+		if err != nil {
+			return fmt.Errorf("could not find network interface %s: %v", ifaceName, err)
+		}
 
-	master, err := net.InterfaceByName(bridgeName)
-	if err != nil {
-		return fmt.Errorf("could not find bridge %s: %v", bridgeName, err)
+		master, err := net.InterfaceByName(bridgeName)
+		if err != nil {
+			return fmt.Errorf("could not find bridge %s: %v", bridgeName, err)
+		}
+
+		return ioctlAddToBridge(iface, master)
+	}
+	return nil
+}
+
+func setHairpinMode(link netlink.Link, enable bool) error {
+	err := netlink.LinkSetHairpin(link, enable)
+	if err != nil && err != syscall.EINVAL {
+		// If error is not EINVAL something else went wrong, bail out right away
+		return fmt.Errorf("unable to set hairpin mode on %s via netlink: %v",
+			link.Attrs().Name, err)
 	}
 
-	return bri.AddToBridge(iface, master)
+	// Hairpin mode successfully set up
+	if err == nil {
+		return nil
+	}
+
+	// The netlink method failed with EINVAL which is probably because of an older
+	// kernel. Try one more time via the sysfs method.
+	path := filepath.Join("/sys/class/net", link.Attrs().Name, "brport/hairpin_mode")
+
+	var val []byte
+	if enable {
+		val = []byte{'1', '\n'}
+	} else {
+		val = []byte{'0', '\n'}
+	}
+
+	if err := ioutil.WriteFile(path, val, 0644); err != nil {
+		return fmt.Errorf("unable to set hairpin mode on %s via sysfs: %v", link.Attrs().Name, err)
+	}
+
+	return nil
 }
 
 func (d *driver) CreateEndpoint(nid, eid types.UUID, epInfo driverapi.EndpointInfo, epOptions map[string]interface{}) error {
@@ -900,7 +946,7 @@ func (d *driver) CreateEndpoint(nid, eid types.UUID, epInfo driverapi.EndpointIn
 	}
 
 	if !config.EnableUserlandProxy {
-		err = netlink.LinkSetHairpin(host, true)
+		err = setHairpinMode(host, true)
 		if err != nil {
 			return err
 		}
@@ -914,7 +960,7 @@ func (d *driver) CreateEndpoint(nid, eid types.UUID, epInfo driverapi.EndpointIn
 	ipv4Addr := &net.IPNet{IP: ip4, Mask: n.bridge.bridgeIPv4.Mask}
 
 	// Down the interface before configuring mac address.
-	if err := netlink.LinkSetDown(sbox); err != nil {
+	if err = netlink.LinkSetDown(sbox); err != nil {
 		return fmt.Errorf("could not set link down for container interface %s: %v", containerIfName, err)
 	}
 
@@ -927,7 +973,7 @@ func (d *driver) CreateEndpoint(nid, eid types.UUID, epInfo driverapi.EndpointIn
 	endpoint.macAddress = mac
 
 	// Up the host interface after finishing all netlink configuration
-	if err := netlink.LinkSetUp(host); err != nil {
+	if err = netlink.LinkSetUp(host); err != nil {
 		return fmt.Errorf("could not set link up for host interface %s: %v", hostIfName, err)
 	}
 
@@ -1044,7 +1090,11 @@ func (d *driver) DeleteEndpoint(nid, eid types.UUID) error {
 
 	// Release the v6 address allocated to this endpoint's sandbox interface
 	if config.EnableIPv6 {
-		err := ipAllocator.ReleaseIP(n.bridge.bridgeIPv6, ep.addrv6.IP)
+		network := n.bridge.bridgeIPv6
+		if config.FixedCIDRv6 != nil {
+			network = config.FixedCIDRv6
+		}
+		err := ipAllocator.ReleaseIP(network, ep.addrv6.IP)
 		if err != nil {
 			return err
 		}

@@ -12,9 +12,11 @@ import (
 	"github.com/docker/docker/daemon/execdriver"
 	nativeTemplate "github.com/docker/docker/daemon/execdriver/native/template"
 	"github.com/docker/docker/pkg/stringutils"
-	"github.com/docker/libcontainer/label"
+	"github.com/opencontainers/runc/libcontainer/label"
 )
 
+// LxcTemplate is the template for lxc driver, it's used
+// to configure LXC.
 const LxcTemplate = `
 lxc.network.type = none
 # root filesystem
@@ -94,11 +96,11 @@ lxc.cgroup.memory.soft_limit_in_bytes = {{.Resources.Memory}}
 lxc.cgroup.memory.memsw.limit_in_bytes = {{$memSwap}}
 {{end}}
 {{end}}
-{{if .Resources.CpuShares}}
-lxc.cgroup.cpu.shares = {{.Resources.CpuShares}}
+{{if .Resources.CPUShares}}
+lxc.cgroup.cpu.shares = {{.Resources.CPUShares}}
 {{end}}
-{{if .Resources.CpuPeriod}}
-lxc.cgroup.cpu.cfs_period_us = {{.Resources.CpuPeriod}}
+{{if .Resources.CPUPeriod}}
+lxc.cgroup.cpu.cfs_period_us = {{.Resources.CPUPeriod}}
 {{end}}
 {{if .Resources.CpusetCpus}}
 lxc.cgroup.cpuset.cpus = {{.Resources.CpusetCpus}}
@@ -106,8 +108,8 @@ lxc.cgroup.cpuset.cpus = {{.Resources.CpusetCpus}}
 {{if .Resources.CpusetMems}}
 lxc.cgroup.cpuset.mems = {{.Resources.CpusetMems}}
 {{end}}
-{{if .Resources.CpuQuota}}
-lxc.cgroup.cpu.cfs_quota_us = {{.Resources.CpuQuota}}
+{{if .Resources.CPUQuota}}
+lxc.cgroup.cpu.cfs_quota_us = {{.Resources.CPUQuota}}
 {{end}}
 {{if .Resources.BlkioWeight}}
 lxc.cgroup.blkio.weight = {{.Resources.BlkioWeight}}
@@ -115,7 +117,7 @@ lxc.cgroup.blkio.weight = {{.Resources.BlkioWeight}}
 {{if .Resources.OomKillDisable}}
 lxc.cgroup.memory.oom_control = {{.Resources.OomKillDisable}}
 {{end}}
-{{if .Resources.MemorySwappiness}}
+{{if gt .Resources.MemorySwappiness 0}}
 lxc.cgroup.memory.swappiness = {{.Resources.MemorySwappiness}}
 {{end}}
 {{end}}
@@ -126,17 +128,6 @@ lxc.{{$value}}
 {{end}}
 {{end}}
 
-{{if .Network.Interface}}
-{{if .Network.Interface.IPAddress}}
-lxc.network.ipv4 = {{.Network.Interface.IPAddress}}/{{.Network.Interface.IPPrefixLen}}
-{{end}}
-{{if .Network.Interface.Gateway}}
-lxc.network.ipv4.gateway = {{.Network.Interface.Gateway}}
-{{end}}
-{{if .Network.Interface.MacAddress}}
-lxc.network.hwaddr = {{.Network.Interface.MacAddress}}
-{{end}}
-{{end}}
 {{if .ProcessConfig.Env}}
 lxc.utsname = {{getHostname .ProcessConfig.Env}}
 {{end}}
@@ -158,7 +149,7 @@ lxc.cap.drop = {{.}}
 {{end}}
 `
 
-var LxcTemplateCompiled *template.Template
+var lxcTemplateCompiled *template.Template
 
 // Escape spaces in strings according to the fstab documentation, which is the
 // format for "lxc.mount.entry" lines in lxc.conf. See also "man 5 fstab".
@@ -254,7 +245,7 @@ func init() {
 		"dropList":          dropList,
 		"getHostname":       getHostname,
 	}
-	LxcTemplateCompiled, err = template.New("lxc").Funcs(funcMap).Parse(LxcTemplate)
+	lxcTemplateCompiled, err = template.New("lxc").Funcs(funcMap).Parse(LxcTemplate)
 	if err != nil {
 		panic(err)
 	}
