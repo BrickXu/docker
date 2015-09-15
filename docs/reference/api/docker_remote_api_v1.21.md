@@ -5,7 +5,7 @@ description = "API Documentation for Docker"
 keywords = ["API, Docker, rcli, REST,  documentation"]
 [menu.main]
 parent="smn_remoteapi"
-weight = 1
+weight = 0
 +++
 <![end-metadata]-->
 
@@ -61,7 +61,7 @@ List containers
          },
          {
                  "Id": "9cd87474be90",
-                 "Names":["/coolName"]
+                 "Names":["/coolName"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 222222",
                  "Created": 1367854155,
@@ -73,7 +73,7 @@ List containers
          },
          {
                  "Id": "3176a2479c92",
-                 "Names":["/sleepy_dog"]
+                 "Names":["/sleepy_dog"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 3333333333333333",
                  "Created": 1367854154,
@@ -85,7 +85,7 @@ List containers
          },
          {
                  "Id": "4cb07b47f9fb",
-                 "Names":["/running_cat"]
+                 "Names":["/running_cat"],
                  "Image": "ubuntu:latest",
                  "Command": "echo 444444444444444444444444444444444",
                  "Created": 1367854152,
@@ -166,12 +166,14 @@ Create a container
            "ExposedPorts": {
                    "22/tcp": {}
            },
+           "StopSignal": "SIGTERM",
            "HostConfig": {
              "Binds": ["/tmp:/tmp"],
              "Links": ["redis3:redis"],
              "LxcConf": {"lxc.utsname":"docker"},
              "Memory": 0,
              "MemorySwap": 0,
+             "KernelMemory": 0,
              "CpuShares": 512,
              "CpuPeriod": 100000,
              "CpusetCpus": "0,1",
@@ -195,7 +197,8 @@ Create a container
              "Ulimits": [{}],
              "LogConfig": { "Type": "json-file", "Config": {} },
              "SecurityOpt": [""],
-             "CgroupParent": ""
+             "CgroupParent": "",
+	      "VolumeDriver": ""
           }
       }
 
@@ -205,7 +208,7 @@ Create a container
       Content-Type: application/json
 
       {
-           "Id":"e90e34656806"
+           "Id":"e90e34656806",
            "Warnings":[]
       }
 
@@ -217,8 +220,9 @@ Json Parameters:
       for the container.
 -   **User** - A string value specifying the user inside the container.
 -   **Memory** - Memory limit in bytes.
--   **MemorySwap**- Total memory limit (memory + swap); set `-1` to disable swap
+-   **MemorySwap** - Total memory limit (memory + swap); set `-1` to disable swap
       You must use this with `memory` and make the swap value larger than `memory`.
+-   **KernelMemory** - Kernel memory limit in bytes.
 -   **CpuShares** - An integer value containing the container's CPU Shares
       (ie. the relative weight vs other containers).
 -   **CpuPeriod** - The length of a CPU period in microseconds.
@@ -247,6 +251,7 @@ Json Parameters:
       container
 -   **ExposedPorts** - An object mapping ports to an empty object in the form of:
       `"ExposedPorts": { "<port>/<tcp|udp>: {}" }`
+-   **StopSignal** - Signal to stop a container as a string or unsigned integer. `SIGTERM` by default.
 -   **HostConfig**
     -   **Binds** – A list of volume bindings for this container. Each volume binding is a string in one of these forms:
            + `container_path` to create a new volume for the container
@@ -276,7 +281,8 @@ Json Parameters:
     -   **Capdrop** - A list of kernel capabilities to drop from the container.
     -   **RestartPolicy** – The behavior to apply when the container exits.  The
             value is an object with a `Name` property of either `"always"` to
-            always restart or `"on-failure"` to restart only when the container
+            always restart, `"unless-stopped"` to restart always except when
+            user has manually stopped the container or `"on-failure"` to restart only when the container
             exit code is non-zero.  If `on-failure` is used, `MaximumRetryCount`
             controls the number of times to retry before giving up.
             The default is not to restart. (optional)
@@ -289,14 +295,15 @@ Json Parameters:
           `{ "PathOnHost": "/dev/deviceName", "PathInContainer": "/dev/deviceName", "CgroupPermissions": "mrw"}`
     -   **Ulimits** - A list of ulimits to set in the container, specified as
           `{ "Name": <name>, "Soft": <soft limit>, "Hard": <hard limit> }`, for example:
-          `Ulimits: { "Name": "nofile", "Soft": 1024, "Hard", 2048 }}`
+          `Ulimits: { "Name": "nofile", "Soft": 1024, "Hard": 2048 }`
     -   **SecurityOpt**: A list of string values to customize labels for MLS
         systems, such as SELinux.
     -   **LogConfig** - Log configuration for the container, specified as a JSON object in the form
           `{ "Type": "<driver_name>", "Config": {"key1": "val1"}}`.
-          Available types: `json-file`, `syslog`, `journald`, `gelf`, `none`.
+          Available types: `json-file`, `syslog`, `journald`, `gelf`, `awslogs`, `none`.
           `json-file` logging driver.
     -   **CgroupParent** - Path to `cgroups` under which the container's `cgroup` is created. If the path is not absolute, the path is considered to be relative to the `cgroups` path of the init process. Cgroups are created if they do not already exist.
+    -   **VolumeDriver** - Driver that this container users to mount volumes.
 
 Query Parameters:
 
@@ -362,7 +369,8 @@ Return low-level information on the container `id`
 			"Tty": false,
 			"User": "",
 			"Volumes": null,
-			"WorkingDir": ""
+			"WorkingDir": "",
+			"StopSignal": "SIGTERM"
 		},
 		"Created": "2015-01-06T15:47:31.485331387Z",
 		"Driver": "devicemapper",
@@ -387,6 +395,7 @@ Return low-level information on the container `id`
 			"LxcConf": [],
 			"Memory": 0,
 			"MemorySwap": 0,
+			"KernelMemory": 0,
 			"OomKillDisable": false,
 			"NetworkMode": "bridge",
 			"PortBindings": {},
@@ -403,7 +412,8 @@ Return low-level information on the container `id`
 			},
 			"SecurityOpt": null,
 			"VolumesFrom": null,
-			"Ulimits": [{}]
+			"Ulimits": [{}],
+			"VolumeDriver": ""
 		},
 		"HostnamePath": "/var/lib/docker/containers/ba033ac4401106a3b513bc9d639eee123ad78ca3616b921167cd74b20e25ed39/hostname",
 		"HostsPath": "/var/lib/docker/containers/ba033ac4401106a3b513bc9d639eee123ad78ca3616b921167cd74b20e25ed39/hosts",
@@ -418,7 +428,6 @@ Return low-level information on the container `id`
 			"IPAddress": "",
 			"IPPrefixLen": 0,
 			"MacAddress": "",
-			"PortMapping": null,
 			"Ports": null
 		},
 		"Path": "/bin/sh",
@@ -433,8 +442,9 @@ Return low-level information on the container `id`
 			"Paused": false,
 			"Pid": 0,
 			"Restarting": false,
-			"Running": false,
-			"StartedAt": "2015-01-06T15:47:32.072697474Z"
+			"Running": true,
+			"StartedAt": "2015-01-06T15:47:32.072697474Z",
+			"Status": "running"
 		},
 		"Mounts": [
 			{
@@ -698,9 +708,9 @@ Status Codes:
 
 ### Resize a container TTY
 
-`POST /containers/(id)/resize?h=<height>&w=<width>`
+`POST /containers/(id)/resize`
 
-Resize the TTY for container with  `id`. You must restart the container for the resize to take effect.
+Resize the TTY for container with  `id`. The unit is number of characters. You must restart the container for the resize to take effect.
 
 **Example request**:
 
@@ -711,6 +721,11 @@ Resize the TTY for container with  `id`. You must restart the container for the 
       HTTP/1.1 200 OK
       Content-Length: 0
       Content-Type: text/plain; charset=utf-8
+
+Query Parameters:
+
+-   **h** – height of `tty` session
+-   **w** – width
 
 Status Codes:
 
@@ -1341,7 +1356,28 @@ Query Parameters:
     Request Headers:
 
 -   **Content-type** – Set to `"application/tar"`.
--   **X-Registry-Config** – base64-encoded ConfigFile object
+-   **X-Registry-Config** – A base64-url-safe-encoded Registry Auth Config JSON
+        object with the following structure:
+
+            {
+                "docker.example.com": {
+                    "username": "janedoe",
+                    "password": "hunter2"
+                },
+                "https://index.docker.io/v1/": {
+                    "username": "mobydock",
+                    "password": "conta1n3rize14"
+                }
+            }
+
+        This object maps the hostname of a registry to an object containing the
+        "username" and "password" for that registry. Multiple registries may
+        be specified as the build may be based on an image requiring
+        authentication to pull from any arbitrary registry. Only the registry
+        domain name (and port if not the default "443") are required. However
+        (for legacy reasons) the "official" Docker, Inc. hosted registry must
+        be specified with both a "https://" prefix and a "/v1/" suffix even
+        though Docker will prefer to use the v2 registry API.
 
 Status Codes:
 
@@ -1400,7 +1436,7 @@ Return low-level information on the image `name`
 
 **Example request**:
 
-    GET /images/ubuntu/json HTTP/1.1
+    GET /images/example/json HTTP/1.1
 
 **Example response**:
 
@@ -1408,34 +1444,90 @@ Return low-level information on the image `name`
     Content-Type: application/json
 
     {
-         "Created": "2013-03-23T22:24:18.818426-07:00",
-         "Container": "3d67245a8d72ecf13f33dffac9f79dcdf70f75acb84d308770391510e0c23ad0",
-         "ContainerConfig":
-                 {
-                         "Hostname": "",
-                         "User": "",
-                         "AttachStdin": false,
-                         "AttachStdout": false,
-                         "AttachStderr": false,
-                         "Tty": true,
-                         "OpenStdin": true,
-                         "StdinOnce": false,
-                         "Env": null,
-                         "Cmd": ["/bin/bash"],
-                         "Dns": null,
-                         "Image": "ubuntu",
-                         "Labels": {
-                             "com.example.vendor": "Acme",
-                             "com.example.license": "GPL",
-                             "com.example.version": "1.0"
-                         },
-                         "Volumes": null,
-                         "VolumesFrom": "",
-                         "WorkingDir": ""
-                 },
-         "Id": "b750fe79269d2ec9a3c593ef05b4332b1d1a02a62b4accb2c21d589ff2f5f2dc",
-         "Parent": "27cf784147099545",
-         "Size": 6824592
+       "Id" : "85f05633ddc1c50679be2b16a0479ab6f7637f8884e0cfe0f4d20e1ebb3d6e7c",
+       "Container" : "cb91e48a60d01f1e27028b4fc6819f4f290b3cf12496c8176ec714d0d390984a",
+       "Comment" : "",
+       "Os" : "linux",
+       "Architecture" : "amd64",
+       "Parent" : "91e54dfb11794fad694460162bf0cb0a4fa710cfa3f60979c177d920813e267c",
+       "ContainerConfig" : {
+          "Tty" : false,
+          "Hostname" : "e611e15f9c9d",
+          "Volumes" : null,
+          "Domainname" : "",
+          "AttachStdout" : false,
+          "PublishService" : "",
+          "AttachStdin" : false,
+          "OpenStdin" : false,
+          "StdinOnce" : false,
+          "NetworkDisabled" : false,
+          "OnBuild" : [],
+          "Image" : "91e54dfb11794fad694460162bf0cb0a4fa710cfa3f60979c177d920813e267c",
+          "User" : "",
+          "WorkingDir" : "",
+          "Entrypoint" : null,
+          "MacAddress" : "",
+          "AttachStderr" : false,
+          "Labels" : {
+             "com.example.license" : "GPL",
+             "com.example.version" : "1.0",
+             "com.example.vendor" : "Acme"
+          },
+          "Env" : [
+             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          ],
+          "ExposedPorts" : null,
+          "Cmd" : [
+             "/bin/sh",
+             "-c",
+             "#(nop) LABEL com.example.vendor=Acme com.example.license=GPL com.example.version=1.0"
+          ]
+       },
+       "DockerVersion" : "1.9.0-dev",
+       "VirtualSize" : 188359297,
+       "Size" : 0,
+       "Author" : "",
+       "Created" : "2015-09-10T08:30:53.26995814Z",
+       "GraphDriver" : {
+          "Name" : "aufs",
+          "Data" : null
+       },
+       "Tags" : [
+          "example:1.0",
+          "example:latest",
+          "example:stable"
+       ],
+       "Config" : {
+          "Image" : "91e54dfb11794fad694460162bf0cb0a4fa710cfa3f60979c177d920813e267c",
+          "NetworkDisabled" : false,
+          "OnBuild" : [],
+          "StdinOnce" : false,
+          "PublishService" : "",
+          "AttachStdin" : false,
+          "OpenStdin" : false,
+          "Domainname" : "",
+          "AttachStdout" : false,
+          "Tty" : false,
+          "Hostname" : "e611e15f9c9d",
+          "Volumes" : null,
+          "Cmd" : [
+             "/bin/bash"
+          ],
+          "ExposedPorts" : null,
+          "Env" : [
+             "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          ],
+          "Labels" : {
+             "com.example.vendor" : "Acme",
+             "com.example.version" : "1.0",
+             "com.example.license" : "GPL"
+          },
+          "Entrypoint" : null,
+          "MacAddress" : "",
+          "AttachStderr" : false,
+          "WorkingDir" : "",
+          "User" : ""
+       }
     }
 
 Status Codes:
@@ -2050,7 +2142,7 @@ Sets up an exec instance in a running container `id`
     Content-Type: application/json
 
     {
-         "Id": "f90e34656806"
+         "Id": "f90e34656806",
          "Warnings":[]
     }
 
@@ -2110,12 +2202,12 @@ Status Codes:
 
 `POST /exec/(id)/resize`
 
-Resizes the `tty` session used by the `exec` command `id`.
+Resizes the `tty` session used by the `exec` command `id`.  The unit is number of characters.
 This API is valid only if `tty` was specified as part of creating and starting the `exec` command.
 
 **Example request**:
 
-    POST /exec/e90e34656806/resize HTTP/1.1
+    POST /exec/e90e34656806/resize?h=40&w=80 HTTP/1.1
     Content-Type: text/plain
 
 **Example response**:
@@ -2167,6 +2259,7 @@ Return low-level information about the `exec` command `id`.
       "OpenStdout" : false,
       "Container" : {
         "State" : {
+          "Status" : "running",
           "Running" : true,
           "Paused" : false,
           "Restarting" : false,
@@ -2212,7 +2305,6 @@ Return low-level information about the `exec` command `id`.
           "MacAddress" : "02:42:ac:11:00:02",
           "Gateway" : "172.17.42.1",
           "Bridge" : "docker0",
-          "PortMapping" : null,
           "Ports" : {}
         },
         "ResolvConfPath" : "/var/lib/docker/containers/8f177a186b977fb451136e0fdf182abff5599a08b3c7f6ef0d36a55aaf89634c/resolv.conf",
@@ -2226,7 +2318,7 @@ Return low-level information about the `exec` command `id`.
         "ProcessLabel" : "",
         "AppArmorProfile" : "",
         "RestartCount" : 0,
-        "Mounts" : [],
+        "Mounts" : []
       }
     }
 
@@ -2234,6 +2326,126 @@ Status Codes:
 
 -   **200** – no error
 -   **404** – no such exec instance
+-   **500** - server error
+
+## 2.4 Volumes
+
+### List volumes
+
+`GET /volumes`
+
+**Example request**:
+
+  GET /volumes HTTP/1.1
+
+**Example response**:
+
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+
+  {
+    "Volumes": [
+      {
+        "Name": "tardis",
+        "Driver": "local",
+        "Mountpoint": "/var/lib/docker/volumes/tardis"
+      }
+    ]
+  }
+
+Query Parameters:
+
+- **filter** - JSON encoded value of the filters (a `map[string][]string`) to process on the volumes list. There is one available filter: `dangling=true`
+
+Status Codes:
+
+-   **200** - no error
+-   **500** - server error
+
+### Create a volume
+
+`POST /volumes`
+
+Create a volume
+
+**Example request**:
+
+  POST /volumes HTTP/1.1
+  Content-Type: application/json
+
+  {
+    "Name": "tardis"
+  }
+
+**Example response**:
+
+  HTTP/1.1 201 Created
+  Content-Type: application/json
+
+  {
+    "Name": "tardis"
+    "Driver": "local",
+    "Mountpoint": "/var/lib/docker/volumes/tardis"
+  }
+
+Status Codes:
+
+- **201** - no error
+- **500**  - server error
+
+JSON Parameters:
+
+- **Name** - The new volume's name. If not specified, Docker generates a name.
+- **Driver** - Name of the volume driver to use. Defaults to `local` for the name.
+- **DriverOpts** - A mapping of driver options and values. These options are
+    passed directly to the driver and are driver specific.
+
+### Inspect a volume
+
+`GET /volumes/(name)`
+
+Return low-level information on the volume `name`
+
+**Example request**:
+
+    GET /volumes/tardis
+
+**Example response**:
+
+  HTTP/1.1 200 OK
+  Content-Type: application/json
+
+  {
+    "Name": "tardis",
+    "Driver": "local",
+    "Mountpoint": "/var/lib/docker/volumes/tardis"
+  }
+
+Status Codes:
+
+-   **200** - no error
+-   **404** - no such volume
+-   **500** - server error
+
+### Remove a volume
+
+`DELETE /volumes/(name)`
+
+Instruct the driver to remove the volume (`name`).
+
+**Example request**:
+
+  DELETE /volumes/local/tardis HTTP/1.1
+
+**Example response**:
+
+  HTTP/1.1 204 No Content
+
+Status Codes
+
+-   **204** - no error
+-   **404** - no such volume or volume driver
+-   **409** - volume is in use and cannot be removed
 -   **500** - server error
 
 # 3. Going further

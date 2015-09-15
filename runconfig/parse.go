@@ -9,6 +9,8 @@ import (
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/nat"
 	"github.com/docker/docker/pkg/parsers"
+	"github.com/docker/docker/pkg/signal"
+	"github.com/docker/docker/pkg/stringutils"
 	"github.com/docker/docker/pkg/units"
 )
 
@@ -30,20 +32,6 @@ var (
 	// ErrConflictNetworkExposePorts conflict between the expose option and the network mode
 	ErrConflictNetworkExposePorts = fmt.Errorf("Conflicting options: --expose and the network mode (--expose)")
 )
-
-// validateNM is the set of fields passed to validateNetMode()
-type validateNM struct {
-	netMode        NetworkMode
-	flHostname     *string
-	flLinks        opts.ListOpts
-	flDNS          opts.ListOpts
-	flExtraHosts   opts.ListOpts
-	flMacAddress   *string
-	flPublish      opts.ListOpts
-	flPublishAll   *bool
-	flExpose       opts.ListOpts
-	flVolumeDriver string
-}
 
 // Parse parses the specified args for the specified command and generates a Config,
 // a HostConfig and returns them with the specified command.
@@ -88,6 +76,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		flHostname        = cmd.String([]string{"h", "-hostname"}, "", "Container host name")
 		flMemoryString    = cmd.String([]string{"m", "-memory"}, "", "Memory limit")
 		flMemorySwap      = cmd.String([]string{"-memory-swap"}, "", "Total memory (memory + swap), '-1' to disable swap")
+		flKernelMemory    = cmd.String([]string{"-kernel-memory"}, "", "Kernel memory limit")
 		flUser            = cmd.String([]string{"u", "-user"}, "", "Username or UID (format: <name|uid>[:<group|gid>])")
 		flWorkingDir      = cmd.String([]string{"w", "-workdir"}, "", "Working directory inside the container")
 		flCPUShares       = cmd.Int64([]string{"c", "-cpu-shares"}, 0, "CPU shares (relative weight)")
@@ -105,6 +94,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		flLoggingDriver   = cmd.String([]string{"-log-driver"}, "", "Logging driver for container")
 		flCgroupParent    = cmd.String([]string{"-cgroup-parent"}, "", "Optional parent cgroup for the container")
 		flVolumeDriver    = cmd.String([]string{"-volume-driver"}, "", "Optional volume driver for the container")
+		flStopSignal      = cmd.String([]string{"-stop-signal"}, signal.DefaultStopSignal, fmt.Sprintf("Signal to stop a container, %v by default", signal.DefaultStopSignal))
 	)
 
 	cmd.Var(&flAttach, []string{"a", "-attach"}, "Attach to STDIN, STDOUT or STDERR")
@@ -143,27 +133,6 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		attachStderr = flAttach.Get("stderr")
 	)
 
-	netMode, err := parseNetMode(*flNetMode)
-	if err != nil {
-		return nil, nil, cmd, fmt.Errorf("--net: invalid net mode: %v", err)
-	}
-
-	vals := validateNM{
-		netMode:      netMode,
-		flHostname:   flHostname,
-		flLinks:      flLinks,
-		flDNS:        flDNS,
-		flExtraHosts: flExtraHosts,
-		flMacAddress: flMacAddress,
-		flPublish:    flPublish,
-		flPublishAll: flPublishAll,
-		flExpose:     flExpose,
-	}
-
-	if err := validateNetMode(&vals); err != nil {
-		return nil, nil, cmd, err
-	}
-
 	// Validate the input mac address
 	if *flMacAddress != "" {
 		if _, err := opts.ValidateMACAddress(*flMacAddress); err != nil {
@@ -179,13 +148,14 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		attachStderr = true
 	}
 
+	var err error
+
 	var flMemory int64
 	if *flMemoryString != "" {
-		parsedMemory, err := units.RAMInBytes(*flMemoryString)
+		flMemory, err = units.RAMInBytes(*flMemoryString)
 		if err != nil {
 			return nil, nil, cmd, err
 		}
-		flMemory = parsedMemory
 	}
 
 	var memorySwap int64
@@ -193,11 +163,18 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		if *flMemorySwap == "-1" {
 			memorySwap = -1
 		} else {
-			parsedMemorySwap, err := units.RAMInBytes(*flMemorySwap)
+			memorySwap, err = units.RAMInBytes(*flMemorySwap)
 			if err != nil {
 				return nil, nil, cmd, err
 			}
-			memorySwap = parsedMemorySwap
+		}
+	}
+
+	var KernelMemory int64
+	if *flKernelMemory != "" {
+		KernelMemory, err = units.RAMInBytes(*flKernelMemory)
+		if err != nil {
+			return nil, nil, cmd, err
 		}
 	}
 
@@ -224,15 +201,15 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 
 	var (
 		parsedArgs = cmd.Args()
-		runCmd     *Command
-		entrypoint *Entrypoint
+		runCmd     *stringutils.StrSlice
+		entrypoint *stringutils.StrSlice
 		image      = cmd.Arg(0)
 	)
 	if len(parsedArgs) > 1 {
-		runCmd = NewCommand(parsedArgs[1:]...)
+		runCmd = stringutils.NewStrSlice(parsedArgs[1:]...)
 	}
 	if *flEntrypoint != "" {
-		entrypoint = NewEntrypoint(*flEntrypoint)
+		entrypoint = stringutils.NewStrSlice(*flEntrypoint)
 	}
 
 	lc, err := parseKeyValueOpts(flLxcOpts)
@@ -346,7 +323,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		Entrypoint:      entrypoint,
 		WorkingDir:      *flWorkingDir,
 		Labels:          convertKVStringsToMap(labels),
-		VolumeDriver:    *flVolumeDriver,
+		StopSignal:      *flStopSignal,
 	}
 
 	hostConfig := &HostConfig{
@@ -355,6 +332,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		LxcConf:          lxcConf,
 		Memory:           flMemory,
 		MemorySwap:       memorySwap,
+		KernelMemory:     KernelMemory,
 		CPUShares:        *flCPUShares,
 		CPUPeriod:        *flCPUPeriod,
 		CpusetCpus:       *flCpusetCpus,
@@ -371,13 +349,13 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		DNSSearch:        flDNSSearch.GetAll(),
 		ExtraHosts:       flExtraHosts.GetAll(),
 		VolumesFrom:      flVolumesFrom.GetAll(),
-		NetworkMode:      netMode,
+		NetworkMode:      NetworkMode(*flNetMode),
 		IpcMode:          ipcMode,
 		PidMode:          pidMode,
 		UTSMode:          utsMode,
 		Devices:          deviceMappings,
-		CapAdd:           NewCapList(flCapAdd.GetAll()),
-		CapDrop:          NewCapList(flCapDrop.GetAll()),
+		CapAdd:           stringutils.NewStrSlice(flCapAdd.GetAll()...),
+		CapDrop:          stringutils.NewStrSlice(flCapDrop.GetAll()...),
 		GroupAdd:         flGroupAdd.GetAll(),
 		RestartPolicy:    restartPolicy,
 		SecurityOpt:      flSecurityOpt.GetAll(),
@@ -385,6 +363,7 @@ func Parse(cmd *flag.FlagSet, args []string) (*Config, *HostConfig, *flag.FlagSe
 		Ulimits:          flUlimits.GetList(),
 		LogConfig:        LogConfig{Type: *flLoggingDriver, Config: loggingOpts},
 		CgroupParent:     *flCgroupParent,
+		VolumeDriver:     *flVolumeDriver,
 	}
 
 	applyExperimentalFlags(expFlags, config, hostConfig)
@@ -450,9 +429,9 @@ func ParseRestartPolicy(policy string) (RestartPolicy, error) {
 
 	p.Name = name
 	switch name {
-	case "always":
+	case "always", "unless-stopped":
 		if len(parts) > 1 {
-			return p, fmt.Errorf("maximum restart count not valid with restart policy of \"always\"")
+			return p, fmt.Errorf("maximum restart count not valid with restart policy of \"%s\"", name)
 		}
 	case "no":
 		// do nothing
@@ -498,7 +477,11 @@ func ParseDevice(device string) (DeviceMapping, error) {
 		permissions = arr[2]
 		fallthrough
 	case 2:
-		dst = arr[1]
+		if opts.ValidDeviceMode(arr[1]) {
+			permissions = arr[1]
+		} else {
+			dst = arr[1]
+		}
 		fallthrough
 	case 1:
 		src = arr[0]

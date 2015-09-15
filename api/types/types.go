@@ -6,6 +6,7 @@ import (
 
 	"github.com/docker/docker/daemon/network"
 	"github.com/docker/docker/pkg/version"
+	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
 )
 
@@ -95,6 +96,7 @@ type GraphDriverData struct {
 // GET "/images/{name:.*}/json"
 type ImageInspect struct {
 	ID              string `json:"Id"`
+	Tags            []string
 	Parent          string
 	Comment         string
 	Created         string
@@ -201,7 +203,7 @@ type Info struct {
 	KernelVersion      string
 	OperatingSystem    string
 	IndexServerAddress string
-	RegistryConfig     interface{}
+	RegistryConfig     *registry.ServiceConfig
 	InitSha1           string
 	InitPath           string
 	NCPU               int
@@ -227,6 +229,7 @@ type ExecStartCheck struct {
 // ContainerState stores container's running state
 // it's part of ContainerJSONBase and will return by "inspect" command
 type ContainerState struct {
+	Status     string
 	Running    bool
 	Paused     bool
 	Restarting bool
@@ -272,24 +275,39 @@ type ContainerJSON struct {
 	Config *runconfig.Config
 }
 
-// ContainerJSONPre120 is a backcompatibility struct along with ContainerConfig.
+// ContainerJSON120 is a backcompatibility struct along with ContainerConfig120.
+type ContainerJSON120 struct {
+	*ContainerJSONBase
+	Mounts []MountPoint
+	Config *ContainerConfig120
+}
+
+// ContainerJSONPre120 is a backcompatibility struct along with ContainerConfigPre120.
 // Note this is not used by the Windows daemon.
 type ContainerJSONPre120 struct {
 	*ContainerJSONBase
 	Volumes   map[string]string
 	VolumesRW map[string]bool
-	Config    *ContainerConfig
+	Config    *ContainerConfigPre120
 }
 
-// ContainerConfig is a backcompatibility struct used in ContainerJSONPre120
-type ContainerConfig struct {
+// ContainerConfigPre120 is a backcompatibility struct used in ContainerJSONPre120
+type ContainerConfigPre120 struct {
 	*runconfig.Config
 
 	// backward compatibility, they now live in HostConfig
-	Memory     int64
-	MemorySwap int64
-	CPUShares  int64  `json:"CpuShares"`
-	CPUSet     string `json:"CpuSet"`
+	VolumeDriver string
+	Memory       int64
+	MemorySwap   int64
+	CPUShares    int64  `json:"CpuShares"`
+	CPUSet       string `json:"CpuSet"`
+}
+
+// ContainerConfig120 is a backcompatibility struct used in ContainerJSON120
+type ContainerConfig120 struct {
+	*runconfig.Config
+	// backward compatibility, it lives now in HostConfig
+	VolumeDriver string
 }
 
 // MountPoint represents a mount point configuration inside the container.
@@ -300,4 +318,25 @@ type MountPoint struct {
 	Driver      string `json:",omitempty"`
 	Mode        string
 	RW          bool
+}
+
+// Volume represents the configuration of a volume for the remote API
+type Volume struct {
+	Name       string // Name is the name of the volume
+	Driver     string // Driver is the Driver name used to create the volume
+	Mountpoint string // Mountpoint is the location on disk of the volume
+}
+
+// VolumesListResponse contains the response for the remote API:
+// GET "/volumes"
+type VolumesListResponse struct {
+	Volumes []*Volume // Volumes is the list of volumes being returned
+}
+
+// VolumeCreateRequest contains the response for the remote API:
+// POST "/volumes"
+type VolumeCreateRequest struct {
+	Name       string            // Name is the requested name of the volume
+	Driver     string            // Driver is the name of the driver that should be used to create the volume
+	DriverOpts map[string]string // DriverOpts holds the driver specific options to use for when creating the volume.
 }

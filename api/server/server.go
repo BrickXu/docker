@@ -16,8 +16,10 @@ import (
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
 	"github.com/docker/docker/autogen/dockerversion"
+	"github.com/docker/docker/context"
 	"github.com/docker/docker/daemon"
 	"github.com/docker/docker/pkg/sockets"
+	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/version"
 )
 
@@ -122,7 +124,7 @@ func (s *HTTPServer) Close() error {
 
 // HTTPAPIFunc is an adapter to allow the use of ordinary functions as Docker API endpoints.
 // Any function that has the appropriate signature can be register as a API endpoint (e.g. getVersion).
-type HTTPAPIFunc func(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error
+type HTTPAPIFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error
 
 func hijackServer(w http.ResponseWriter) (io.ReadCloser, io.Writer, error) {
 	conn, _, err := w.(http.Hijacker).Hijack()
@@ -219,7 +221,7 @@ func writeJSON(w http.ResponseWriter, code int, v interface{}) error {
 	return json.NewEncoder(w).Encode(v)
 }
 
-func (s *Server) optionsHandler(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) optionsHandler(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -227,10 +229,10 @@ func writeCorsHeaders(w http.ResponseWriter, r *http.Request, corsHeaders string
 	logrus.Debugf("CORS header is enabled and set to: %s", corsHeaders)
 	w.Header().Add("Access-Control-Allow-Origin", corsHeaders)
 	w.Header().Add("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept, X-Registry-Auth")
-	w.Header().Add("Access-Control-Allow-Methods", "GET, POST, DELETE, PUT, OPTIONS")
+	w.Header().Add("Access-Control-Allow-Methods", "HEAD, GET, POST, DELETE, PUT, OPTIONS")
 }
 
-func (s *Server) ping(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) ping(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	_, err := w.Write([]byte{'O', 'K'})
 	return err
 }
@@ -250,6 +252,24 @@ func (s *Server) initTCPSocket(addr string) (l net.Listener, err error) {
 
 func makeHTTPHandler(logging bool, localMethod string, localRoute string, handlerFunc HTTPAPIFunc, corsHeaders string, dockerVersion version.Version) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Define the context that we'll pass around to share info
+		// like the docker-request-id.
+		//
+		// The 'context' will be used for global data that should
+		// apply to all requests. Data that is specific to the
+		// immediate function being called should still be passed
+		// as 'args' on the function call.
+
+		reqID := stringid.TruncateID(stringid.GenerateNonCryptoID())
+		apiVersion := version.Version(mux.Vars(r)["version"])
+		if apiVersion == "" {
+			apiVersion = api.Version
+		}
+
+		ctx := context.Background()
+		ctx = context.WithValue(ctx, context.RequestID, reqID)
+		ctx = context.WithValue(ctx, context.APIVersion, apiVersion)
+
 		// log the request
 		logrus.Debugf("Calling %s %s", localMethod, localRoute)
 
@@ -270,26 +290,22 @@ func makeHTTPHandler(logging bool, localMethod string, localRoute string, handle
 				logrus.Debugf("Warning: client and server don't have the same version (client: %s, server: %s)", userAgent[1], dockerVersion)
 			}
 		}
-		version := version.Version(mux.Vars(r)["version"])
-		if version == "" {
-			version = api.Version
-		}
 		if corsHeaders != "" {
 			writeCorsHeaders(w, r, corsHeaders)
 		}
 
-		if version.GreaterThan(api.Version) {
-			http.Error(w, fmt.Errorf("client is newer than server (client API version: %s, server API version: %s)", version, api.Version).Error(), http.StatusBadRequest)
+		if apiVersion.GreaterThan(api.Version) {
+			http.Error(w, fmt.Errorf("client is newer than server (client API version: %s, server API version: %s)", apiVersion, api.Version).Error(), http.StatusBadRequest)
 			return
 		}
-		if version.LessThan(api.MinVersion) {
+		if apiVersion.LessThan(api.MinVersion) {
 			http.Error(w, fmt.Errorf("client is too old, minimum supported API version is %s, please upgrade your client to a newer version", api.MinVersion).Error(), http.StatusBadRequest)
 			return
 		}
 
 		w.Header().Set("Server", "Docker/"+dockerversion.VERSION+" ("+runtime.GOOS+")")
 
-		if err := handlerFunc(version, w, r, mux.Vars(r)); err != nil {
+		if err := handlerFunc(ctx, w, r, mux.Vars(r)); err != nil {
 			logrus.Errorf("Handler for %s %s returned error: %s", localMethod, localRoute, err)
 			httpError(w, err)
 		}
@@ -317,7 +333,6 @@ func createRouter(s *Server) *mux.Router {
 			"/images/{name:.*}/get":           s.getImagesGet,
 			"/images/{name:.*}/history":       s.getImagesHistory,
 			"/images/{name:.*}/json":          s.getImagesByName,
-			"/containers/ps":                  s.getContainersJSON,
 			"/containers/json":                s.getContainersJSON,
 			"/containers/{name:.*}/export":    s.getContainersExport,
 			"/containers/{name:.*}/changes":   s.getContainersChanges,
@@ -328,6 +343,8 @@ func createRouter(s *Server) *mux.Router {
 			"/containers/{name:.*}/attach/ws": s.wsContainersAttach,
 			"/exec/{id:.*}/json":              s.getExecByID,
 			"/containers/{name:.*}/archive":   s.getContainersArchive,
+			"/volumes":                        s.getVolumesList,
+			"/volumes/{name:.*}":              s.getVolumeByName,
 		},
 		"POST": {
 			"/auth":                         s.postAuth,
@@ -352,6 +369,7 @@ func createRouter(s *Server) *mux.Router {
 			"/exec/{name:.*}/start":         s.postContainerExecStart,
 			"/exec/{name:.*}/resize":        s.postContainerExecResize,
 			"/containers/{name:.*}/rename":  s.postContainerRename,
+			"/volumes":                      s.postVolumesCreate,
 		},
 		"PUT": {
 			"/containers/{name:.*}/archive": s.putContainersArchive,
@@ -359,6 +377,7 @@ func createRouter(s *Server) *mux.Router {
 		"DELETE": {
 			"/containers/{name:.*}": s.deleteContainers,
 			"/images/{name:.*}":     s.deleteImages,
+			"/volumes/{name:.*}":    s.deleteVolumes,
 		},
 		"OPTIONS": {
 			"": s.optionsHandler,

@@ -45,14 +45,15 @@ import (
 
 // Environment variable interpolation will happen on these statements only.
 var replaceEnvAllowed = map[string]struct{}{
-	command.Env:     {},
-	command.Label:   {},
-	command.Add:     {},
-	command.Copy:    {},
-	command.Workdir: {},
-	command.Expose:  {},
-	command.Volume:  {},
-	command.User:    {},
+	command.Env:        {},
+	command.Label:      {},
+	command.Add:        {},
+	command.Copy:       {},
+	command.Workdir:    {},
+	command.Expose:     {},
+	command.Volume:     {},
+	command.User:       {},
+	command.StopSignal: {},
 }
 
 var evaluateTable map[string]func(*builder, []string, map[string]bool, string) error
@@ -73,6 +74,7 @@ func init() {
 		command.Expose:     expose,
 		command.Volume:     volume,
 		command.User:       user,
+		command.StopSignal: stopSignal,
 	}
 }
 
@@ -293,7 +295,7 @@ func (b *builder) dispatch(stepN int, ast *parser.Node) error {
 	original := ast.Original
 	flags := ast.Flags
 	strs := []string{}
-	msg := fmt.Sprintf("Step %d : %s", stepN, strings.ToUpper(cmd))
+	msg := fmt.Sprintf("Step %d : %s", stepN+1, strings.ToUpper(cmd))
 
 	if len(ast.Flags) > 0 {
 		msg += " " + strings.Join(ast.Flags, " ")
@@ -365,7 +367,7 @@ func platformSupports(command string) error {
 		return nil
 	}
 	switch command {
-	case "expose", "volume", "user":
+	case "expose", "volume", "user", "stopsignal":
 		return fmt.Errorf("The daemon on this platform does not support the command '%s'", command)
 	}
 	return nil

@@ -9,12 +9,12 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/context"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/docker/docker/pkg/version"
 	"github.com/docker/docker/runconfig"
 )
 
-func (s *Server) getExecByID(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) getExecByID(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if vars == nil {
 		return fmt.Errorf("Missing parameter 'id'")
 	}
@@ -27,7 +27,7 @@ func (s *Server) getExecByID(version version.Version, w http.ResponseWriter, r *
 	return writeJSON(w, http.StatusOK, eConfig)
 }
 
-func (s *Server) postContainerExecCreate(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainerExecCreate(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -59,7 +59,7 @@ func (s *Server) postContainerExecCreate(version version.Version, w http.Respons
 }
 
 // TODO(vishh): Refactor the code to avoid having to specify stream config as part of both create and start.
-func (s *Server) postContainerExecStart(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainerExecStart(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}
@@ -89,11 +89,14 @@ func (s *Server) postContainerExecStart(version version.Version, w http.Response
 			fmt.Fprintf(outStream, "HTTP/1.1 200 OK\r\nContent-Type: application/vnd.docker.raw-stream\r\n\r\n")
 		}
 
+		stdin = inStream
+		stdout = outStream
 		if !execStartCheck.Tty {
 			stderr = stdcopy.NewStdWriter(outStream, stdcopy.Stderr)
 			stdout = stdcopy.NewStdWriter(outStream, stdcopy.Stdout)
 		}
-		stdin = inStream
+	} else {
+		outStream = w
 	}
 
 	// Now run the user process in container.
@@ -103,7 +106,7 @@ func (s *Server) postContainerExecStart(version version.Version, w http.Response
 	return nil
 }
 
-func (s *Server) postContainerExecResize(version version.Version, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
+func (s *Server) postContainerExecResize(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]string) error {
 	if err := parseForm(r); err != nil {
 		return err
 	}

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.8.1 (2015-08-12)
+
+### Distribution
+
+* Fix a bug where pushing multiple tags would result in invalid images
+
 ## 1.8.0 (2015-08-11)
 
 ### Distribution
@@ -57,7 +63,7 @@
 ### Bug fixes
 
 - Add missing 'Names' field to /containers/json API output
-- Make `docker rmi --dangling` safe when pulling
+- Make `docker rmi` of dangling images safe while pulling
 - Devicemapper: Change default basesize to 100G
 - Go Scheduler issue with sync.Mutex and gcc
 - Fix issue where Search API endpoint would panic due to empty AuthConfig

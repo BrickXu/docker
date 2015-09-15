@@ -21,7 +21,7 @@ You install Docker using Docker Toolbox. Docker Toolbox includes the following D
 * Docker Compose for running the `docker-compose` binary
 * Kitematic, the Docker GUI
 * a shell preconfigured for a Docker command-line environment
-* Oracle VM VirtualBox 
+* Oracle VM VirtualBox
 
 Because the Docker daemon uses Linux-specific kernel features, you can't run
 Docker natively in OS X. Instead, you must use `docker-machine` to create and
@@ -62,7 +62,7 @@ practice, work through the exercises on this page.
 ### Installation
 
 If you have VirtualBox running, you must shut it down before running the
-installer. 
+installer.
 
 1. Go to the [Docker Toolbox](https://www.docker.com/toolbox) page.
 
@@ -72,38 +72,38 @@ installer.
 and choosing "Open" from the pop-up menu.
 
     The installer launches the "Install Docker Toolbox" dialog.
-    
+
     ![Install Docker Toolbox](/installation/images/mac-welcome-page.png)
 
 4. Press "Continue" to install the toolbox.
 
     The installer presents you with options to customize the standard
-    installation. 
-  
+    installation.
+
     ![Standard install](/installation/images/mac-page-two.png)
-  
+
     By default, the standard Docker Toolbox installation:
-  
-    * installs binaries for the Docker tools in `/usr/local/bin` 
-    * makes these binaries available to all users 
-    * updates any existing VirtualBox installation 
-  
+
+    * installs binaries for the Docker tools in `/usr/local/bin`
+    * makes these binaries available to all users
+    * installs VirtualBox; or updates any existing installation
+
     Change these defaults by pressing "Customize" or "Change
-    Install Location."  
+    Install Location."
 
 5. Press "Install" to perform the standard installation.
 
      The system prompts you for your password.
-   
+
      ![Password prompt](/installation/images/mac-password-prompt.png)
-   
+
 6. Provide your password to continue with the installation.
 
      When it completes, the installer provides you with some information you can
      use to complete some common tasks.
-   
+
      ![All finished](/installation/images/mac-page-finished.png)
-   
+
 7. Press "Close" to exit.
 
 
@@ -111,7 +111,7 @@ and choosing "Open" from the pop-up menu.
 
 To run a Docker container, you:
 
-* create a new (or start an existing) Docker virtual machine 
+* create a new (or start an existing) Docker virtual machine
 * switch your environment to your new VM
 * use the `docker` client to create, load, and manage containers
 
@@ -125,19 +125,19 @@ There are two ways to use the installed tools, from the Docker Quickstart Termin
 
 1. Open the "Applications" folder or the "Launchpad".
 
-2. Find the Docker Quickstart Terminal  and double-click to launch it.
+2. Find the Docker Quickstart Terminal and double-click to launch it.
 
     The application:
 
     * opens a terminal window
-    * creates a VM called `default` if it doesn't exists, starts the VM if it does
+    * creates a `default` VM if it doesn't exists, and starts the VM after
     * points the terminal environment to this VM
 
     Once the launch completes, the Docker Quickstart Terminal reports:
-    
+
      ![All finished](/installation/images/mac-success.png)
-     
-    Now, you can run `docker` commands. 
+
+    Now, you can run `docker` commands.
 
 3. Verify your setup succeeded by running the `hello-world` container.
 
@@ -185,24 +185,24 @@ different shell such as C Shell but the commands are the same.
         Starting VM...
         To see how to connect Docker to this machine, run: docker-machine env default
 
-    This creates a new `default` in VirtualBox.
-    
+    This creates a new `default` VM in VirtualBox.
+
     ![default](/installation/images/default.png)
 
     The command also creates a machine configuration in the
     `~/.docker/machine/machines/default` directory. You only need to run the
     `create` command once. Then, you can use `docker-machine` to start, stop,
     query, and otherwise manage the VM from the command line.
-    
+
 2. List your available machines.
 
         $ docker-machine ls
         NAME                ACTIVE   DRIVER       STATE     URL                         SWARM
-        default             *        virtualbox   Running   tcp://192.168.99.101:2376  
-        
+        default             *        virtualbox   Running   tcp://192.168.99.101:2376
+
     If you have previously installed the deprecated Boot2Docker application or
     run the Docker Quickstart Terminal, you may have a `dev` VM as well.  When you
-    created `default`, the `docker-machine` command provided instructions
+    created `default` VM, the `docker-machine` command provided instructions
     for learning how to connect the VM.
 
 3. Get the environment commands for your new VM.
@@ -212,9 +212,9 @@ different shell such as C Shell but the commands are the same.
         export DOCKER_HOST="tcp://192.168.99.101:2376"
         export DOCKER_CERT_PATH="/Users/mary/.docker/machine/machines/default"
         export DOCKER_MACHINE_NAME="default"
-        # Run this command to configure your shell: 
+        # Run this command to configure your shell:
         # eval "$(docker-machine env default)"
-    
+
 4. Connect your shell to the `default` machine.
 
         $ eval "$(docker-machine env default)"
@@ -227,13 +227,13 @@ different shell such as C Shell but the commands are the same.
 ## Learn about your Toolbox installation
 
 Toolbox installs the Docker Engine binary, the Docker binary on your system. When you
-use the Docker Quickstart Terminal or create a `default` manually, Docker
+use the Docker Quickstart Terminal or create a `default` VM manually, Docker
 Machine updates the `~/.docker/machine/machines/default` folder to your
 system. This folder contains the configuration for the VM.
 
-You can create multiple VMs on your system with Docker Machine. So, you may have
-more than one VM folder if you have more than one VM. To remove a VM, use the
-`docker-machine rm <machine-name>` command.
+You can create multiple VMs on your system with Docker Machine. Therefore, you
+may end up with multiple VM folders if you have more than one VM. To remove a
+VM, use the `docker-machine rm <machine-name>` command.
 
 ## Migrate from Boot2Docker
 
@@ -246,9 +246,9 @@ this older VM, you can migrate it.
 2. Type the following command.
 
         $ docker-machine create -d virtualbox --virtualbox-import-boot2docker-vm boot2docker-vm docker-vm
-      
-3. Use the `docker-machine` command to interact with the migrated VM.  
-      
+
+3. Use the `docker-machine` command to interact with the migrated VM.
+
 The `docker-machine` subcommands are slightly different than the `boot2docker`
 subcommands. The table below lists the equivalent `docker-machine` subcommand
 and what it does:
@@ -280,9 +280,9 @@ To verify this, run the following commands:
 
     $ docker-machine ls
     NAME                ACTIVE   DRIVER       STATE     URL                         SWARM
-    dev                 *        virtualbox   Running   tcp://192.168.99.100:2376   
+    default             *        virtualbox   Running   tcp://192.168.99.100:2376
 
-The `ACTIVE` machine, in this case `dev`, is the one your environment is pointing to.
+The `ACTIVE` machine, in this case `default`, is the one your environment is pointing to.
 
 ### Access container ports
 
@@ -298,7 +298,7 @@ The `ACTIVE` machine, in this case `dev`, is the one your environment is pointin
 2. Display your running container with `docker ps` command
 
         CONTAINER ID        IMAGE               COMMAND                CREATED             STATUS              PORTS                                           NAMES
-        5fb65ff765e9        nginx:latest        "nginx -g 'daemon of   3 minutes ago       Up 3 minutes        0.0.0.0:49156->443/tcp, 0.0.0.0:49157->80/tcp   web  
+        5fb65ff765e9        nginx:latest        "nginx -g 'daemon of   3 minutes ago       Up 3 minutes        0.0.0.0:49156->443/tcp, 0.0.0.0:49157->80/tcp   web
 
     At this point, you can see `nginx` is running as a daemon.
 
@@ -319,9 +319,9 @@ The `ACTIVE` machine, in this case `dev`, is the one your environment is pointin
     not the localhost address (0.0.0.0) but is instead the address of the
     your Docker VM.
 
-5. Get the address of the `dev` VM.
+5. Get the address of the `default` VM.
 
-        $ docker-machine ip dev
+        $ docker-machine ip default
         192.168.59.103
 
 6. Enter the `http://192.168.59.103:49157` address in your browser:
@@ -392,7 +392,7 @@ To upgrade Docker Toolbox, download an re-run [the Docker Toolbox
 installer](https://docker.com/toolbox/).
 
 
-## Uninstall Docker Toolbox 
+## Uninstall Docker Toolbox
 
 To uninstall, do the following:
 
@@ -400,15 +400,15 @@ To uninstall, do the following:
 
         $ docker-machine ls
         NAME                ACTIVE   DRIVER       STATE     URL                         SWARM
-        dev                 *        virtualbox   Running   tcp://192.168.99.100:2376   
-        my-docker-machine            virtualbox   Stopped                               
-        default                      virtualbox   Stopped  
+        dev                 *        virtualbox   Running   tcp://192.168.99.100:2376
+        my-docker-machine            virtualbox   Stopped
+        default                      virtualbox   Stopped
 
 2. Remove each machine.
 
         $ docker-machine rm dev
         Successfully removed dev
-    
+
      Removing a machine deletes its VM from VirtualBox and from the
      `~/.docker/machine/machines` directory.
 
@@ -417,16 +417,16 @@ To uninstall, do the following:
 4. Remove the `docker`, `docker-compose`, and `docker-machine` commands from the `/usr/local/bin` folder.
 
         $ rm /usr/local/bin/docker
-      
+
 5. Delete the `~/.docker` folder from your system.
 
 
-## Learning more 
+## Learning more
 
 Use `docker-machine help` to list the full command line reference for Docker Machine. For more
 information about using SSH or SCP to access a VM, see [the Docker Machine
 documentation](https://docs.docker.com/machine/).
 
 You can continue with the [Docker User Guide](/userguide). If you are
-interested in using the Kitematic GUI, see the [Kitermatic user
+interested in using the Kitematic GUI, see the [Kitematic user
 guide](/kitematic/userguide/).

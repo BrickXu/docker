@@ -49,15 +49,6 @@ type Daemon struct {
 	userlandProxy  bool
 }
 
-func enableUserlandProxy() bool {
-	if env := os.Getenv("DOCKER_USERLANDPROXY"); env != "" {
-		if val, err := strconv.ParseBool(env); err != nil {
-			return val
-		}
-	}
-	return true
-}
-
 // NewDaemon returns a Daemon instance to be used for testing.
 // This will create a directory such as d123456789 in the folder specified by $DEST.
 // The daemon will not automatically start.
@@ -78,7 +69,7 @@ func NewDaemon(c *check.C) *Daemon {
 		c.Fatalf("Could not create %s/graph directory", daemonFolder)
 	}
 
-	userlandProxy := true
+	userlandProxy := false
 	if env := os.Getenv("DOCKER_USERLANDPROXY"); env != "" {
 		if val, err := strconv.ParseBool(env); err != nil {
 			userlandProxy = val
@@ -445,6 +436,40 @@ func deleteAllContainers() error {
 	return nil
 }
 
+func deleteAllVolumes() error {
+	volumes, err := getAllVolumes()
+	if err != nil {
+		return err
+	}
+	var errors []string
+	for _, v := range volumes {
+		status, b, err := sockRequest("DELETE", "/volumes/"+v.Name, nil)
+		if err != nil {
+			errors = append(errors, err.Error())
+			continue
+		}
+		if status != http.StatusNoContent {
+			errors = append(errors, fmt.Sprintf("error deleting volume %s: %s", v.Name, string(b)))
+		}
+	}
+	if len(errors) > 0 {
+		return fmt.Errorf(strings.Join(errors, "\n"))
+	}
+	return nil
+}
+
+func getAllVolumes() ([]*types.Volume, error) {
+	var volumes types.VolumesListResponse
+	_, b, err := sockRequest("GET", "/volumes", nil)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(b, &volumes); err != nil {
+		return nil, err
+	}
+	return volumes.Volumes, nil
+}
+
 var protectedImages = map[string]struct{}{}
 
 func init() {
@@ -468,10 +493,9 @@ func init() {
 	// Obtain the daemon platform so that it can be used by tests to make
 	// intelligent decisions about how to configure themselves, and validate
 	// that the target platform is valid.
-	res, b, err := sockRequestRaw("GET", "/version", nil, "application/json")
-	defer b.Close()
-	if err != nil || res.StatusCode != http.StatusOK {
-		panic("Init failed to get version: " + err.Error() + " " + string(res.StatusCode))
+	res, _, err := sockRequestRaw("GET", "/version", nil, "application/json")
+	if err != nil || res == nil || (res != nil && res.StatusCode != http.StatusOK) {
+		panic(fmt.Errorf("Init failed to get version: %v. Res=%v", err.Error(), res))
 	}
 	svrHeader, _ := httputils.ParseServerHeader(res.Header.Get("Server"))
 	daemonPlatform = svrHeader.OS
@@ -602,7 +626,9 @@ func dockerCmdWithError(args ...string) (string, int, error) {
 
 func dockerCmdWithStdoutStderr(c *check.C, args ...string) (string, string, int) {
 	stdout, stderr, status, err := runCommandWithStdoutStderr(exec.Command(dockerBinary, args...))
-	c.Assert(err, check.IsNil, check.Commentf("%q failed with errors: %s, %v", strings.Join(args, " "), stderr, err))
+	if c != nil {
+		c.Assert(err, check.IsNil, check.Commentf("%q failed with errors: %s, %v", strings.Join(args, " "), stderr, err))
+	}
 	return stdout, stderr, status
 }
 
@@ -1238,9 +1264,11 @@ func runCommandAndReadContainerFile(filename string, cmd *exec.Cmd) ([]byte, err
 		return nil, fmt.Errorf("%v: %q", err, out)
 	}
 
-	time.Sleep(1 * time.Second)
-
 	contID := strings.TrimSpace(out)
+
+	if err := waitRun(contID); err != nil {
+		return nil, fmt.Errorf("%v: %q", contID, err)
+	}
 
 	return readContainerFile(contID, filename)
 }
@@ -1352,4 +1380,83 @@ func createTmpFile(c *check.C, content string) string {
 	c.Assert(err, check.IsNil)
 
 	return filename
+}
+
+func buildImageWithOutInDamon(socket string, name, dockerfile string, useCache bool) (string, error) {
+	args := []string{"--host", socket}
+	buildCmd := buildImageCmdArgs(args, name, dockerfile, useCache)
+	out, exitCode, err := runCommandWithOutput(buildCmd)
+	if err != nil || exitCode != 0 {
+		return out, fmt.Errorf("failed to build the image: %s, error: %v", out, err)
+	}
+	return out, nil
+}
+
+func buildImageCmdArgs(args []string, name, dockerfile string, useCache bool) *exec.Cmd {
+	args = append(args, []string{"-D", "build", "-t", name}...)
+	if !useCache {
+		args = append(args, "--no-cache")
+	}
+	args = append(args, "-")
+	buildCmd := exec.Command(dockerBinary, args...)
+	buildCmd.Stdin = strings.NewReader(dockerfile)
+	return buildCmd
+
+}
+
+func waitForContainer(contID string, args ...string) error {
+	args = append([]string{"run", "--name", contID}, args...)
+	cmd := exec.Command(dockerBinary, args...)
+	if _, err := runCommand(cmd); err != nil {
+		return err
+	}
+
+	if err := waitRun(contID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// waitRun will wait for the specified container to be running, maximum 5 seconds.
+func waitRun(contID string) error {
+	return waitInspect(contID, "{{.State.Running}}", "true", 5)
+}
+
+// waitInspect will wait for the specified container to have the specified string
+// in the inspect output. It will wait until the specified timeout (in seconds)
+// is reached.
+func waitInspect(name, expr, expected string, timeout int) error {
+	after := time.After(time.Duration(timeout) * time.Second)
+
+	for {
+		cmd := exec.Command(dockerBinary, "inspect", "-f", expr, name)
+		out, _, err := runCommandWithOutput(cmd)
+		if err != nil {
+			if !strings.Contains(out, "No such") {
+				return fmt.Errorf("error executing docker inspect: %v\n%s", err, out)
+			}
+			select {
+			case <-after:
+				return err
+			default:
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+		}
+
+		out = strings.TrimSpace(out)
+		if out == expected {
+			break
+		}
+
+		select {
+		case <-after:
+			return fmt.Errorf("condition \"%q == %q\" not true in time", out, expected)
+		default:
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil
 }

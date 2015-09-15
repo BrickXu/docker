@@ -34,7 +34,7 @@ hosts of unnecessary Docker artifacts such as stopped containers or unused
 images. Cleaning unnecessary artifacts isn't strictly necessary, but it is
 good practice, so it is included here.
 
-To remove unnecessary artifacts,
+To remove unnecessary artifacts:
 
 1. Verify that you have no unnecessary containers running on your host.
 
@@ -96,7 +96,7 @@ environment.
 
 1. Open a terminal.
 
-    Mac users, use `docker-machine status` to make sure your VM is running. You
+    Mac users, use `docker-machine status your_vm_name` to make sure your VM is running. You
     may need to run `eval "$(docker-machine env your_vm_name)"` to initialize your
     shell environment.
 
@@ -193,7 +193,7 @@ environment.
     Keeping the ancestor images improves the build performance. When you rebuild
     the child image, the build process uses the local ancestors rather than
     retrieving them from the Hub. The build process gets new ancestors only if
-    DockerHub has updated versions.
+    Docker Hub has updated versions.
 
 ## Start a container and run a test
 
@@ -287,7 +287,7 @@ with the `make.sh` script.
 
         root@5f8630b873fe:/go/src/github.com/docker/docker#  docker daemon -D
 
-    The `-dD` flag starts the daemon in debug mode. You'll find this useful
+    The `-D` flag starts the daemon in debug mode. You'll find this useful
     when debugging your code.
 
 9. Bring up one of the terminals on your local host.

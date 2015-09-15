@@ -6,10 +6,10 @@ type SysInfo struct {
 	// Whether the kernel supports AppArmor or not
 	AppArmor bool
 
-	*cgroupMemInfo
-	*cgroupCPUInfo
-	*cgroupBlkioInfo
-	*cgroupCpusetInfo
+	cgroupMemInfo
+	cgroupCPUInfo
+	cgroupBlkioInfo
+	cgroupCpusetInfo
 
 	// Whether IPv4 forwarding is supported or not, if this was disabled, networking will not work
 	IPv4ForwardingDisabled bool
@@ -36,6 +36,9 @@ type cgroupMemInfo struct {
 
 	// Whether memory swappiness is supported or not
 	MemorySwappiness bool
+
+	// Whether kernel memory limit is supported or not
+	KernelMemory bool
 }
 
 type cgroupCPUInfo struct {

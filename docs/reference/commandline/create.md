@@ -40,6 +40,7 @@ Creates a new container.
       --help=false                  Print usage
       -i, --interactive=false       Keep STDIN open even if not attached
       --ipc=""                      IPC namespace to use
+      --kernel-memory=""            Kernel memory limit
       -l, --label=[]                Set metadata on the container (e.g., --label=com.example.key=value)
       --label-file=[]               Read in a line delimited file of labels
       --link=[]                     Add link to another container
@@ -58,8 +59,9 @@ Creates a new container.
       --pid=""                      PID namespace to use
       --privileged=false            Give extended privileges to this container
       --read-only=false             Mount the container's root filesystem as read only
-      --restart="no"                Restart policy (no, on-failure[:max-retry], always)
+      --restart="no"                Restart policy (no, on-failure[:max-retry], always, unless-stopped)
       --security-opt=[]             Security options
+      --stop-signal="SIGTERM"       Signal to stop a container
       -t, --tty=false               Allocate a pseudo-TTY
       --disable-content-trust=true  Skip image verification
       -u, --user=""                 Username or UID

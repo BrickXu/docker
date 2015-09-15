@@ -6,10 +6,26 @@ import (
 	"archive/tar"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
-// canonicalTarNameForPath returns platform-specific filepath
+// fixVolumePathPrefix does platform specific processing to ensure that if
+// the path being passed in is not in a volume path format, convert it to one.
+func fixVolumePathPrefix(srcPath string) string {
+	if !strings.HasPrefix(srcPath, `\\?\`) {
+		srcPath = `\\?\` + srcPath
+	}
+	return srcPath
+}
+
+// getWalkRoot calculates the root path when performing a TarWithOptions.
+// We use a seperate function as this is platform specific.
+func getWalkRoot(srcPath string, include string) string {
+	return filepath.Join(srcPath, include)
+}
+
+// CanonicalTarNameForPath returns platform-specific filepath
 // to canonical posix-style path for tar archival. p is relative
 // path.
 func CanonicalTarNameForPath(p string) (string, error) {

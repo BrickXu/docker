@@ -10,7 +10,7 @@ package builder
 import (
 	"fmt"
 	"io/ioutil"
-	"path"
+	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -20,6 +20,9 @@ import (
 	"github.com/Sirupsen/logrus"
 	flag "github.com/docker/docker/pkg/mflag"
 	"github.com/docker/docker/pkg/nat"
+	"github.com/docker/docker/pkg/signal"
+	"github.com/docker/docker/pkg/stringutils"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/runconfig"
 )
 
@@ -194,7 +197,11 @@ func from(b *builder, args []string, attributes map[string]bool, original string
 
 	name := args[0]
 
+	// Windows cannot support a container with no base image.
 	if name == NoBaseImageSpecifier {
+		if runtime.GOOS == "windows" {
+			return fmt.Errorf("Windows does not support FROM scratch")
+		}
 		b.image = ""
 		b.noBaseImage = true
 		return nil
@@ -267,39 +274,15 @@ func workdir(b *builder, args []string, attributes map[string]bool, original str
 		return err
 	}
 
-	// Note that workdir passed comes from the Dockerfile. Hence it is in
-	// Linux format using forward-slashes, even on Windows. However,
-	// b.Config.WorkingDir is in platform-specific notation (in other words
-	// on Windows will use `\`
-	workdir := args[0]
+	// This is from the Dockerfile and will not necessarily be in platform
+	// specific semantics, hence ensure it is converted.
+	workdir := filepath.FromSlash(args[0])
 
-	isAbs := false
-	if runtime.GOOS == "windows" {
-		// Alternate processing for Windows here is necessary as we can't call
-		// filepath.IsAbs(workDir) as that would verify Windows style paths,
-		// along with drive-letters (eg c:\pathto\file.txt). We (arguably
-		// correctly or not) check for both forward and back slashes as this
-		// is what the 1.4.2 GoLang implementation of IsAbs() does in the
-		// isSlash() function.
-		isAbs = workdir[0] == '\\' || workdir[0] == '/'
-	} else {
-		isAbs = filepath.IsAbs(workdir)
+	if !system.IsAbs(workdir) {
+		current := filepath.FromSlash(b.Config.WorkingDir)
+		workdir = filepath.Join(string(os.PathSeparator), current, workdir)
 	}
 
-	if !isAbs {
-		current := b.Config.WorkingDir
-		if runtime.GOOS == "windows" {
-			// Convert to Linux format before join
-			current = strings.Replace(current, "\\", "/", -1)
-		}
-		// Must use path.Join so works correctly on Windows, not filepath
-		workdir = path.Join("/", current, workdir)
-	}
-
-	// Convert to platform specific format
-	if runtime.GOOS == "windows" {
-		workdir = strings.Replace(workdir, "/", "\\", -1)
-	}
 	b.Config.WorkingDir = workdir
 
 	return b.commit("", b.Config.Cmd, fmt.Sprintf("WORKDIR %v", workdir))
@@ -348,7 +331,7 @@ func run(b *builder, args []string, attributes map[string]bool, original string)
 	b.Config.Cmd = config.Cmd
 	runconfig.Merge(b.Config, config)
 
-	defer func(cmd *runconfig.Command) { b.Config.Cmd = cmd }(cmd)
+	defer func(cmd *stringutils.StrSlice) { b.Config.Cmd = cmd }(cmd)
 
 	logrus.Debugf("[BUILDER] Command to be executed: %v", b.Config.Cmd)
 
@@ -401,7 +384,7 @@ func cmd(b *builder, args []string, attributes map[string]bool, original string)
 		}
 	}
 
-	b.Config.Cmd = runconfig.NewCommand(cmdSlice...)
+	b.Config.Cmd = stringutils.NewStrSlice(cmdSlice...)
 
 	if err := b.commit("", b.Config.Cmd, fmt.Sprintf("CMD %q", cmdSlice)); err != nil {
 		return err
@@ -432,16 +415,16 @@ func entrypoint(b *builder, args []string, attributes map[string]bool, original 
 	switch {
 	case attributes["json"]:
 		// ENTRYPOINT ["echo", "hi"]
-		b.Config.Entrypoint = runconfig.NewEntrypoint(parsed...)
+		b.Config.Entrypoint = stringutils.NewStrSlice(parsed...)
 	case len(parsed) == 0:
 		// ENTRYPOINT []
 		b.Config.Entrypoint = nil
 	default:
 		// ENTRYPOINT echo hi
 		if runtime.GOOS != "windows" {
-			b.Config.Entrypoint = runconfig.NewEntrypoint("/bin/sh", "-c", parsed[0])
+			b.Config.Entrypoint = stringutils.NewStrSlice("/bin/sh", "-c", parsed[0])
 		} else {
-			b.Config.Entrypoint = runconfig.NewEntrypoint("cmd", "/S /C", parsed[0])
+			b.Config.Entrypoint = stringutils.NewStrSlice("cmd", "/S /C", parsed[0])
 		}
 	}
 
@@ -551,4 +534,25 @@ func volume(b *builder, args []string, attributes map[string]bool, original stri
 		return err
 	}
 	return nil
+}
+
+// STOPSIGNAL signal
+//
+// Set the signal that will be used to kill the container.
+func stopSignal(b *builder, args []string, attributes map[string]bool, original string) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("STOPSIGNAL is not supported on Windows")
+	}
+	if len(args) != 1 {
+		return fmt.Errorf("STOPSIGNAL requires exactly one argument")
+	}
+
+	sig := args[0]
+	_, err := signal.ParseSignal(sig)
+	if err != nil {
+		return err
+	}
+
+	b.Config.StopSignal = sig
+	return b.commit("", b.Config.Cmd, fmt.Sprintf("STOPSIGNAL %v", args))
 }
