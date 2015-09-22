@@ -24,6 +24,7 @@ import (
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/execdriver/execdrivers"
 	"github.com/docker/docker/daemon/graphdriver"
+	derr "github.com/docker/docker/errors"
 	// register vfs
 	_ "github.com/docker/docker/daemon/graphdriver/vfs"
 	"github.com/docker/docker/daemon/logger"
@@ -46,6 +47,9 @@ import (
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/runconfig"
 	"github.com/docker/docker/trust"
+	volumedrivers "github.com/docker/docker/volume/drivers"
+	"github.com/docker/docker/volume/local"
+	"github.com/docker/docker/volume/store"
 	"github.com/docker/libnetwork"
 	"github.com/opencontainers/runc/libcontainer/netlink"
 )
@@ -111,7 +115,7 @@ type Daemon struct {
 	RegistryService  *registry.Service
 	EventsService    *events.Events
 	netController    libnetwork.NetworkController
-	volumes          *volumeStore
+	volumes          *store.VolumeStore
 	root             string
 	shutdown         bool
 }
@@ -137,6 +141,10 @@ func (daemon *Daemon) Get(prefixOrName string) (*Container, error) {
 
 	containerID, indexError := daemon.idIndex.Get(prefixOrName)
 	if indexError != nil {
+		// When truncindex defines an error type, use that instead
+		if strings.Contains(indexError.Error(), "no such id") {
+			return nil, derr.ErrorCodeNoSuchContainer.WithArgs(prefixOrName)
+		}
 		return nil, indexError
 	}
 	return daemon.containers.Get(containerID), nil
@@ -870,8 +878,14 @@ func (daemon *Daemon) unmount(container *Container) error {
 	return nil
 }
 
-func (daemon *Daemon) run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.StartCallback) (execdriver.ExitStatus, error) {
-	return daemon.execDriver.Run(c.command, pipes, startCallback)
+func (daemon *Daemon) run(c *Container, pipes *execdriver.Pipes, startCallback execdriver.DriverCallback) (execdriver.ExitStatus, error) {
+	hooks := execdriver.Hooks{
+		Start: startCallback,
+	}
+	hooks.PreStart = append(hooks.PreStart, func(processConfig *execdriver.ProcessConfig, pid int) error {
+		return c.setNetworkNamespaceKey(pid)
+	})
+	return daemon.execDriver.Run(c.command, pipes, hooks)
 }
 
 func (daemon *Daemon) kill(c *Container, sig int) error {
@@ -1106,4 +1120,17 @@ func (daemon *Daemon) verifyContainerSettings(hostConfig *runconfig.HostConfig, 
 
 	// Now do platform-specific verification
 	return verifyPlatformContainerSettings(daemon, hostConfig, config)
+}
+
+func configureVolumes(config *Config) (*store.VolumeStore, error) {
+	volumesDriver, err := local.New(config.Root)
+	if err != nil {
+		return nil, err
+	}
+
+	volumedrivers.Register(volumesDriver, volumesDriver.Name())
+	s := store.New()
+	s.AddAll(volumesDriver.List())
+
+	return s, nil
 }
