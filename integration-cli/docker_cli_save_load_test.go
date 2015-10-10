@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-check/check"
 )
@@ -97,6 +99,24 @@ func (s *DockerSuite) TestSaveSingleTag(c *check.C) {
 	}
 }
 
+func (s *DockerSuite) TestSaveCheckTimes(c *check.C) {
+	repoName := "busybox:latest"
+	out, _ := dockerCmd(c, "inspect", repoName)
+	data := []struct {
+		ID      string
+		Created time.Time
+	}{}
+	err := json.Unmarshal([]byte(out), &data)
+	c.Assert(err, check.IsNil, check.Commentf("failed to marshal from %q: err %v", repoName, err))
+	c.Assert(len(data), check.Not(check.Equals), 0, check.Commentf("failed to marshal the data from %q", repoName))
+	tarTvTimeFormat := "2006-01-02 15:04"
+	out, _, err = runCommandPipelineWithOutput(
+		exec.Command(dockerBinary, "save", repoName),
+		exec.Command("tar", "tv"),
+		exec.Command("grep", "-E", fmt.Sprintf("%s %s", data[0].Created.Format(tarTvTimeFormat), data[0].ID)))
+	c.Assert(err, check.IsNil, check.Commentf("failed to save repo with image ID and 'repositories' file: %s, %v", out, err))
+}
+
 func (s *DockerSuite) TestSaveImageId(c *check.C) {
 	testRequires(c, DaemonIsLinux)
 	repoName := "foobar-save-image-id-test"
@@ -107,6 +127,10 @@ func (s *DockerSuite) TestSaveImageId(c *check.C) {
 
 	out, _ = dockerCmd(c, "images", "-q", repoName)
 	cleanedShortImageID := strings.TrimSpace(out)
+
+	// Make sure IDs are not empty
+	c.Assert(cleanedLongImageID, check.Not(check.Equals), "", check.Commentf("Id should not be empty."))
+	c.Assert(cleanedShortImageID, check.Not(check.Equals), "", check.Commentf("Id should not be empty."))
 
 	saveCmd := exec.Command(dockerBinary, "save", cleanedShortImageID)
 	tarCmd := exec.Command("tar", "t")

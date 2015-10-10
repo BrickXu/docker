@@ -20,6 +20,7 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/daemon/events"
 	"github.com/docker/docker/daemon/execdriver"
 	"github.com/docker/docker/daemon/execdriver/execdrivers"
@@ -32,12 +33,14 @@ import (
 	"github.com/docker/docker/graph"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/docker/pkg/broadcastwriter"
+	"github.com/docker/docker/pkg/broadcaster"
+	"github.com/docker/docker/pkg/discovery"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/graphdb"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/namesgenerator"
 	"github.com/docker/docker/pkg/nat"
+	"github.com/docker/docker/pkg/parsers/filters"
 	"github.com/docker/docker/pkg/signal"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/stringutils"
@@ -51,7 +54,6 @@ import (
 	"github.com/docker/docker/volume/local"
 	"github.com/docker/docker/volume/store"
 	"github.com/docker/libnetwork"
-	"github.com/opencontainers/runc/libcontainer/netlink"
 )
 
 var (
@@ -116,6 +118,7 @@ type Daemon struct {
 	EventsService    *events.Events
 	netController    libnetwork.NetworkController
 	volumes          *store.VolumeStore
+	discoveryWatcher discovery.Watcher
 	root             string
 	shutdown         bool
 }
@@ -192,8 +195,8 @@ func (daemon *Daemon) Register(container *Container) error {
 	container.daemon = daemon
 
 	// Attach to stdout and stderr
-	container.stderr = broadcastwriter.New()
-	container.stdout = broadcastwriter.New()
+	container.stderr = new(broadcaster.Unbuffered)
+	container.stdout = new(broadcaster.Unbuffered)
 	// Attach to stdin
 	if container.Config.OpenStdin {
 		container.stdin, container.stdinPipe = io.Pipe()
@@ -217,6 +220,9 @@ func (daemon *Daemon) Register(container *Container) error {
 		}
 		daemon.execDriver.Terminate(cmd)
 
+		if err := container.unmountIpcMounts(); err != nil {
+			logrus.Errorf("%s: Failed to umount ipc filesystems: %v", container.ID, err)
+		}
 		if err := container.Unmount(); err != nil {
 			logrus.Debugf("unmount error %s", err)
 		}
@@ -524,6 +530,36 @@ func (daemon *Daemon) GetByName(name string) (*Container, error) {
 	return e, nil
 }
 
+// GetEventFilter returns a filters.Filter for a set of filters
+func (daemon *Daemon) GetEventFilter(filter filters.Args) *events.Filter {
+	// incoming container filter can be name, id or partial id, convert to
+	// a full container id
+	for i, cn := range filter["container"] {
+		c, err := daemon.Get(cn)
+		if err != nil {
+			filter["container"][i] = ""
+		} else {
+			filter["container"][i] = c.ID
+		}
+	}
+	return events.NewFilter(filter, daemon.GetLabels)
+}
+
+// GetLabels for a container or image id
+func (daemon *Daemon) GetLabels(id string) map[string]string {
+	// TODO: TestCase
+	container := daemon.containers.Get(id)
+	if container != nil {
+		return container.Config.Labels
+	}
+
+	img, err := daemon.repositories.LookupImage(id)
+	if err == nil {
+		return img.ContainerConfig.Labels
+	}
+	return nil
+}
+
 // children returns all child containers of the container with the
 // given name. The containers are returned as a map from the container
 // name to a pointer to Container.
@@ -716,7 +752,17 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 		}
 	}
 
-	d.netController, err = initNetworkController(config)
+	// Discovery is only enabled when the daemon is launched with an address to advertise.  When
+	// initialized, the daemon is registered and we can store the discovery backend as its read-only
+	// DiscoveryWatcher version.
+	if config.ClusterStore != "" && config.ClusterAdvertise != "" {
+		var err error
+		if d.discoveryWatcher, err = initDiscovery(config.ClusterStore, config.ClusterAdvertise, config.ClusterOpts); err != nil {
+			return nil, fmt.Errorf("discovery initialization failed (%v)", err)
+		}
+	}
+
+	d.netController, err = d.initNetworkController(config)
 	if err != nil {
 		return nil, fmt.Errorf("Error initializing network controller: %v", err)
 	}
@@ -766,6 +812,11 @@ func NewDaemon(config *Config, registryService *registry.Service) (daemon *Daemo
 	d.EventsService = eventsService
 	d.volumes = volStore
 	d.root = config.Root
+
+	if err := d.cleanupMounts(); err != nil {
+		return nil, err
+	}
+
 	go d.execCommandGC()
 
 	if err := d.restore(); err != nil {
@@ -848,6 +899,10 @@ func (daemon *Daemon) Shutdown() error {
 		}
 	}
 
+	if err := daemon.cleanupMounts(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -882,7 +937,7 @@ func (daemon *Daemon) run(c *Container, pipes *execdriver.Pipes, startCallback e
 	hooks := execdriver.Hooks{
 		Start: startCallback,
 	}
-	hooks.PreStart = append(hooks.PreStart, func(processConfig *execdriver.ProcessConfig, pid int) error {
+	hooks.PreStart = append(hooks.PreStart, func(processConfig *execdriver.ProcessConfig, pid int, chOOM <-chan struct{}) error {
 		return c.setNetworkNamespaceKey(pid)
 	})
 	return daemon.execDriver.Run(c.command, pipes, hooks)
@@ -956,9 +1011,74 @@ func (daemon *Daemon) Graph() *graph.Graph {
 	return daemon.graph
 }
 
-// Repositories returns all repositories.
-func (daemon *Daemon) Repositories() *graph.TagStore {
-	return daemon.repositories
+// TagImage creates a tag in the repository reponame, pointing to the image named
+// imageName. If force is true, an existing tag with the same name may be
+// overwritten.
+func (daemon *Daemon) TagImage(repoName, tag, imageName string, force bool) error {
+	return daemon.repositories.Tag(repoName, tag, imageName, force)
+}
+
+// PullImage initiates a pull operation. image is the repository name to pull, and
+// tag may be either empty, or indicate a specific tag to pull.
+func (daemon *Daemon) PullImage(image string, tag string, imagePullConfig *graph.ImagePullConfig) error {
+	return daemon.repositories.Pull(image, tag, imagePullConfig)
+}
+
+// ImportImage imports an image, getting the archived layer data either from
+// inConfig (if src is "-"), or from a URI specified in src. Progress output is
+// written to outStream. Repository and tag names can optionally be given in
+// the repo and tag arguments, respectively.
+func (daemon *Daemon) ImportImage(src, repo, tag, msg string, inConfig io.ReadCloser, outStream io.Writer, containerConfig *runconfig.Config) error {
+	return daemon.repositories.Import(src, repo, tag, msg, inConfig, outStream, containerConfig)
+}
+
+// ExportImage exports a list of images to the given output stream. The
+// exported images are archived into a tar when written to the output
+// stream. All images with the given tag and all versions containing
+// the same tag are exported. names is the set of tags to export, and
+// outStream is the writer which the images are written to.
+func (daemon *Daemon) ExportImage(names []string, outStream io.Writer) error {
+	return daemon.repositories.ImageExport(names, outStream)
+}
+
+// PushImage initiates a push operation on the repository named localName.
+func (daemon *Daemon) PushImage(localName string, imagePushConfig *graph.ImagePushConfig) error {
+	return daemon.repositories.Push(localName, imagePushConfig)
+}
+
+// LookupImage looks up an image by name and returns it as an ImageInspect
+// structure.
+func (daemon *Daemon) LookupImage(name string) (*types.ImageInspect, error) {
+	return daemon.repositories.Lookup(name)
+}
+
+// LoadImage uploads a set of images into the repository. This is the
+// complement of ImageExport.  The input stream is an uncompressed tar
+// ball containing images and metadata.
+func (daemon *Daemon) LoadImage(inTar io.ReadCloser, outStream io.Writer) error {
+	return daemon.repositories.Load(inTar, outStream)
+}
+
+// ListImages returns a filtered list of images. filterArgs is a JSON-encoded set
+// of filter arguments which will be interpreted by pkg/parsers/filters.
+// filter is a shell glob string applied to repository names. The argument
+// named all controls whether all images in the graph are filtered, or just
+// the heads.
+func (daemon *Daemon) ListImages(filterArgs, filter string, all bool) ([]*types.Image, error) {
+	return daemon.repositories.Images(filterArgs, filter, all)
+}
+
+// ImageHistory returns a slice of ImageHistory structures for the specified image
+// name by walking the image lineage.
+func (daemon *Daemon) ImageHistory(name string) ([]*types.ImageHistory, error) {
+	return daemon.repositories.History(name)
+}
+
+// GetImage returns pointer to an Image struct corresponding to the given
+// name. The name can include an optional tag; otherwise the default tag will
+// be used.
+func (daemon *Daemon) GetImage(name string) (*image.Image, error) {
+	return daemon.repositories.LookupImage(name)
 }
 
 func (daemon *Daemon) config() *Config {
@@ -1065,20 +1185,6 @@ func setDefaultMtu(config *Config) {
 }
 
 var errNoDefaultRoute = errors.New("no default route was found")
-
-// getDefaultRouteMtu returns the MTU for the default route's interface.
-func getDefaultRouteMtu() (int, error) {
-	routes, err := netlink.NetworkGetRoutes()
-	if err != nil {
-		return 0, err
-	}
-	for _, r := range routes {
-		if r.Default && r.Iface != nil {
-			return r.Iface.MTU, nil
-		}
-	}
-	return 0, errNoDefaultRoute
-}
 
 // verifyContainerSettings performs validation of the hostconfig and config
 // structures.

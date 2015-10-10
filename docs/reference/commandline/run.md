@@ -5,7 +5,6 @@ description = "The run command description and usage"
 keywords = ["run, command, container"]
 [menu.main]
 parent = "smn_cli"
-weight=1
 +++
 <![end-metadata]-->
 
@@ -29,6 +28,7 @@ weight=1
       --cpuset-mems=""              Memory nodes (MEMs) in which to allow execution (0-3, 0,1)
       -d, --detach=false            Run container in background and print container ID
       --device=[]                   Add a host device to the container
+      --disable-content-trust=true  Skip image verification
       --dns=[]                      Set custom DNS servers
       --dns-opt=[]                  Set custom DNS options
       --dns-search=[]               Set custom DNS search domains
@@ -50,10 +50,11 @@ weight=1
       --lxc-conf=[]                 Add custom lxc options
       -m, --memory=""               Memory limit
       --mac-address=""              Container MAC address (e.g. 92:d0:c6:0a:29:33)
+      --memory-reservation=""       Memory soft limit
       --memory-swap=""              Total memory (memory + swap), '-1' to disable swap
       --memory-swappiness=""        Tune a container's memory swappiness behavior. Accepts an integer between 0 and 100.
       --name=""                     Assign a name to the container
-      --net="bridge"                Set the Network mode for the container
+      --net="default"               Set the Network mode for the container
       --oom-kill-disable=false      Whether to disable OOM Killer for the container or not
       -P, --publish-all=false       Publish all exposed ports to random ports
       -p, --publish=[]              Publish a container's port(s) to the host
@@ -63,12 +64,11 @@ weight=1
       --restart="no"                Restart policy (no, on-failure[:max-retry], always, unless-stopped)
       --rm=false                    Automatically remove the container when it exits
       --security-opt=[]             Security Options
-      --stop-signal="SIGTERM"       Signal to stop a container
       --sig-proxy=true              Proxy received signals to the process
+      --stop-signal="SIGTERM"       Signal to stop a container
       -t, --tty=false               Allocate a pseudo-TTY
       -u, --user=""                 Username or UID (format: <name|uid>[:<group|gid>])
       --ulimit=[]                   Ulimit options
-      --disable-content-trust=true  Skip image verification
       --uts=""                      UTS namespace to use
       -v, --volume=[]               Bind mount a volume
       --volumes-from=[]             Mount volumes from the specified container(s)
@@ -100,7 +100,7 @@ and linking containers.
     $ docker ps -a | grep test
     d6c0fe130dba        debian:7            "/bin/bash"         26 seconds ago      Exited (13) 17 seconds ago                         test
 
-This example runs a container named `test` using the `debian:latest` 
+This example runs a container named `test` using the `debian:latest`
 image. The `-it` instructs Docker to allocate a pseudo-TTY connected to
 the container's stdin; creating an interactive `bash` shell in the container.
 In the example, the `bash` shell is quit by entering
@@ -215,7 +215,8 @@ An example of a file passed with `--env-file`
     _TEST_BAR=FOO
     TEST_APP_42=magic
     helloWorld=true
-    # 123qwe=bar <- is not valid
+    123qwe=bar
+    org.spring.config=something
 
     # pass through this variable from the caller
     TEST_PASSTHROUGH
@@ -230,6 +231,8 @@ An example of a file passed with `--env-file`
     helloWorld=true
     TEST_PASSTHROUGH=howdy
     HOME=/root
+    123qwe=bar
+    org.spring.config=something
 
     $ docker run --env-file ./env.list busybox env
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
@@ -242,9 +245,8 @@ An example of a file passed with `--env-file`
     helloWorld=true
     TEST_PASSTHROUGH=
     HOME=/root
-
-> **Note**: Environment variables names must consist solely of letters, numbers,
-> and underscores - and cannot start with a number.
+    123qwe=bar
+    org.spring.config=something
 
 A label is a a `key=value` pair that applies metadata to a container. To label a container with two labels:
 
@@ -530,8 +532,8 @@ containers with `daemon` user:
     docker run -d -u daemon --ulimit nproc=3 busybox top
     docker run -d -u daemon --ulimit nproc=3 busybox top
 
-The 4th container fails and reports "[8] System error: resource temporarily unavailable" error. 
-This fails because the caller set `nproc=3` resulting in the first three containers using up 
+The 4th container fails and reports "[8] System error: resource temporarily unavailable" error.
+This fails because the caller set `nproc=3` resulting in the first three containers using up
 the three processes quota set for the `daemon` user.
 
 ### Stopping a container with a specific signal

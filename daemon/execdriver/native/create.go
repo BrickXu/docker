@@ -3,9 +3,7 @@
 package native
 
 import (
-	"errors"
 	"fmt"
-	"net"
 	"strings"
 	"syscall"
 
@@ -13,7 +11,6 @@ import (
 	"github.com/opencontainers/runc/libcontainer/apparmor"
 	"github.com/opencontainers/runc/libcontainer/configs"
 	"github.com/opencontainers/runc/libcontainer/devices"
-	"github.com/opencontainers/runc/libcontainer/utils"
 )
 
 // createContainer populates and configures the container type with the
@@ -64,7 +61,13 @@ func (d *Driver) createContainer(c *execdriver.Command, hooks execdriver.Hooks) 
 			return nil, err
 		}
 	}
-
+	// add CAP_ prefix to all caps for new libcontainer update to match
+	// the spec format.
+	for i, s := range container.Capabilities {
+		if !strings.HasPrefix(s, "CAP_") {
+			container.Capabilities[i] = fmt.Sprintf("CAP_%s", s)
+		}
+	}
 	container.AdditionalGroups = c.GroupAdd
 
 	if c.AppArmorProfile != "" {
@@ -95,22 +98,6 @@ func (d *Driver) createContainer(c *execdriver.Command, hooks execdriver.Hooks) 
 	d.setupLabels(container, c)
 	d.setupRlimits(container, c)
 	return container, nil
-}
-
-func generateIfaceName() (string, error) {
-	for i := 0; i < 10; i++ {
-		name, err := utils.GenerateRandomName("veth", 7)
-		if err != nil {
-			continue
-		}
-		if _, err := net.InterfaceByName(name); err != nil {
-			if strings.Contains(err.Error(), "no such") {
-				return name, nil
-			}
-			return "", err
-		}
-	}
-	return "", errors.New("Failed to find name for new interface")
 }
 
 func (d *Driver) createNetwork(container *configs.Config, c *execdriver.Command, hooks execdriver.Hooks) error {
@@ -146,7 +133,11 @@ func (d *Driver) createNetwork(container *configs.Config, c *execdriver.Command,
 			configs.NewFunctionHook(func(s configs.HookState) error {
 				if len(hooks.PreStart) > 0 {
 					for _, fnHook := range hooks.PreStart {
-						if err := fnHook(&c.ProcessConfig, s.Pid); err != nil {
+						// A closed channel for OOM is returned here as it will be
+						// non-blocking and return the correct result when read.
+						chOOM := make(chan struct{})
+						close(chOOM)
+						if err := fnHook(&c.ProcessConfig, s.Pid, chOOM); err != nil {
 							return err
 						}
 					}

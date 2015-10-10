@@ -22,7 +22,7 @@ import (
 	derr "github.com/docker/docker/errors"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/docker/pkg/broadcastwriter"
+	"github.com/docker/docker/pkg/broadcaster"
 	"github.com/docker/docker/pkg/fileutils"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/mount"
@@ -41,8 +41,8 @@ var (
 )
 
 type streamConfig struct {
-	stdout    *broadcastwriter.BroadcastWriter
-	stderr    *broadcastwriter.BroadcastWriter
+	stdout    *broadcaster.Unbuffered
+	stderr    *broadcaster.Unbuffered
 	stdin     io.ReadCloser
 	stdinPipe io.WriteCloser
 }
@@ -288,10 +288,17 @@ func (container *Container) Start() (err error) {
 		return err
 	}
 
+	if !container.hostConfig.IpcMode.IsContainer() && !container.hostConfig.IpcMode.IsHost() {
+		if err := container.setupIpcDirs(); err != nil {
+			return err
+		}
+	}
+
 	mounts, err := container.setupMounts()
 	if err != nil {
 		return err
 	}
+	mounts = append(mounts, container.ipcMounts()...)
 
 	container.command.Mounts = mounts
 	return container.waitForStart()
@@ -311,13 +318,13 @@ func (streamConfig *streamConfig) StdinPipe() io.WriteCloser {
 
 func (streamConfig *streamConfig) StdoutPipe() io.ReadCloser {
 	reader, writer := io.Pipe()
-	streamConfig.stdout.AddWriter(writer)
+	streamConfig.stdout.Add(writer)
 	return ioutils.NewBufReader(reader)
 }
 
 func (streamConfig *streamConfig) StderrPipe() io.ReadCloser {
 	reader, writer := io.Pipe()
-	streamConfig.stderr.AddWriter(writer)
+	streamConfig.stderr.Add(writer)
 	return ioutils.NewBufReader(reader)
 }
 
@@ -330,8 +337,12 @@ func (container *Container) isNetworkAllocated() bool {
 func (container *Container) cleanup() {
 	container.releaseNetwork()
 
+	if err := container.unmountIpcMounts(); err != nil {
+		logrus.Errorf("%s: Failed to umount ipc filesystems: %v", container.ID, err)
+	}
+
 	if err := container.Unmount(); err != nil {
-		logrus.Errorf("%v: Failed to umount filesystem: %v", container.ID, err)
+		logrus.Errorf("%s: Failed to umount filesystem: %v", container.ID, err)
 	}
 
 	for _, eConfig := range container.execCommands.s {
@@ -779,11 +790,11 @@ func (container *Container) getExecIDs() []string {
 	return container.execCommands.List()
 }
 
-func (container *Container) exec(ExecConfig *ExecConfig) error {
+func (container *Container) exec(ec *ExecConfig) error {
 	container.Lock()
 	defer container.Unlock()
 
-	callback := func(processConfig *execdriver.ProcessConfig, pid int) error {
+	callback := func(processConfig *execdriver.ProcessConfig, pid int, chOOM <-chan struct{}) error {
 		if processConfig.Tty {
 			// The callback is called after the process Start()
 			// so we are in the parent process. In TTY mode, stdin/out/err is the PtySlave
@@ -792,17 +803,17 @@ func (container *Container) exec(ExecConfig *ExecConfig) error {
 				c.Close()
 			}
 		}
-		close(ExecConfig.waitStart)
+		close(ec.waitStart)
 		return nil
 	}
 
 	// We use a callback here instead of a goroutine and an chan for
 	// synchronization purposes
-	cErr := promise.Go(func() error { return container.monitorExec(ExecConfig, callback) })
+	cErr := promise.Go(func() error { return container.monitorExec(ec, callback) })
 
 	// Exec should not return until the process is actually running
 	select {
-	case <-ExecConfig.waitStart:
+	case <-ec.waitStart:
 	case err := <-cErr:
 		return err
 	}

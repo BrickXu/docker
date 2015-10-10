@@ -609,16 +609,16 @@ func imageExists(image string) error {
 	return err
 }
 
-func pullImageIfNotExist(image string) (err error) {
+func pullImageIfNotExist(image string) error {
 	if err := imageExists(image); err != nil {
 		pullCmd := exec.Command(dockerBinary, "pull", image)
 		_, exitCode, err := runCommandWithOutput(pullCmd)
 
 		if err != nil || exitCode != 0 {
-			err = fmt.Errorf("image %q wasn't found locally and it couldn't be pulled: %s", image, err)
+			return fmt.Errorf("image %q wasn't found locally and it couldn't be pulled: %s", image, err)
 		}
 	}
-	return
+	return nil
 }
 
 func dockerCmdWithError(args ...string) (string, int, error) {
@@ -1402,14 +1402,20 @@ func waitForContainer(contID string, args ...string) error {
 
 // waitRun will wait for the specified container to be running, maximum 5 seconds.
 func waitRun(contID string) error {
-	return waitInspect(contID, "{{.State.Running}}", "true", 5)
+	return waitInspect(contID, "{{.State.Running}}", "true", 5*time.Second)
+}
+
+// waitExited will wait for the specified container to state exit, subject
+// to a maximum time limit in seconds supplied by the caller
+func waitExited(contID string, duration time.Duration) error {
+	return waitInspect(contID, "{{.State.Status}}", "exited", duration)
 }
 
 // waitInspect will wait for the specified container to have the specified string
 // in the inspect output. It will wait until the specified timeout (in seconds)
 // is reached.
-func waitInspect(name, expr, expected string, timeout int) error {
-	after := time.After(time.Duration(timeout) * time.Second)
+func waitInspect(name, expr, expected string, timeout time.Duration) error {
+	after := time.After(timeout)
 
 	for {
 		cmd := exec.Command(dockerBinary, "inspect", "-f", expr, name)

@@ -57,7 +57,7 @@ func Init(home string, options []string) (graphdriver.Driver, error) {
 		home:      home,
 	}
 
-	return graphdriver.NaiveDiffDriver(d), nil
+	return graphdriver.NewNaiveDiffDriver(d), nil
 }
 
 func (d *Driver) String() string {
@@ -84,6 +84,8 @@ func (d *Driver) Status() [][2]string {
 		{"Metadata Space Available", fmt.Sprintf("%s", units.HumanSize(float64(s.Metadata.Available)))},
 		{"Udev Sync Supported", fmt.Sprintf("%v", s.UdevSyncSupported)},
 		{"Deferred Removal Enabled", fmt.Sprintf("%v", s.DeferredRemoveEnabled)},
+		{"Deferred Deletion Enabled", fmt.Sprintf("%v", s.DeferredDeleteEnabled)},
+		{"Deferred Deleted Device Count", fmt.Sprintf("%v", s.DeferredDeletedDeviceCount)},
 	}
 	if len(s.DataLoopback) > 0 {
 		status = append(status, [2]string{"Data loop file", s.DataLoopback})
@@ -142,7 +144,7 @@ func (d *Driver) Remove(id string) error {
 	}
 
 	// This assumes the device has been properly Get/Put:ed and thus is unmounted
-	if err := d.DeviceSet.DeleteDevice(id); err != nil {
+	if err := d.DeviceSet.DeleteDevice(id, false); err != nil {
 		return err
 	}
 
@@ -196,7 +198,7 @@ func (d *Driver) Put(id string) error {
 	return err
 }
 
-// Exists checks to see if the device is mounted.
+// Exists checks to see if the device exists.
 func (d *Driver) Exists(id string) bool {
 	return d.DeviceSet.HasDevice(id)
 }

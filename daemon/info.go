@@ -61,7 +61,7 @@ func (daemon *Daemon) SystemInfo() (*types.Info, error) {
 		initPath = daemon.systemInitPath()
 	}
 
-	sysInfo := sysinfo.New(false)
+	sysInfo := sysinfo.New(true)
 
 	v := &types.Info{
 		ID:                 daemon.ID,
@@ -91,6 +91,7 @@ func (daemon *Daemon) SystemInfo() (*types.Info, error) {
 		Labels:             daemon.config().Labels,
 		ExperimentalBuild:  utils.ExperimentalBuild(),
 		ServerVersion:      dockerversion.VERSION,
+		ClusterStore:       daemon.config().ClusterStore,
 	}
 
 	// TODO Windows. Refactor this more once sysinfo is refactored into

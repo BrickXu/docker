@@ -5,7 +5,6 @@ description = "The search command description and usage"
 keywords = ["search, hub, images"]
 [menu.main]
 parent = "smn_cli"
-weight=1
 +++
 <![end-metadata]-->
 
@@ -16,6 +15,7 @@ weight=1
     Search the Docker Hub for images
 
       --automated=false    Only show automated builds
+      --help=false         Print usage
       --no-trunc=false     Don't truncate output
       -s, --stars=0        Only displays with at least x stars
 
@@ -26,4 +26,3 @@ more details on finding shared images from the command line.
 
 > **Note:**
 > Search queries will only return up to 25 results
-

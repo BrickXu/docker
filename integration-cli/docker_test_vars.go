@@ -34,6 +34,19 @@ var (
 	// of the daemon. This is initialised in docker_utils by sending
 	// a version call to the daemon and examining the response header.
 	daemonPlatform string
+
+	// daemonDefaultImage is the name of the default image to use when running
+	// tests. This is platform dependent.
+	daemonDefaultImage string
+)
+
+const (
+	// WindowsBaseImage is the name of the base image for Windows testing
+	WindowsBaseImage = "windowsservercore"
+
+	// DefaultImage is the name of the base image for the majority of tests that
+	// are run across suites
+	DefaultImage = "busybox"
 )
 
 func init() {
@@ -68,11 +81,8 @@ func init() {
 	// Similarly, it will be perfectly valid to also run CLI tests from
 	// a Linux CLI (built with the daemon tag) against a Windows daemon.
 	if len(os.Getenv("DOCKER_REMOTE_DAEMON")) > 0 {
-		fmt.Println("INFO: Testing against a remote daemon")
 		isLocalDaemon = false
 	} else {
-		fmt.Println("INFO: Testing against a local daemon")
 		isLocalDaemon = true
 	}
-
 }
