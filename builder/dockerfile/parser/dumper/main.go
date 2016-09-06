@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/docker/docker/builder/parser"
+	"github.com/docker/docker/builder/dockerfile/parser"
 )
 
 func main() {
@@ -21,8 +21,12 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
+		defer f.Close()
 
-		ast, err := parser.Parse(f)
+		d := parser.Directive{LookingForDirectives: true}
+		parser.SetEscapeToken(parser.DefaultEscapeToken, &d)
+
+		ast, err := parser.Parse(f, &d)
 		if err != nil {
 			panic(err)
 		} else {

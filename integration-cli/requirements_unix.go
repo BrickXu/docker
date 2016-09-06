@@ -3,6 +3,9 @@
 package main
 
 import (
+	"io/ioutil"
+	"strings"
+
 	"github.com/docker/docker/pkg/sysinfo"
 )
 
@@ -32,6 +35,12 @@ var (
 			return SysInfo.OomKillDisable
 		},
 		"Test requires Oom control enabled.",
+	}
+	pidsLimit = testRequirement{
+		func() bool {
+			return SysInfo.PidsLimit
+		},
+		"Test requires pids limit enabled.",
 	}
 	kernelMemorySupport = testRequirement{
 		func() bool {
@@ -74,6 +83,34 @@ var (
 			return SysInfo.Cpuset
 		},
 		"Test requires an environment that supports cgroup cpuset.",
+	}
+	seccompEnabled = testRequirement{
+		func() bool {
+			return supportsSeccomp && SysInfo.Seccomp
+		},
+		"Test requires that seccomp support be enabled in the daemon.",
+	}
+	bridgeNfIptables = testRequirement{
+		func() bool {
+			return !SysInfo.BridgeNFCallIPTablesDisabled
+		},
+		"Test requires that bridge-nf-call-iptables support be enabled in the daemon.",
+	}
+	bridgeNfIP6tables = testRequirement{
+		func() bool {
+			return !SysInfo.BridgeNFCallIP6TablesDisabled
+		},
+		"Test requires that bridge-nf-call-ip6tables support be enabled in the daemon.",
+	}
+	unprivilegedUsernsClone = testRequirement{
+		func() bool {
+			content, err := ioutil.ReadFile("/proc/sys/kernel/unprivileged_userns_clone")
+			if err == nil && strings.Contains(string(content), "0") {
+				return false
+			}
+			return true
+		},
+		"Test cannot be run with 'sysctl kernel.unprivileged_userns_clone' = 0",
 	}
 )
 

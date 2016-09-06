@@ -7,10 +7,12 @@ package journald
 import (
 	"fmt"
 	"sync"
+	"unicode"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/coreos/go-systemd/journal"
 	"github.com/docker/docker/daemon/logger"
+	"github.com/docker/docker/daemon/logger/loggerutils"
 )
 
 const name = "journald"
@@ -34,6 +36,26 @@ func init() {
 	}
 }
 
+// sanitizeKeyMode returns the sanitized string so that it could be used in journald.
+// In journald log, there are special requirements for fields.
+// Fields must be composed of uppercase letters, numbers, and underscores, but must
+// not start with an underscore.
+func sanitizeKeyMod(s string) string {
+	n := ""
+	for _, v := range s {
+		if 'a' <= v && v <= 'z' {
+			v = unicode.ToUpper(v)
+		} else if ('Z' < v || v < 'A') && ('9' < v || v < '0') {
+			v = '_'
+		}
+		// If (n == "" && v == '_'), then we will skip as this is the beginning with '_'
+		if !(n == "" && v == '_') {
+			n += string(v)
+		}
+	}
+	return n
+}
+
 // New creates a journald logger using the configuration passed in on
 // the context.
 func New(ctx logger.Context) (logger.Logger, error) {
@@ -46,10 +68,23 @@ func New(ctx logger.Context) (logger.Logger, error) {
 	if name[0] == '/' {
 		name = name[1:]
 	}
+
+	// parse log tag
+	tag, err := loggerutils.ParseLogTag(ctx, loggerutils.DefaultTemplate)
+	if err != nil {
+		return nil, err
+	}
+
 	vars := map[string]string{
 		"CONTAINER_ID":      ctx.ContainerID[:12],
 		"CONTAINER_ID_FULL": ctx.ContainerID,
-		"CONTAINER_NAME":    name}
+		"CONTAINER_NAME":    name,
+		"CONTAINER_TAG":     tag,
+	}
+	extraAttrs := ctx.ExtraAttributes(sanitizeKeyMod)
+	for k, v := range extraAttrs {
+		vars[k] = v
+	}
 	return &journald{vars: vars, readers: readerList{readers: make(map[*logger.LogWatcher]*logger.LogWatcher)}}, nil
 }
 
@@ -58,6 +93,9 @@ func New(ctx logger.Context) (logger.Logger, error) {
 func validateLogOpt(cfg map[string]string) error {
 	for key := range cfg {
 		switch key {
+		case "labels":
+		case "env":
+		case "tag":
 		default:
 			return fmt.Errorf("unknown log opt '%s' for journald log driver", key)
 		}
@@ -66,10 +104,17 @@ func validateLogOpt(cfg map[string]string) error {
 }
 
 func (s *journald) Log(msg *logger.Message) error {
-	if msg.Source == "stderr" {
-		return journal.Send(string(msg.Line), journal.PriErr, s.vars)
+	vars := map[string]string{}
+	for k, v := range s.vars {
+		vars[k] = v
 	}
-	return journal.Send(string(msg.Line), journal.PriInfo, s.vars)
+	if msg.Partial {
+		vars["CONTAINER_PARTIAL_MESSAGE"] = "true"
+	}
+	if msg.Source == "stderr" {
+		return journal.Send(string(msg.Line), journal.PriErr, vars)
+	}
+	return journal.Send(string(msg.Line), journal.PriInfo, vars)
 }
 
 func (s *journald) Name() string {

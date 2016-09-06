@@ -10,10 +10,14 @@ parent = "smn_cli"
 
 # start
 
-    Usage: docker start [OPTIONS] CONTAINER [CONTAINER...]
+```markdown
+Usage:  docker start [OPTIONS] CONTAINER [CONTAINER...]
 
-    Start one or more containers
+Start one or more stopped containers
 
-      -a, --attach=false         Attach STDOUT/STDERR and forward signals
-      --help=false               Print usage
-      -i, --interactive=false    Attach container's STDIN
+Options:
+  -a, --attach               Attach STDOUT/STDERR and forward signals
+      --detach-keys string   Override the key sequence for detaching a container
+      --help                 Print usage
+  -i, --interactive          Attach container's STDIN
+```

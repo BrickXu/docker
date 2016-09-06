@@ -1,38 +1,56 @@
 package api
 
 import (
+	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"mime"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/system"
-	"github.com/docker/docker/pkg/version"
+	"github.com/docker/engine-api/types"
 	"github.com/docker/libtrust"
 )
 
 // Common constants for daemon and client.
 const (
 	// Version of Current REST API
-	Version version.Version = "1.21"
+	DefaultVersion string = "1.25"
 
-	// MinVersion represents Minimun REST API version supported
-	MinVersion version.Version = "1.12"
+	// MinVersion represents Minimum REST API version supported
+	MinVersion string = "1.12"
 
-	// DefaultDockerfileName is the Default filename with Docker commands, read by docker build
-	DefaultDockerfileName string = "Dockerfile"
+	// NoBaseImageSpecifier is the symbol used by the FROM
+	// command to specify that no base image is to be used.
+	NoBaseImageSpecifier string = "scratch"
 )
 
-// byPrivatePort is temporary type used to sort types.Port by PrivatePort
-type byPrivatePort []types.Port
+// byPortInfo is a temporary type used to sort types.Port by its fields
+type byPortInfo []types.Port
 
-func (r byPrivatePort) Len() int           { return len(r) }
-func (r byPrivatePort) Swap(i, j int)      { r[i], r[j] = r[j], r[i] }
-func (r byPrivatePort) Less(i, j int) bool { return r[i].PrivatePort < r[j].PrivatePort }
+func (r byPortInfo) Len() int      { return len(r) }
+func (r byPortInfo) Swap(i, j int) { r[i], r[j] = r[j], r[i] }
+func (r byPortInfo) Less(i, j int) bool {
+	if r[i].PrivatePort != r[j].PrivatePort {
+		return r[i].PrivatePort < r[j].PrivatePort
+	}
+
+	if r[i].IP != r[j].IP {
+		return r[i].IP < r[j].IP
+	}
+
+	if r[i].PublicPort != r[j].PublicPort {
+		return r[i].PublicPort < r[j].PublicPort
+	}
+
+	return r[i].Type < r[j].Type
+}
 
 // DisplayablePorts returns formatted string representing open ports of container
 // e.g. "0.0.0.0:80->9090/tcp, 9988/tcp"
@@ -45,7 +63,8 @@ func DisplayablePorts(ports []types.Port) string {
 	groupMap := make(map[string]*portGroup)
 	var result []string
 	var hostMappings []string
-	sort.Sort(byPrivatePort(ports))
+	var groupMapKeys []string
+	sort.Sort(byPortInfo(ports))
 	for _, port := range ports {
 		current := port.PrivatePort
 		portKey := port.Type
@@ -60,6 +79,8 @@ func DisplayablePorts(ports []types.Port) string {
 
 		if group == nil {
 			groupMap[portKey] = &portGroup{first: current, last: current}
+			// record order that groupMap keys are created
+			groupMapKeys = append(groupMapKeys, portKey)
 			continue
 		}
 		if current == (group.last + 1) {
@@ -70,7 +91,8 @@ func DisplayablePorts(ports []types.Port) string {
 		result = append(result, formGroup(portKey, group.first, group.last))
 		groupMap[portKey] = &portGroup{first: current, last: current}
 	}
-	for portKey, g := range groupMap {
+	for _, portKey := range groupMapKeys {
+		g := groupMap[portKey]
 		result = append(result, formGroup(portKey, g.first, g.last))
 	}
 	result = append(result, hostMappings...)
@@ -117,11 +139,31 @@ func LoadOrCreateTrustKey(trustKeyPath string) (libtrust.PrivateKey, error) {
 		if err != nil {
 			return nil, fmt.Errorf("Error generating key: %s", err)
 		}
-		if err := libtrust.SaveKey(trustKeyPath, trustKey); err != nil {
+		encodedKey, err := serializePrivateKey(trustKey, filepath.Ext(trustKeyPath))
+		if err != nil {
+			return nil, fmt.Errorf("Error serializing key: %s", err)
+		}
+		if err := ioutils.AtomicWriteFile(trustKeyPath, encodedKey, os.FileMode(0600)); err != nil {
 			return nil, fmt.Errorf("Error saving key file: %s", err)
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("Error loading key file %s: %s", trustKeyPath, err)
 	}
 	return trustKey, nil
+}
+
+func serializePrivateKey(key libtrust.PrivateKey, ext string) (encoded []byte, err error) {
+	if ext == ".json" || ext == ".jwk" {
+		encoded, err = json.Marshal(key)
+		if err != nil {
+			return nil, fmt.Errorf("unable to encode private key JWK: %s", err)
+		}
+	} else {
+		pemBlock, err := key.PEMBlock()
+		if err != nil {
+			return nil, fmt.Errorf("unable to encode private key PEM: %s", err)
+		}
+		encoded = pem.EncodeToMemory(pemBlock)
+	}
+	return
 }
