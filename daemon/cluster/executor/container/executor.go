@@ -4,10 +4,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/network"
 	executorpkg "github.com/docker/docker/daemon/cluster/executor"
 	clustertypes "github.com/docker/docker/daemon/cluster/provider"
-	"github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/network"
 	networktypes "github.com/docker/libnetwork/types"
 	"github.com/docker/swarmkit/agent/exec"
 	"github.com/docker/swarmkit/api"
@@ -121,6 +121,10 @@ func (e *executor) Configure(ctx context.Context, node *api.Node) error {
 
 // Controller returns a docker container runner.
 func (e *executor) Controller(t *api.Task) (exec.Controller, error) {
+	if t.Spec.GetAttachment() != nil {
+		return newNetworkAttacherController(e.backend, t)
+	}
+
 	ctlr, err := newController(e.backend, t)
 	if err != nil {
 		return nil, err

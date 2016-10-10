@@ -8,9 +8,9 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/api/server/httputils"
-	basictypes "github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/filters"
-	types "github.com/docker/engine-api/types/swarm"
+	basictypes "github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
+	types "github.com/docker/docker/api/types/swarm"
 	"golang.org/x/net/context"
 )
 
@@ -132,7 +132,7 @@ func (sr *swarmRouter) createService(ctx context.Context, w http.ResponseWriter,
 
 	id, err := sr.backend.CreateService(service, encodedAuth)
 	if err != nil {
-		logrus.Errorf("Error creating service %s: %v", id, err)
+		logrus.Errorf("Error creating service %s: %v", service.Name, err)
 		return err
 	}
 

@@ -8,9 +8,9 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/cliconfig"
 	"github.com/docker/docker/pkg/reexec"
-	"github.com/docker/engine-api/types/swarm"
 	"github.com/go-check/check"
 )
 
@@ -23,6 +23,9 @@ func Test(t *testing.T) {
 		fmt.Println("INFO: Testing against a local daemon")
 	}
 
+	if daemonPlatform == "linux" {
+		ensureFrozenImagesLinux(t)
+	}
 	check.TestingT(t)
 }
 
@@ -298,6 +301,8 @@ func (s *DockerSwarmSuite) TearDownTest(c *check.C) {
 		if err := os.RemoveAll(walDir); err != nil {
 			c.Logf("error removing %v: %v", walDir, err)
 		}
+
+		cleanupExecRoot(c, d.execRoot)
 	}
 	s.daemons = nil
 	s.daemonsLock.Unlock()

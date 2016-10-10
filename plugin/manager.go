@@ -4,16 +4,13 @@ package plugin
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/docker/libcontainerd"
-	"github.com/docker/docker/pkg/plugins"
 	"github.com/docker/docker/plugin/store"
 	"github.com/docker/docker/plugin/v2"
 	"github.com/docker/docker/registry"
@@ -21,12 +18,6 @@ import (
 
 var (
 	manager *Manager
-
-	/* allowV1PluginsFallback determines daemon's support for V1 plugins.
-	 * When the time comes to remove support for V1 plugins, flipping
-	 * this bool is all that will be needed.
-	 */
-	allowV1PluginsFallback = true
 )
 
 func (pm *Manager) restorePlugin(p *v2.Plugin) error {
@@ -41,15 +32,12 @@ type eventLogger func(id, name, action string)
 
 // Manager controls the plugin subsystem.
 type Manager struct {
-	sync.RWMutex
 	libRoot           string
 	runRoot           string
-	pluginStore       *store.PluginStore
-	handlers          map[string]func(string, *plugins.Client)
+	pluginStore       *store.Store
 	containerdClient  libcontainerd.Client
 	registryService   registry.Service
 	liveRestore       bool
-	shutdown          bool
 	pluginEventLogger eventLogger
 }
 
@@ -60,7 +48,7 @@ func GetManager() *Manager {
 
 // Init (was NewManager) instantiates the singleton Manager.
 // TODO: revert this to NewManager once we get rid of all the singletons.
-func Init(root string, remote libcontainerd.Remote, rs registry.Service, liveRestore bool, evL eventLogger) (err error) {
+func Init(root string, ps *store.Store, remote libcontainerd.Remote, rs registry.Service, liveRestore bool, evL eventLogger) (err error) {
 	if manager != nil {
 		return nil
 	}
@@ -69,8 +57,7 @@ func Init(root string, remote libcontainerd.Remote, rs registry.Service, liveRes
 	manager = &Manager{
 		libRoot:           root,
 		runRoot:           "/run/docker",
-		pluginStore:       store.NewPluginStore(root),
-		handlers:          make(map[string]func(string, *plugins.Client)),
+		pluginStore:       ps,
 		registryService:   rs,
 		liveRestore:       liveRestore,
 		pluginEventLogger: evL,
@@ -88,32 +75,25 @@ func Init(root string, remote libcontainerd.Remote, rs registry.Service, liveRes
 	return nil
 }
 
-// Handle sets a callback for a given capability. The callback will be called for every plugin with a given capability.
-// TODO: append instead of set?
-func Handle(capability string, callback func(string, *plugins.Client)) {
-	pluginType := fmt.Sprintf("docker.%s/1", strings.ToLower(capability))
-	manager.handlers[pluginType] = callback
-	if allowV1PluginsFallback {
-		plugins.Handle(capability, callback)
-	}
-}
-
 // StateChanged updates plugin internals using libcontainerd events.
 func (pm *Manager) StateChanged(id string, e libcontainerd.StateInfo) error {
 	logrus.Debugf("plugin state changed %s %#v", id, e)
 
 	switch e.State {
 	case libcontainerd.StateExit:
-		var shutdown bool
-		pm.RLock()
-		shutdown = pm.shutdown
-		pm.RUnlock()
-		if shutdown {
-			p, err := pm.pluginStore.GetByID(id)
-			if err != nil {
-				return err
-			}
+		p, err := pm.pluginStore.GetByID(id)
+		if err != nil {
+			return err
+		}
+		p.RLock()
+		if p.ExitChan != nil {
 			close(p.ExitChan)
+		}
+		restart := p.Restart
+		p.RUnlock()
+		p.RemoveFromDisk()
+		if restart {
+			pm.enable(p, true)
 		}
 	}
 

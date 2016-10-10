@@ -20,7 +20,10 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/strslice"
 	"github.com/docker/docker/builder"
 	"github.com/docker/docker/builder/dockerfile/parser"
 	"github.com/docker/docker/pkg/archive"
@@ -34,9 +37,6 @@ import (
 	"github.com/docker/docker/pkg/tarsum"
 	"github.com/docker/docker/pkg/urlutil"
 	"github.com/docker/docker/runconfig/opts"
-	"github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/container"
-	"github.com/docker/engine-api/types/strslice"
 )
 
 func (b *Builder) commit(id string, autoCmd strslice.StrSlice, comment string) error {
@@ -375,18 +375,6 @@ func (b *Builder) calcCopyInfo(cmdName, origPath string, allowLocalDecompression
 	return copyInfos, nil
 }
 
-func containsWildcards(name string) bool {
-	for i := 0; i < len(name); i++ {
-		ch := name[i]
-		if ch == '\\' {
-			i++
-		} else if ch == '*' || ch == '?' || ch == '[' {
-			return true
-		}
-	}
-	return false
-}
-
 func (b *Builder) processImageFrom(img builder.Image) error {
 	if img != nil {
 		b.image = img.ImageID()
@@ -435,14 +423,12 @@ func (b *Builder) processImageFrom(img builder.Image) error {
 		}
 
 		total := len(ast.Children)
-		for i, n := range ast.Children {
-			switch strings.ToUpper(n.Value) {
-			case "ONBUILD":
-				return fmt.Errorf("Chaining ONBUILD via `ONBUILD ONBUILD` isn't allowed")
-			case "MAINTAINER", "FROM":
-				return fmt.Errorf("%s isn't allowed as an ONBUILD trigger", n.Value)
+		for _, n := range ast.Children {
+			if err := b.checkDispatch(n, true); err != nil {
+				return err
 			}
-
+		}
+		for i, n := range ast.Children {
 			if err := b.dispatch(i, total, n); err != nil {
 				return err
 			}
@@ -452,18 +438,16 @@ func (b *Builder) processImageFrom(img builder.Image) error {
 	return nil
 }
 
-// probeCache checks if `b.docker` implements builder.ImageCache and image-caching
-// is enabled (`b.UseCache`).
-// If so attempts to look up the current `b.image` and `b.runConfig` pair with `b.docker`.
+// probeCache checks if cache match can be found for current build instruction.
 // If an image is found, probeCache returns `(true, nil)`.
 // If no image is found, it returns `(false, nil)`.
 // If there is any error, it returns `(false, err)`.
 func (b *Builder) probeCache() (bool, error) {
-	c, ok := b.docker.(builder.ImageCache)
-	if !ok || b.options.NoCache || b.cacheBusted {
+	c := b.imageCache
+	if c == nil || b.options.NoCache || b.cacheBusted {
 		return false, nil
 	}
-	cache, err := c.GetCachedImageOnBuild(b.image, b.runConfig)
+	cache, err := c.GetCache(b.image, b.runConfig)
 	if err != nil {
 		return false, err
 	}
@@ -500,9 +484,10 @@ func (b *Builder) create() (string, error) {
 
 	// TODO: why not embed a hostconfig in builder?
 	hostConfig := &container.HostConfig{
-		Isolation: b.options.Isolation,
-		ShmSize:   b.options.ShmSize,
-		Resources: resources,
+		SecurityOpt: b.options.SecurityOpt,
+		Isolation:   b.options.Isolation,
+		ShmSize:     b.options.ShmSize,
+		Resources:   resources,
 	}
 
 	config := *b.runConfig
@@ -555,7 +540,7 @@ func (b *Builder) run(cID string) (err error) {
 		}
 	}()
 
-	if err := b.docker.ContainerStart(cID, nil, true); err != nil {
+	if err := b.docker.ContainerStart(cID, nil, true, ""); err != nil {
 		return err
 	}
 

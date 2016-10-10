@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/dockerversion"
 	"github.com/docker/docker/pkg/fileutils"
@@ -18,7 +19,6 @@ import (
 	"github.com/docker/docker/registry"
 	"github.com/docker/docker/utils"
 	"github.com/docker/docker/volume/drivers"
-	"github.com/docker/engine-api/types"
 	"github.com/docker/go-connections/sockets"
 )
 
@@ -118,6 +118,7 @@ func (daemon *Daemon) SystemInfo() (*types.Info, error) {
 		NoProxy:            sockets.GetProxyEnv("no_proxy"),
 		SecurityOptions:    securityOptions,
 		LiveRestoreEnabled: daemon.configStore.LiveRestoreEnabled,
+		Isolation:          daemon.defaultIsolation,
 	}
 
 	// TODO Windows. Refactor this more once sysinfo is refactored into

@@ -22,12 +22,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/opts"
 	"github.com/docker/docker/pkg/httputils"
 	icmd "github.com/docker/docker/pkg/integration/cmd"
 	"github.com/docker/docker/pkg/ioutils"
 	"github.com/docker/docker/pkg/stringutils"
-	"github.com/docker/engine-api/types"
 	"github.com/docker/go-connections/tlsconfig"
 	"github.com/docker/go-units"
 	"github.com/go-check/check"
@@ -84,6 +84,7 @@ func init() {
 		volumesConfigPath = strings.Replace(volumesConfigPath, `\`, `/`, -1)
 		containerStoragePath = strings.Replace(containerStoragePath, `\`, `/`, -1)
 	}
+	isolation = info.Isolation
 }
 
 func convertBasesize(basesizeBytes int64) (int64, error) {
@@ -753,6 +754,10 @@ func newRemoteFileServer(ctx *FakeContext) (*remoteFileServer, error) {
 		image     = fmt.Sprintf("fileserver-img-%s", strings.ToLower(stringutils.GenerateRandomAlphaOnlyString(10)))
 		container = fmt.Sprintf("fileserver-cnt-%s", strings.ToLower(stringutils.GenerateRandomAlphaOnlyString(10)))
 	)
+
+	if err := ensureHTTPServerImage(); err != nil {
+		return nil, err
+	}
 
 	// Build the image
 	if err := fakeContextAddDockerfile(ctx, `FROM httpserver
@@ -1435,7 +1440,7 @@ func runSleepingContainerInImage(c *check.C, image string, extraArgs ...string) 
 	args := []string{"run", "-d"}
 	args = append(args, extraArgs...)
 	args = append(args, image)
-	args = append(args, defaultSleepCommand...)
+	args = append(args, sleepCommandForDaemonPlatform()...)
 	return dockerCmd(c, args...)
 }
 

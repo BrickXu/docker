@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/integration/checker"
-	"github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/container"
 	"github.com/go-check/check"
 )
 
@@ -406,4 +406,14 @@ func (s *DockerSuite) TestInspectRootFS(c *check.C) {
 	c.Assert(err, checker.IsNil)
 
 	c.Assert(len(imageJSON[0].RootFS.Layers), checker.GreaterOrEqualThan, 1)
+}
+
+func (s *DockerSuite) TestInspectAmpersand(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+
+	name := "test"
+	out, _ := dockerCmd(c, "run", "--name", name, "--env", `TEST_ENV="soanni&rtr"`, "busybox", "env")
+	c.Assert(out, checker.Contains, `soanni&rtr`)
+	out, _ = dockerCmd(c, "inspect", name)
+	c.Assert(out, checker.Contains, `soanni&rtr`)
 }

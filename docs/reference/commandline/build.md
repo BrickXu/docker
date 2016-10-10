@@ -17,7 +17,9 @@ Build an image from a Dockerfile
 
 Options:
       --build-arg value         Set build-time variables (default [])
+      --cache-from value        Images to consider as cache sources (default [])
       --cgroup-parent string    Optional parent cgroup for the container
+      --compress                Compress the build context using gzip
       --cpu-period int          Limit the CPU CFS (Completely Fair Scheduler) period
       --cpu-quota int           Limit the CPU CFS (Completely Fair Scheduler) quota
   -c, --cpu-shares int          CPU shares (relative weight)
@@ -35,6 +37,7 @@ Options:
       --pull                    Always attempt to pull a newer version of the image
   -q, --quiet                   Suppress the build output and print image ID on success
       --rm                      Remove intermediate containers after a successful build (default true)
+      --security-opt value      Security Options (default [])
       --shm-size string         Size of /dev/shm, default value is 64MB.
                                 The format is `<number><unit>`. `number` must be greater than `0`.
                                 Unit is optional and can be `b` (bytes), `k` (kilobytes), `m` (megabytes),
@@ -231,12 +234,12 @@ specify an arbitrary Git repository by using the `git://` or `git@` scheme.
 $ docker build -f ctx/Dockerfile http://server/ctx.tar.gz
 
 Downloading context: http://server/ctx.tar.gz [===================>]    240 B/240 B
-Step 0 : FROM busybox
+Step 1 : FROM busybox
  ---> 8c2e06607696
-Step 1 : ADD ctx/container.cfg /
+Step 2 : ADD ctx/container.cfg /
  ---> e7829950cee3
 Removing intermediate container b35224abf821
-Step 2 : CMD /bin/ls
+Step 3 : CMD /bin/ls
  ---> Running in fbc63d321d73
  ---> 3286931702ad
 Removing intermediate container fbc63d321d73
@@ -394,6 +397,12 @@ Dockerfile are echoed during the build process.
 
 For detailed information on using `ARG` and `ENV` instructions, see the
 [Dockerfile reference](../builder.md).
+
+### Optional security options (--security-opt)
+
+This flag is only supported on a daemon running on Windows, and only supports 
+the `credentialspec` option. The `credentialspec` must be in the format
+`file://spec.txt` or `registry://keyname`. 
 
 ### Specify isolation technology for container (--isolation)
 

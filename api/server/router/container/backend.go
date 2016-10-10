@@ -6,10 +6,10 @@ import (
 
 	"golang.org/x/net/context"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/backend"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/pkg/archive"
-	"github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/container"
 )
 
 // execBackend includes functions to implement to provide exec functionality.
@@ -39,7 +39,7 @@ type stateBackend interface {
 	ContainerResize(name string, height, width int) error
 	ContainerRestart(name string, seconds int) error
 	ContainerRm(name string, config *types.ContainerRmConfig) error
-	ContainerStart(name string, hostConfig *container.HostConfig, validateHostname bool) error
+	ContainerStart(name string, hostConfig *container.HostConfig, validateHostname bool, checkpoint string) error
 	ContainerStop(name string, seconds int) error
 	ContainerUnpause(name string) error
 	ContainerUpdate(name string, hostConfig *container.HostConfig, validateHostname bool) (types.ContainerUpdateResponse, error)
@@ -62,6 +62,11 @@ type attachBackend interface {
 	ContainerAttach(name string, c *backend.ContainerAttachConfig) error
 }
 
+// systemBackend includes functions to implement to provide system wide containers functionality
+type systemBackend interface {
+	ContainersPrune(config *types.ContainersPruneConfig) (*types.ContainersPruneReport, error)
+}
+
 // Backend is all the methods that need to be implemented to provide container specific functionality.
 type Backend interface {
 	execBackend
@@ -69,4 +74,5 @@ type Backend interface {
 	stateBackend
 	monitorBackend
 	attachBackend
+	systemBackend
 }

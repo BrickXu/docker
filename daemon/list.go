@@ -8,12 +8,12 @@ import (
 	"strings"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
+	networktypes "github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/volume"
-	"github.com/docker/engine-api/types"
-	"github.com/docker/engine-api/types/filters"
-	networktypes "github.com/docker/engine-api/types/network"
 	"github.com/docker/go-connections/nat"
 )
 
@@ -36,6 +36,7 @@ var acceptedPsFilterTags = map[string]bool{
 	"since":     true,
 	"volume":    true,
 	"network":   true,
+	"is-task":   true,
 }
 
 // iterationAction represents possible outcomes happening during the container iteration.
@@ -79,11 +80,14 @@ type listContext struct {
 	exitAllowed []int
 
 	// beforeFilter is a filter to ignore containers that appear before the one given
-	// this is used for --filter=before= and --before=, the latter is deprecated.
 	beforeFilter *container.Container
 	// sinceFilter is a filter to stop the filtering when the iterator arrive to the given container
-	// this is used for --filter=since= and --since=, the latter is deprecated.
 	sinceFilter *container.Container
+
+	// taskFilter tells if we should filter based on wether a container is part of a task
+	taskFilter bool
+	// isTask tells us if the we should filter container that are a task (true) or not (false)
+	isTask bool
 	// ContainerListOptions is the filters set by the user
 	*types.ContainerListOptions
 }
@@ -241,6 +245,19 @@ func (daemon *Daemon) foldFilter(config *types.ContainerListOptions) (*listConte
 		return nil, err
 	}
 
+	var taskFilter, isTask bool
+	if psFilters.Include("is-task") {
+		if psFilters.ExactMatch("is-task", "true") {
+			taskFilter = true
+			isTask = true
+		} else if psFilters.ExactMatch("is-task", "false") {
+			taskFilter = true
+			isTask = false
+		} else {
+			return nil, fmt.Errorf("Invalid filter 'is-task=%s'", psFilters.Get("is-task"))
+		}
+	}
+
 	var beforeContFilter, sinceContFilter *container.Container
 
 	err = psFilters.WalkValues("before", func(value string) error {
@@ -286,6 +303,8 @@ func (daemon *Daemon) foldFilter(config *types.ContainerListOptions) (*listConte
 		exitAllowed:          filtExited,
 		beforeFilter:         beforeContFilter,
 		sinceFilter:          sinceContFilter,
+		taskFilter:           taskFilter,
+		isTask:               isTask,
 		ContainerListOptions: config,
 		names:                daemon.nameIndex.GetAll(),
 	}, nil
@@ -323,6 +342,12 @@ func includeContainerInList(container *container.Container, ctx *listContext) it
 	// Do not include container if the id doesn't match
 	if !ctx.filters.Match("id", container.ID) {
 		return excludeContainer
+	}
+
+	if ctx.taskFilter {
+		if ctx.isTask != container.Managed {
+			return excludeContainer
+		}
 	}
 
 	// Do not include container if any of the labels don't match
@@ -400,6 +425,9 @@ func includeContainerInList(container *container.Container, ctx *listContext) it
 				return networkExist
 			}
 			for _, nw := range container.NetworkSettings.Networks {
+				if nw.EndpointSettings == nil {
+					continue
+				}
 				if nw.NetworkID == value {
 					return networkExist
 				}
@@ -460,7 +488,7 @@ func (daemon *Daemon) transformContainer(container *container.Container, ctx *li
 	// copy networks to avoid races
 	networks := make(map[string]*networktypes.EndpointSettings)
 	for name, network := range container.NetworkSettings.Networks {
-		if network == nil {
+		if network == nil || network.EndpointSettings == nil {
 			continue
 		}
 		networks[name] = &networktypes.EndpointSettings{

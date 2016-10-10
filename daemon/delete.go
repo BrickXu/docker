@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	"github.com/Sirupsen/logrus"
+	"github.com/docker/docker/api/errors"
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/container"
-	"github.com/docker/docker/errors"
 	"github.com/docker/docker/layer"
 	volumestore "github.com/docker/docker/volume/store"
-	"github.com/docker/engine-api/types"
 )
 
 // ContainerRm removes the container id from the filesystem. An error
@@ -26,7 +26,8 @@ func (daemon *Daemon) ContainerRm(name string, config *types.ContainerRmConfig) 
 
 	// Container state RemovalInProgress should be used to avoid races.
 	if inProgress := container.SetRemovalInProgress(); inProgress {
-		return nil
+		err := fmt.Errorf("removal of container %s is already in progress", name)
+		return errors.NewBadRequestError(err)
 	}
 	defer container.ResetRemovalInProgress()
 

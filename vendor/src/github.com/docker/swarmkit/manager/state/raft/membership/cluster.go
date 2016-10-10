@@ -2,6 +2,7 @@ package membership
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 
 	"google.golang.org/grpc"
@@ -10,6 +11,7 @@ import (
 	"github.com/docker/swarmkit/api"
 	"github.com/docker/swarmkit/manager/state/watch"
 	"github.com/gogo/protobuf/proto"
+	"golang.org/x/net/context"
 )
 
 var (
@@ -33,7 +35,8 @@ type Cluster struct {
 
 	// removed contains the list of removed Members,
 	// those ids cannot be reused
-	removed map[uint64]bool
+	removed        map[uint64]bool
+	heartbeatTicks int
 
 	PeersBroadcast *watch.Queue
 }
@@ -43,18 +46,54 @@ type Member struct {
 	*api.RaftMember
 
 	api.RaftClient
-	Conn *grpc.ClientConn
+	Conn         *grpc.ClientConn
+	tick         int
+	active       bool
+	lastSeenHost string
 }
 
-// NewCluster creates a new Cluster neighbors
-// list for a raft Member
-func NewCluster() *Cluster {
+// HealthCheck sends a health check RPC to the member and returns the response.
+func (member *Member) HealthCheck(ctx context.Context) error {
+	healthClient := api.NewHealthClient(member.Conn)
+	resp, err := healthClient.Check(ctx, &api.HealthCheckRequest{Service: "Raft"})
+	if err != nil {
+		return err
+	}
+	if resp.Status != api.HealthCheckResponse_SERVING {
+		return fmt.Errorf("health check returned status %s", resp.Status.String())
+	}
+	return nil
+}
+
+// NewCluster creates a new Cluster neighbors list for a raft Member.
+// Member marked as inactive if there was no call ReportActive for heartbeatInterval.
+func NewCluster(heartbeatTicks int) *Cluster {
 	// TODO(abronan): generate Cluster ID for federation
 
 	return &Cluster{
 		members:        make(map[uint64]*Member),
 		removed:        make(map[uint64]bool),
+		heartbeatTicks: heartbeatTicks,
 		PeersBroadcast: watch.NewQueue(),
+	}
+}
+
+// Tick increases ticks for all members. After heartbeatTicks node marked as
+// inactive.
+func (c *Cluster) Tick() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, m := range c.members {
+		if !m.active {
+			continue
+		}
+		m.tick++
+		if m.tick > c.heartbeatTicks {
+			m.active = false
+			if m.Conn != nil {
+				m.Conn.Close()
+			}
+		}
 	}
 }
 
@@ -106,33 +145,49 @@ func (c *Cluster) AddMember(member *Member) error {
 	if c.removed[member.RaftID] {
 		return ErrIDRemoved
 	}
+	member.active = true
+	member.tick = 0
 
 	c.members[member.RaftID] = member
+
 	c.broadcastUpdate()
 	return nil
 }
 
-// RemoveMember removes a node from the Cluster Memberlist.
+// RemoveMember removes a node from the Cluster Memberlist, and adds it to
+// the removed list.
 func (c *Cluster) RemoveMember(id uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.removed[id] = true
 
-	if c.members[id] != nil {
-		conn := c.members[id].Conn
-		if conn != nil {
-			_ = conn.Close()
+	return c.clearMember(id)
+}
+
+// ClearMember removes a node from the Cluster Memberlist, but does NOT add it
+// to the removed list.
+func (c *Cluster) ClearMember(id uint64) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.clearMember(id)
+}
+
+func (c *Cluster) clearMember(id uint64) error {
+	m, ok := c.members[id]
+	if ok {
+		if m.Conn != nil {
+			m.Conn.Close()
 		}
 		delete(c.members, id)
 	}
-
-	c.removed[id] = true
 	c.broadcastUpdate()
 	return nil
 }
 
 // ReplaceMemberConnection replaces the member's GRPC connection and GRPC
 // client.
-func (c *Cluster) ReplaceMemberConnection(id uint64, oldConn *Member, newConn *Member) error {
+func (c *Cluster) ReplaceMemberConnection(id uint64, oldConn *Member, newConn *Member, newAddr string, force bool) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -141,18 +196,21 @@ func (c *Cluster) ReplaceMemberConnection(id uint64, oldConn *Member, newConn *M
 		return ErrIDNotFound
 	}
 
-	if oldConn.Conn != oldMember.Conn {
+	if !force && oldConn.Conn != oldMember.Conn {
 		// The connection was already replaced. Don't do it again.
 		newConn.Conn.Close()
 		return nil
 	}
 
-	oldMember.Conn.Close()
+	if oldMember.Conn != nil {
+		oldMember.Conn.Close()
+	}
 
 	newMember := *oldMember
+	newMember.RaftMember = oldMember.RaftMember.Copy()
+	newMember.RaftMember.Addr = newAddr
 	newMember.Conn = newConn.Conn
 	newMember.RaftClient = newConn.RaftClient
-
 	c.members[id] = &newMember
 
 	return nil
@@ -168,9 +226,53 @@ func (c *Cluster) IsIDRemoved(id uint64) bool {
 // Clear resets the list of active Members and removed Members.
 func (c *Cluster) Clear() {
 	c.mu.Lock()
+	for _, member := range c.members {
+		if member.Conn != nil {
+			member.Conn.Close()
+		}
+	}
+
 	c.members = make(map[uint64]*Member)
 	c.removed = make(map[uint64]bool)
 	c.mu.Unlock()
+}
+
+// ReportActive reports that member is active (called ProcessRaftMessage),
+func (c *Cluster) ReportActive(id uint64, sourceHost string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m, ok := c.members[id]
+	if !ok {
+		return
+	}
+	m.tick = 0
+	m.active = true
+	if sourceHost != "" {
+		m.lastSeenHost = sourceHost
+	}
+}
+
+// Active returns true if node is active.
+func (c *Cluster) Active(id uint64) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	m, ok := c.members[id]
+	if !ok {
+		return false
+	}
+	return m.active
+}
+
+// LastSeenHost returns the last observed source address that the specified
+// member connected from.
+func (c *Cluster) LastSeenHost(id uint64) string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	m, ok := c.members[id]
+	if ok {
+		return m.lastSeenHost
+	}
+	return ""
 }
 
 // ValidateConfigurationChange takes a proposed ConfChange and
@@ -223,8 +325,7 @@ func (c *Cluster) CanRemoveMember(from uint64, id uint64) bool {
 			continue
 		}
 
-		connState, err := m.Conn.State()
-		if err == nil && connState == grpc.Ready {
+		if c.Active(m.RaftID) {
 			nreachable++
 		}
 	}
