@@ -29,7 +29,7 @@ const (
 type Driver interface {
 	// Name returns the name of the volume driver.
 	Name() string
-	// Create makes a new volume with the given id.
+	// Create makes a new volume with the given name.
 	Create(name string, opts map[string]string) (Volume, error)
 	// Remove deletes the volume.
 	Remove(vol Volume) (err error)
@@ -68,14 +68,10 @@ type Volume interface {
 	Status() map[string]interface{}
 }
 
-// LabeledVolume wraps a Volume with user-defined labels
-type LabeledVolume interface {
+// DetailedVolume wraps a Volume with user-defined labels, options, and cluster scope (e.g., `local` or `global`)
+type DetailedVolume interface {
 	Labels() map[string]string
-	Volume
-}
-
-// ScopedVolume wraps a volume with a cluster scope (e.g., `local` or `global`)
-type ScopedVolume interface {
+	Options() map[string]string
 	Scope() string
 	Volume
 }
@@ -84,17 +80,33 @@ type ScopedVolume interface {
 // specifies which volume is to be used and where inside a container it should
 // be mounted.
 type MountPoint struct {
-	Source      string          // Container host directory
-	Destination string          // Inside the container
-	RW          bool            // True if writable
-	Name        string          // Name set by user
-	Driver      string          // Volume driver to use
-	Type        mounttypes.Type `json:",omitempty"` // Type of mount to use, see `Type<foo>` definitions
-	Volume      Volume          `json:"-"`
+	// Source is the source path of the mount.
+	// E.g. `mount --bind /foo /bar`, `/foo` is the `Source`.
+	Source string
+	// Destination is the path relative to the container root (`/`) to the mount point
+	// It is where the `Source` is mounted to
+	Destination string
+	// RW is set to true when the mountpoint should be mounted as read-write
+	RW bool
+	// Name is the name reference to the underlying data defined by `Source`
+	// e.g., the volume name
+	Name string
+	// Driver is the volume driver used to create the volume (if it is a volume)
+	Driver string
+	// Type of mount to use, see `Type<foo>` definitions in github.com/docker/docker/api/types/mount
+	Type mounttypes.Type `json:",omitempty"`
+	// Volume is the volume providing data to this mountpoint.
+	// This is nil unless `Type` is set to `TypeVolume`
+	Volume Volume `json:"-"`
 
+	// Mode is the comma separated list of options supplied by the user when creating
+	// the bind/volume mount.
 	// Note Mode is not used on Windows
 	Mode string `json:"Relabel,omitempty"` // Originally field was `Relabel`"
 
+	// Propagation describes how the mounts are propagated from the host into the
+	// mount point, and vice-versa.
+	// See https://www.kernel.org/doc/Documentation/filesystems/sharedsubtree.txt
 	// Note Propagation is not used on Windows
 	Propagation mounttypes.Propagation `json:",omitempty"` // Mount propagation string
 
@@ -104,19 +116,39 @@ type MountPoint struct {
 	CopyData bool `json:"-"`
 	// ID is the opaque ID used to pass to the volume driver.
 	// This should be set by calls to `Mount` and unset by calls to `Unmount`
-	ID   string `json:",omitempty"`
+	ID string `json:",omitempty"`
+
+	// Sepc is a copy of the API request that created this mount.
 	Spec mounttypes.Mount
 }
 
 // Setup sets up a mount point by either mounting the volume if it is
 // configured, or creating the source directory if supplied.
-func (m *MountPoint) Setup(mountLabel string, rootUID, rootGID int) (string, error) {
-	if m.Volume != nil {
-		if m.ID == "" {
-			m.ID = stringid.GenerateNonCryptoID()
+func (m *MountPoint) Setup(mountLabel string, rootUID, rootGID int) (path string, err error) {
+	defer func() {
+		if err == nil {
+			if label.RelabelNeeded(m.Mode) {
+				if err = label.Relabel(m.Source, mountLabel, label.IsShared(m.Mode)); err != nil {
+					path = ""
+					err = errors.Wrapf(err, "error setting label on mount source '%s'", m.Source)
+					return
+				}
+			}
 		}
-		path, err := m.Volume.Mount(m.ID)
-		return path, errors.Wrapf(err, "error while mounting volume '%s'", m.Source)
+		return
+	}()
+
+	if m.Volume != nil {
+		id := m.ID
+		if id == "" {
+			id = stringid.GenerateNonCryptoID()
+		}
+		path, err := m.Volume.Mount(id)
+		if err != nil {
+			return "", errors.Wrapf(err, "error while mounting volume '%s'", m.Source)
+		}
+		m.ID = id
+		return path, nil
 	}
 	if len(m.Source) == 0 {
 		return "", fmt.Errorf("Unable to setup mount point, neither source nor volume defined")
@@ -131,11 +163,6 @@ func (m *MountPoint) Setup(mountLabel string, rootUID, rootGID int) (string, err
 					return "", errors.Wrapf(err, "error while creating mount source path '%s'", m.Source)
 				}
 			}
-		}
-	}
-	if label.RelabelNeeded(m.Mode) {
-		if err := label.Relabel(m.Source, mountLabel, label.IsShared(m.Mode)); err != nil {
-			return "", errors.Wrapf(err, "error setting label on mount source '%s'", m.Source)
 		}
 	}
 	return m.Source, nil
@@ -197,7 +224,7 @@ func ParseMountRaw(raw, volumeDriver string) (*MountPoint, error) {
 	case 2:
 		if ValidMountMode(arr[1]) {
 			// Destination + Mode is not a valid volume - volumes
-			// cannot include a mode. eg /foo:rw
+			// cannot include a mode. e.g. /foo:rw
 			return nil, errInvalidSpec(raw)
 		}
 		// Host Source Path or Name + Destination
@@ -274,7 +301,6 @@ func ParseMountSpec(cfg mounttypes.Mount, options ...func(*validateOpts)) (*Moun
 		}
 		mp.CopyData = DefaultCopyMode
 
-		mp.Driver = DefaultDriverName
 		if cfg.VolumeOptions != nil {
 			if cfg.VolumeOptions.DriverConfig != nil {
 				mp.Driver = cfg.VolumeOptions.DriverConfig.Name
@@ -290,6 +316,8 @@ func ParseMountSpec(cfg mounttypes.Mount, options ...func(*validateOpts)) (*Moun
 				mp.Propagation = cfg.BindOptions.Propagation
 			}
 		}
+	case mounttypes.TypeTmpfs:
+		// NOP
 	}
 	return mp, nil
 }

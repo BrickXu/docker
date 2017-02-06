@@ -22,7 +22,7 @@ type inspectOptions struct {
 	pretty  bool
 }
 
-func newInspectCommand(dockerCli *command.DockerCli) *cobra.Command {
+func newInspectCommand(dockerCli command.Cli) *cobra.Command {
 	var opts inspectOptions
 
 	cmd := &cobra.Command{
@@ -36,12 +36,12 @@ func newInspectCommand(dockerCli *command.DockerCli) *cobra.Command {
 	}
 
 	flags := cmd.Flags()
-	flags.StringVarP(&opts.format, "format", "f", "", "Format the output using the given go template")
+	flags.StringVarP(&opts.format, "format", "f", "", "Format the output using the given Go template")
 	flags.BoolVar(&opts.pretty, "pretty", false, "Print the information in a human friendly format.")
 	return cmd
 }
 
-func runInspect(dockerCli *command.DockerCli, opts inspectOptions) error {
+func runInspect(dockerCli command.Cli, opts inspectOptions) error {
 	client := dockerCli.Client()
 	ctx := context.Background()
 	getRef := func(ref string) (interface{}, []byte, error) {
@@ -95,6 +95,7 @@ func printNode(out io.Writer, node swarm.Node) {
 	fmt.Fprintf(out, " State:\t\t\t%s\n", command.PrettyPrint(node.Status.State))
 	ioutils.FprintfIfNotEmpty(out, " Message:\t\t%s\n", command.PrettyPrint(node.Status.Message))
 	fmt.Fprintf(out, " Availability:\t\t%s\n", command.PrettyPrint(node.Spec.Availability))
+	ioutils.FprintfIfNotEmpty(out, " Address:\t\t%s\n", command.PrettyPrint(node.Status.Addr))
 
 	if node.ManagerStatus != nil {
 		fmt.Fprintln(out, "Manager Status:")

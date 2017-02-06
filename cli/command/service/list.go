@@ -2,27 +2,21 @@ package service
 
 import (
 	"fmt"
-	"io"
-	"strings"
-	"text/tabwriter"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/swarm"
 	"github.com/docker/docker/cli"
 	"github.com/docker/docker/cli/command"
+	"github.com/docker/docker/cli/command/formatter"
 	"github.com/docker/docker/opts"
-	"github.com/docker/docker/pkg/stringid"
 	"github.com/spf13/cobra"
 	"golang.org/x/net/context"
 )
 
-const (
-	listItemFmt = "%s\t%s\t%s\t%s\t%s\n"
-)
-
 type listOptions struct {
 	quiet  bool
+	format string
 	filter opts.FilterOpt
 }
 
@@ -41,6 +35,7 @@ func newListCommand(dockerCli *command.DockerCli) *cobra.Command {
 
 	flags := cmd.Flags()
 	flags.BoolVarP(&opts.quiet, "quiet", "q", false, "Only display IDs")
+	flags.StringVar(&opts.format, "format", "", "Pretty-print services using a Go template")
 	flags.VarP(&opts.filter, "filter", "f", "Filter output based on conditions provided")
 
 	return cmd
@@ -50,21 +45,20 @@ func runList(dockerCli *command.DockerCli, opts listOptions) error {
 	ctx := context.Background()
 	client := dockerCli.Client()
 
-	services, err := client.ServiceList(ctx, types.ServiceListOptions{Filter: opts.filter.Value()})
+	services, err := client.ServiceList(ctx, types.ServiceListOptions{Filters: opts.filter.Value()})
 	if err != nil {
 		return err
 	}
 
-	out := dockerCli.Out()
-	if opts.quiet {
-		PrintQuiet(out, services)
-	} else {
+	info := map[string]formatter.ServiceListInfo{}
+	if len(services) > 0 && !opts.quiet {
+		// only non-empty services and not quiet, should we call TaskList and NodeList api
 		taskFilter := filters.NewArgs()
 		for _, service := range services {
 			taskFilter.Add("service", service.ID)
 		}
 
-		tasks, err := client.TaskList(ctx, types.TaskListOptions{Filter: taskFilter})
+		tasks, err := client.TaskList(ctx, types.TaskListOptions{Filters: taskFilter})
 		if err != nil {
 			return err
 		}
@@ -74,14 +68,30 @@ func runList(dockerCli *command.DockerCli, opts listOptions) error {
 			return err
 		}
 
-		PrintNotQuiet(out, services, nodes, tasks)
+		info = GetServicesStatus(services, nodes, tasks)
 	}
-	return nil
+
+	format := opts.format
+	if len(format) == 0 {
+		if len(dockerCli.ConfigFile().ServicesFormat) > 0 && !opts.quiet {
+			format = dockerCli.ConfigFile().ServicesFormat
+		} else {
+			format = formatter.TableFormatKey
+		}
+	}
+
+	servicesCtx := formatter.Context{
+		Output: dockerCli.Out(),
+		Format: formatter.NewServiceListFormat(format, opts.quiet),
+	}
+	return formatter.ServiceListWrite(servicesCtx, services, info)
 }
 
-// PrintNotQuiet shows service list in a non-quiet way.
-// Besides this, command `docker stack services xxx` will call this, too.
-func PrintNotQuiet(out io.Writer, services []swarm.Service, nodes []swarm.Node, tasks []swarm.Task) {
+// GetServicesStatus returns a map of mode and replicas
+func GetServicesStatus(services []swarm.Service, nodes []swarm.Node, tasks []swarm.Task) map[string]formatter.ServiceListInfo {
+	running := map[string]int{}
+	tasksNoShutdown := map[string]int{}
+
 	activeNodes := make(map[string]struct{})
 	for _, n := range nodes {
 		if n.Status.State != swarm.NodeStateDown {
@@ -89,45 +99,30 @@ func PrintNotQuiet(out io.Writer, services []swarm.Service, nodes []swarm.Node, 
 		}
 	}
 
-	running := map[string]int{}
 	for _, task := range tasks {
-		if _, nodeActive := activeNodes[task.NodeID]; nodeActive && task.Status.State == "running" {
+		if task.DesiredState != swarm.TaskStateShutdown {
+			tasksNoShutdown[task.ServiceID]++
+		}
+
+		if _, nodeActive := activeNodes[task.NodeID]; nodeActive && task.Status.State == swarm.TaskStateRunning {
 			running[task.ServiceID]++
 		}
 	}
 
-	printTable(out, services, running)
-}
-
-func printTable(out io.Writer, services []swarm.Service, running map[string]int) {
-	writer := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-
-	// Ignore flushing errors
-	defer writer.Flush()
-
-	fmt.Fprintf(writer, listItemFmt, "ID", "NAME", "REPLICAS", "IMAGE", "COMMAND")
+	info := map[string]formatter.ServiceListInfo{}
 	for _, service := range services {
-		replicas := ""
+		info[service.ID] = formatter.ServiceListInfo{}
 		if service.Spec.Mode.Replicated != nil && service.Spec.Mode.Replicated.Replicas != nil {
-			replicas = fmt.Sprintf("%d/%d", running[service.ID], *service.Spec.Mode.Replicated.Replicas)
+			info[service.ID] = formatter.ServiceListInfo{
+				Mode:     "replicated",
+				Replicas: fmt.Sprintf("%d/%d", running[service.ID], *service.Spec.Mode.Replicated.Replicas),
+			}
 		} else if service.Spec.Mode.Global != nil {
-			replicas = "global"
+			info[service.ID] = formatter.ServiceListInfo{
+				Mode:     "global",
+				Replicas: fmt.Sprintf("%d/%d", running[service.ID], tasksNoShutdown[service.ID]),
+			}
 		}
-		fmt.Fprintf(
-			writer,
-			listItemFmt,
-			stringid.TruncateID(service.ID),
-			service.Spec.Name,
-			replicas,
-			service.Spec.TaskTemplate.ContainerSpec.Image,
-			strings.Join(service.Spec.TaskTemplate.ContainerSpec.Args, " "))
 	}
-}
-
-// PrintQuiet shows service list in a quiet way.
-// Besides this, command `docker stack services xxx` will call this, too.
-func PrintQuiet(out io.Writer, services []swarm.Service) {
-	for _, service := range services {
-		fmt.Fprintln(out, service.ID)
-	}
+	return info
 }

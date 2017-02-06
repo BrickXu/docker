@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,7 +14,8 @@ import (
 
 	"github.com/Microsoft/hcsshim"
 	"github.com/Sirupsen/logrus"
-	"github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/docker/docker/pkg/sysinfo"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
 type client struct {
@@ -88,12 +90,13 @@ const defaultOwner = "docker"
 //	"SandboxPath": "C:\\\\control\\\\windowsfilter",
 //	"HvPartition": true,
 //	"EndpointList": ["e1bb1e61-d56f-405e-b75d-fd520cefa0cb"],
+//	"DNSSearchList": "a.com,b.com,c.com",
 //	"HvRuntime": {
 //		"ImagePath": "C:\\\\control\\\\windowsfilter\\\\65bf96e5760a09edf1790cb229e2dfb2dbd0fcdc0bf7451bae099106bfbfea0c\\\\UtilityVM"
 //	},
 //	"Servicing": false
 //}
-func (clnt *client) Create(containerID string, checkpoint string, checkpointDir string, spec specs.Spec, options ...CreateOption) error {
+func (clnt *client) Create(containerID string, checkpoint string, checkpointDir string, spec specs.Spec, attachStdio StdioCallback, options ...CreateOption) error {
 	clnt.lock(containerID)
 	defer clnt.unlock(containerID)
 	logrus.Debugln("libcontainerd: client.Create() with spec", spec)
@@ -109,6 +112,18 @@ func (clnt *client) Create(containerID string, checkpoint string, checkpointDir 
 
 	if spec.Windows.Resources != nil {
 		if spec.Windows.Resources.CPU != nil {
+			if spec.Windows.Resources.CPU.Count != nil {
+				// This check is being done here rather than in adaptContainerSettings
+				// because we don't want to update the HostConfig in case this container
+				// is moved to a host with more CPUs than this one.
+				cpuCount := *spec.Windows.Resources.CPU.Count
+				hostCPUCount := uint64(sysinfo.NumCPU())
+				if cpuCount > hostCPUCount {
+					logrus.Warnf("Changing requested CPUCount of %d to current number of processors, %d", cpuCount, hostCPUCount)
+					cpuCount = hostCPUCount
+				}
+				configuration.ProcessorCount = uint32(cpuCount)
+			}
 			if spec.Windows.Resources.CPU.Shares != nil {
 				configuration.ProcessorWeight = uint64(*spec.Windows.Resources.CPU.Shares)
 			}
@@ -152,6 +167,9 @@ func (clnt *client) Create(containerID string, checkpoint string, checkpointDir 
 		if n, ok := option.(*NetworkEndpointsOption); ok {
 			configuration.EndpointList = n.Endpoints
 			configuration.AllowUnqualifiedDNSQuery = n.AllowUnqualifiedDNSQuery
+			if n.DNSSearchList != nil {
+				configuration.DNSSearchList = strings.Join(n.DNSSearchList, ",")
+			}
 			continue
 		}
 		if c, ok := option.(*CredentialsOption); ok {
@@ -233,7 +251,6 @@ func (clnt *client) Create(containerID string, checkpoint string, checkpointDir 
 					client:       clnt,
 					friendlyName: InitFriendlyName,
 				},
-				commandLine: strings.Join(spec.Process.Args, " "),
 			},
 			processes: make(map[string]*process),
 		},
@@ -252,7 +269,7 @@ func (clnt *client) Create(containerID string, checkpoint string, checkpointDir 
 	// internal structure, start will keep HCS in sync by deleting the
 	// container there.
 	logrus.Debugf("libcontainerd: Create() id=%s, Calling start()", containerID)
-	if err := container.start(); err != nil {
+	if err := container.start(attachStdio); err != nil {
 		clnt.deleteContainer(containerID)
 		return err
 	}
@@ -263,13 +280,14 @@ func (clnt *client) Create(containerID string, checkpoint string, checkpointDir 
 }
 
 // AddProcess is the handler for adding a process to an already running
-// container. It's called through docker exec.
-func (clnt *client) AddProcess(ctx context.Context, containerID, processFriendlyName string, procToAdd Process) error {
+// container. It's called through docker exec. It returns the system pid of the
+// exec'd process.
+func (clnt *client) AddProcess(ctx context.Context, containerID, processFriendlyName string, procToAdd Process, attachStdio StdioCallback) (int, error) {
 	clnt.lock(containerID)
 	defer clnt.unlock(containerID)
 	container, err := clnt.getContainer(containerID)
 	if err != nil {
-		return err
+		return -1, err
 	}
 	// Note we always tell HCS to
 	// create stdout as it's required regardless of '-i' or '-t' options, so that
@@ -296,6 +314,7 @@ func (clnt *client) AddProcess(ctx context.Context, containerID, processFriendly
 	// Configure the environment for the process
 	createProcessParms.Environment = setupEnvironmentVariables(procToAdd.Env)
 	createProcessParms.CommandLine = strings.Join(procToAdd.Args, " ")
+	createProcessParms.User = procToAdd.User.Username
 
 	logrus.Debugf("libcontainerd: commandLine: %s", createProcessParms.CommandLine)
 
@@ -305,7 +324,7 @@ func (clnt *client) AddProcess(ctx context.Context, containerID, processFriendly
 	newProcess, err := container.hcsContainer.CreateProcess(&createProcessParms)
 	if err != nil {
 		logrus.Errorf("libcontainerd: AddProcess(%s) CreateProcess() failed %s", containerID, err)
-		return err
+		return -1, err
 	}
 
 	pid := newProcess.Pid()
@@ -313,7 +332,7 @@ func (clnt *client) AddProcess(ctx context.Context, containerID, processFriendly
 	stdin, stdout, stderr, err = newProcess.Stdio()
 	if err != nil {
 		logrus.Errorf("libcontainerd: %s getting std pipes failed %s", containerID, err)
-		return err
+		return -1, err
 	}
 
 	iopipe := &IOPipe{Terminal: procToAdd.Terminal}
@@ -321,10 +340,10 @@ func (clnt *client) AddProcess(ctx context.Context, containerID, processFriendly
 
 	// Convert io.ReadClosers to io.Readers
 	if stdout != nil {
-		iopipe.Stdout = openReaderFromPipe(stdout)
+		iopipe.Stdout = ioutil.NopCloser(&autoClosingReader{ReadCloser: stdout})
 	}
 	if stderr != nil {
-		iopipe.Stderr = openReaderFromPipe(stderr)
+		iopipe.Stderr = ioutil.NopCloser(&autoClosingReader{ReadCloser: stderr})
 	}
 
 	proc := &process{
@@ -334,29 +353,21 @@ func (clnt *client) AddProcess(ctx context.Context, containerID, processFriendly
 			client:       clnt,
 			systemPid:    uint32(pid),
 		},
-		commandLine: createProcessParms.CommandLine,
-		hcsProcess:  newProcess,
+		hcsProcess: newProcess,
 	}
 
 	// Add the process to the container's list of processes
 	container.processes[processFriendlyName] = proc
 
-	// Make sure the lock is not held while calling back into the daemon
-	clnt.unlock(containerID)
-
 	// Tell the engine to attach streams back to the client
-	if err := clnt.backend.AttachStreams(processFriendlyName, *iopipe); err != nil {
-		clnt.lock(containerID)
-		return err
+	if err := attachStdio(*iopipe); err != nil {
+		return -1, err
 	}
-
-	// Lock again so that the defer unlock doesn't fail. (I really don't like this code)
-	clnt.lock(containerID)
 
 	// Spin up a go routine waiting for exit to handle cleanup
 	go container.waitExit(proc, false)
 
-	return nil
+	return pid, nil
 }
 
 // Signal handles `docker stop` on Windows. While Linux has support for
@@ -387,10 +398,12 @@ func (clnt *client) Signal(containerID string, sig int) error {
 			}
 		}
 	} else {
-		// Terminate Process
-		if err := cont.hcsProcess.Kill(); err != nil && !hcsshim.IsAlreadyStopped(err) {
-			// ignore errors
-			logrus.Warnf("libcontainerd: failed to terminate pid %d in %s: %q", cont.systemPid, containerID, err)
+		// Shut down the container
+		if err := cont.hcsContainer.Shutdown(); err != nil {
+			if !hcsshim.IsPending(err) && !hcsshim.IsAlreadyStopped(err) {
+				// ignore errors
+				logrus.Warnf("libcontainerd: failed to shutdown container %s: %q", containerID, err)
+			}
 		}
 	}
 
@@ -447,12 +460,81 @@ func (clnt *client) Resize(containerID, processFriendlyName string, width, heigh
 
 // Pause handles pause requests for containers
 func (clnt *client) Pause(containerID string) error {
-	return errors.New("Windows: Containers cannot be paused")
+	unlockContainer := true
+	// Get the libcontainerd container object
+	clnt.lock(containerID)
+	defer func() {
+		if unlockContainer {
+			clnt.unlock(containerID)
+		}
+	}()
+	container, err := clnt.getContainer(containerID)
+	if err != nil {
+		return err
+	}
+
+	for _, option := range container.options {
+		if h, ok := option.(*HyperVIsolationOption); ok {
+			if !h.IsHyperV {
+				return errors.New("cannot pause Windows Server Containers")
+			}
+			break
+		}
+	}
+
+	err = container.hcsContainer.Pause()
+	if err != nil {
+		return err
+	}
+
+	// Unlock container before calling back into the daemon
+	unlockContainer = false
+	clnt.unlock(containerID)
+
+	return clnt.backend.StateChanged(containerID, StateInfo{
+		CommonStateInfo: CommonStateInfo{
+			State: StatePause,
+		}})
 }
 
 // Resume handles resume requests for containers
 func (clnt *client) Resume(containerID string) error {
-	return errors.New("Windows: Containers cannot be paused")
+	unlockContainer := true
+	// Get the libcontainerd container object
+	clnt.lock(containerID)
+	defer func() {
+		if unlockContainer {
+			clnt.unlock(containerID)
+		}
+	}()
+	container, err := clnt.getContainer(containerID)
+	if err != nil {
+		return err
+	}
+
+	// This should never happen, since Windows Server Containers cannot be paused
+	for _, option := range container.options {
+		if h, ok := option.(*HyperVIsolationOption); ok {
+			if !h.IsHyperV {
+				return errors.New("cannot resume Windows Server Containers")
+			}
+			break
+		}
+	}
+
+	err = container.hcsContainer.Resume()
+	if err != nil {
+		return err
+	}
+
+	// Unlock container before calling back into the daemon
+	unlockContainer = false
+	clnt.unlock(containerID)
+
+	return clnt.backend.StateChanged(containerID, StateInfo{
+		CommonStateInfo: CommonStateInfo{
+			State: StateResume,
+		}})
 }
 
 // Stats handles stats requests for containers
@@ -473,7 +555,7 @@ func (clnt *client) Stats(containerID string) (*Stats, error) {
 }
 
 // Restore is the handler for restoring a container
-func (clnt *client) Restore(containerID string, unusedOnWindows ...CreateOption) error {
+func (clnt *client) Restore(containerID string, _ StdioCallback, unusedOnWindows ...CreateOption) error {
 	// TODO Windows: Implement this. For now, just tell the backend the container exited.
 	logrus.Debugf("libcontainerd: Restore(%s)", containerID)
 	return clnt.backend.StateChanged(containerID, StateInfo{
@@ -484,23 +566,9 @@ func (clnt *client) Restore(containerID string, unusedOnWindows ...CreateOption)
 }
 
 // GetPidsForContainer returns a list of process IDs running in a container.
-// Although implemented, this is not used in Windows.
+// Not used on Windows.
 func (clnt *client) GetPidsForContainer(containerID string) ([]int, error) {
-	var pids []int
-	clnt.lock(containerID)
-	defer clnt.unlock(containerID)
-	cont, err := clnt.getContainer(containerID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Add the first process
-	pids = append(pids, int(cont.containerCommon.systemPid))
-	// And add all the exec'd processes
-	for _, p := range cont.processes {
-		pids = append(pids, int(p.processCommon.systemPid))
-	}
-	return pids, nil
+	return nil, errors.New("not implemented on Windows")
 }
 
 // Summary returns a summary of the processes running in a container.
@@ -546,4 +614,8 @@ func (clnt *client) DeleteCheckpoint(containerID string, checkpointID string, ch
 
 func (clnt *client) ListCheckpoints(containerID string, checkpointDir string) (*Checkpoints, error) {
 	return nil, errors.New("Windows: Containers do not support checkpoints")
+}
+
+func (clnt *client) GetServerVersion(ctx context.Context) (*ServerVersion, error) {
+	return &ServerVersion{}, nil
 }

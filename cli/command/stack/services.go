@@ -1,5 +1,3 @@
-// +build experimental
-
 package stack
 
 import (
@@ -11,6 +9,7 @@ import (
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/cli"
 	"github.com/docker/docker/cli/command"
+	"github.com/docker/docker/cli/command/formatter"
 	"github.com/docker/docker/cli/command/service"
 	"github.com/docker/docker/opts"
 	"github.com/spf13/cobra"
@@ -18,6 +17,7 @@ import (
 
 type servicesOptions struct {
 	quiet     bool
+	format    string
 	filter    opts.FilterOpt
 	namespace string
 }
@@ -36,6 +36,7 @@ func newServicesCommand(dockerCli *command.DockerCli) *cobra.Command {
 	}
 	flags := cmd.Flags()
 	flags.BoolVarP(&opts.quiet, "quiet", "q", false, "Only display IDs")
+	flags.StringVar(&opts.format, "format", "", "Pretty-print services using a Go template")
 	flags.VarP(&opts.filter, "filter", "f", "Filter output based on conditions provided")
 
 	return cmd
@@ -45,10 +46,8 @@ func runServices(dockerCli *command.DockerCli, opts servicesOptions) error {
 	ctx := context.Background()
 	client := dockerCli.Client()
 
-	filter := opts.filter.Value()
-	filter.Add("label", labelNamespace+"="+opts.namespace)
-
-	services, err := client.ServiceList(ctx, types.ServiceListOptions{Filter: filter})
+	filter := getStackFilterFromOpt(opts.namespace, opts.filter)
+	services, err := client.ServiceList(ctx, types.ServiceListOptions{Filters: filter})
 	if err != nil {
 		return err
 	}
@@ -61,23 +60,38 @@ func runServices(dockerCli *command.DockerCli, opts servicesOptions) error {
 		return nil
 	}
 
-	if opts.quiet {
-		service.PrintQuiet(out, services)
-	} else {
+	info := map[string]formatter.ServiceListInfo{}
+	if !opts.quiet {
 		taskFilter := filters.NewArgs()
 		for _, service := range services {
 			taskFilter.Add("service", service.ID)
 		}
 
-		tasks, err := client.TaskList(ctx, types.TaskListOptions{Filter: taskFilter})
+		tasks, err := client.TaskList(ctx, types.TaskListOptions{Filters: taskFilter})
 		if err != nil {
 			return err
 		}
+
 		nodes, err := client.NodeList(ctx, types.NodeListOptions{})
 		if err != nil {
 			return err
 		}
-		service.PrintNotQuiet(out, services, nodes, tasks)
+
+		info = service.GetServicesStatus(services, nodes, tasks)
 	}
-	return nil
+
+	format := opts.format
+	if len(format) == 0 {
+		if len(dockerCli.ConfigFile().ServicesFormat) > 0 && !opts.quiet {
+			format = dockerCli.ConfigFile().ServicesFormat
+		} else {
+			format = formatter.TableFormatKey
+		}
+	}
+
+	servicesCtx := formatter.Context{
+		Output: dockerCli.Out(),
+		Format: formatter.NewServiceListFormat(format, opts.quiet),
+	}
+	return formatter.ServiceListWrite(servicesCtx, services, info)
 }

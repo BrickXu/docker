@@ -22,7 +22,7 @@ type psOptions struct {
 	filter    opts.FilterOpt
 }
 
-func newPsCommand(dockerCli *command.DockerCli) *cobra.Command {
+func newPsCommand(dockerCli command.Cli) *cobra.Command {
 	opts := psOptions{filter: opts.NewFilterOpt()}
 
 	cmd := &cobra.Command{
@@ -47,7 +47,7 @@ func newPsCommand(dockerCli *command.DockerCli) *cobra.Command {
 	return cmd
 }
 
-func runPs(dockerCli *command.DockerCli, opts psOptions) error {
+func runPs(dockerCli command.Cli, opts psOptions) error {
 	client := dockerCli.Client()
 	ctx := context.Background()
 
@@ -72,7 +72,7 @@ func runPs(dockerCli *command.DockerCli, opts psOptions) error {
 		filter := opts.filter.Value()
 		filter.Add("node", node.ID)
 
-		nodeTasks, err := client.TaskList(ctx, types.TaskListOptions{Filter: filter})
+		nodeTasks, err := client.TaskList(ctx, types.TaskListOptions{Filters: filter})
 		if err != nil {
 			errs = append(errs, err.Error())
 			continue

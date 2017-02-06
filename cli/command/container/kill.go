@@ -1,14 +1,14 @@
 package container
 
 import (
+	"errors"
 	"fmt"
 	"strings"
-
-	"golang.org/x/net/context"
 
 	"github.com/docker/docker/cli"
 	"github.com/docker/docker/cli/command"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/context"
 )
 
 type killOptions struct {
@@ -39,15 +39,18 @@ func NewKillCommand(dockerCli *command.DockerCli) *cobra.Command {
 func runKill(dockerCli *command.DockerCli, opts *killOptions) error {
 	var errs []string
 	ctx := context.Background()
+	errChan := parallelOperation(ctx, opts.containers, func(ctx context.Context, container string) error {
+		return dockerCli.Client().ContainerKill(ctx, container, opts.signal)
+	})
 	for _, name := range opts.containers {
-		if err := dockerCli.Client().ContainerKill(ctx, name, opts.signal); err != nil {
+		if err := <-errChan; err != nil {
 			errs = append(errs, err.Error())
 		} else {
-			fmt.Fprintf(dockerCli.Out(), "%s\n", name)
+			fmt.Fprintln(dockerCli.Out(), name)
 		}
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
+		return errors.New(strings.Join(errs, "\n"))
 	}
 	return nil
 }

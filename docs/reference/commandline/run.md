@@ -1,12 +1,17 @@
-<!--[metadata]>
-+++
-title = "run"
-description = "The run command description and usage"
-keywords = ["run, command, container"]
-[menu.main]
-parent = "smn_cli"
-+++
-<![end-metadata]-->
+---
+title: "run"
+description: "The run command description and usage"
+keywords: "run, command, container"
+---
+
+<!-- This file is maintained within the docker/docker Github
+     repository at https://github.com/docker/docker/. Make all
+     pull requests against that repo. If you see this file in
+     another repository, consider it read-only there, as it will
+     periodically be overwritten by the definitive file. Pull
+     requests which include edits to this file in other repositories
+     will be rejected.
+-->
 
 # run
 
@@ -24,22 +29,33 @@ Options:
       --cap-drop value              Drop Linux capabilities (default [])
       --cgroup-parent string        Optional parent cgroup for the container
       --cidfile string              Write the container ID to the file
-      --cpu-percent int             CPU percent (Windows only)
+      --cpu-count int               The number of CPUs available for execution by the container.
+                                    Windows daemon only. On Windows Server containers, this is
+                                    approximated as a percentage of total CPU usage.
+      --cpu-percent int             Limit percentage of CPU available for execution
+                                    by the container. Windows daemon only.
+                                    The processor resource controls are mutually
+                                    exclusive, the order of precedence is CPUCount
+                                    first, then CPUShares, and CPUPercent last.
       --cpu-period int              Limit CPU CFS (Completely Fair Scheduler) period
       --cpu-quota int               Limit CPU CFS (Completely Fair Scheduler) quota
   -c, --cpu-shares int              CPU shares (relative weight)
+      --cpus NanoCPUs               Number of CPUs (default 0.000)
+      --cpu-rt-period int           Limit the CPU real-time period in microseconds
+      --cpu-rt-runtime int          Limit the CPU real-time runtime in microseconds
       --cpuset-cpus string          CPUs in which to allow execution (0-3, 0,1)
       --cpuset-mems string          MEMs in which to allow execution (0-3, 0,1)
   -d, --detach                      Run container in background and print container ID
       --detach-keys string          Override the key sequence for detaching a container
       --device value                Add a host device to the container (default [])
+      --device-cgroup-rule value    Add a rule to the cgroup allowed devices list
       --device-read-bps value       Limit read rate (bytes per second) from a device (default [])
       --device-read-iops value      Limit read rate (IO per second) from a device (default [])
       --device-write-bps value      Limit write rate (bytes per second) to a device (default [])
       --device-write-iops value     Limit write rate (IO per second) to a device (default [])
       --disable-content-trust       Skip image verification (default true)
       --dns value                   Set custom DNS servers (default [])
-      --dns-opt value               Set DNS options (default [])
+      --dns-option value            Set DNS options (default [])
       --dns-search value            Set custom DNS search domains (default [])
       --entrypoint string           Overwrite the default ENTRYPOINT of the image
   -e, --env value                   Set environment variables (default [])
@@ -47,11 +63,13 @@ Options:
       --expose value                Expose a port or a range of ports (default [])
       --group-add value             Add additional groups to join (default [])
       --health-cmd string           Command to run to check health
-      --health-interval duration    Time between running the check
+      --health-interval duration    Time between running the check (ns|us|ms|s|m|h) (default 0s)
       --health-retries int          Consecutive failures needed to report unhealthy
-      --health-timeout duration     Maximum time to allow one check to run
+      --health-timeout duration     Maximum time to allow one check to run (ns|us|ms|s|m|h) (default 0s)
       --help                        Print usage
   -h, --hostname string             Container host name
+      --init                        Run an init inside the container that forwards signals and reaps processes
+      --init-path string            Path to the docker-init binary
   -i, --interactive                 Keep STDIN open even if not attached
       --io-maxbandwidth string      Maximum IO bandwidth limit for the system drive (Windows only)
                                     (Windows only). The format is `<number><unit>`.
@@ -61,8 +79,8 @@ Options:
                                     the system uses bytes per second.
                                     --io-maxbandwidth and --io-maxiops are mutually exclusive options.
       --io-maxiops uint             Maximum IOps limit for the system drive (Windows only)
-      --ip string                   Container IPv4 address (e.g. 172.30.100.104)
-      --ip6 string                  Container IPv6 address (e.g. 2001:db8::33)
+      --ip string                   IPv4 address (e.g., 172.30.100.104)
+      --ip6 string                  IPv6 address (e.g., 2001:db8::33)
       --ipc string                  IPC namespace to use
       --isolation string            Container isolation technology
       --kernel-memory string        Kernel memory limit
@@ -72,7 +90,7 @@ Options:
       --link-local-ip value         Container IPv4/IPv6 link-local addresses (default [])
       --log-driver string           Logging driver for the container
       --log-opt value               Log driver options (default [])
-      --mac-address string          Container MAC address (e.g. 92:d0:c6:0a:29:33)
+      --mac-address string          Container MAC address (e.g., 92:d0:c6:0a:29:33)
   -m, --memory string               Memory limit
       --memory-reservation string   Memory soft limit
       --memory-swap string          Swap limit equal to memory plus swap: '-1' to enable unlimited swap
@@ -99,12 +117,13 @@ Options:
       --rm                          Automatically remove the container when it exits
       --runtime string              Runtime to use for this container
       --security-opt value          Security Options (default [])
-      --shm-size string             Size of /dev/shm, default value is 64MB.
+      --shm-size bytes              Size of /dev/shm
                                     The format is `<number><unit>`. `number` must be greater than `0`.
                                     Unit is optional and can be `b` (bytes), `k` (kilobytes), `m` (megabytes),
                                     or `g` (gigabytes). If you omit the unit, the system uses bytes.
       --sig-proxy                   Proxy received signals to the process (default true)
       --stop-signal string          Signal to stop a container, SIGTERM by default (default "SIGTERM")
+      --stop-timeout=10             Timeout (in seconds) to stop a container
       --storage-opt value           Storage driver options for the container (default [])
       --sysctl value                Sysctl options (default map[])
       --tmpfs value                 Mount a tmpfs directory (default [])
@@ -136,7 +155,7 @@ of all containers.
 The `docker run` command can be used in combination with `docker commit` to
 [*change the command that a container runs*](commit.md). There is additional detailed information about `docker run` in the [Docker run reference](../run.md).
 
-For information on connecting a container to a network, see the ["*Docker network overview*"](../../userguide/networking/index.md).
+For information on connecting a container to a network, see the ["*Docker network overview*"](https://docs.docker.com/engine/userguide/networking/).
 
 ## Examples
 
@@ -198,8 +217,13 @@ The `-w` lets the command being executed inside directory given, here
     $ docker run -it --storage-opt size=120G fedora /bin/bash
 
 This (size) will allow to set the container rootfs size to 120G at creation time.
-User cannot pass a size less than the Default BaseFS Size. This option is only
-available for the `devicemapper`, `btrfs`, `windowsfilter`, and `zfs` graph drivers.
+This option is only available for the `devicemapper`, `btrfs`, `overlay2`,
+`windowsfilter` and `zfs` graph drivers.
+For the `devicemapper`, `btrfs`, `windowsfilter` and `zfs` graph drivers,
+user cannot pass a size less than the Default BaseFS Size.
+For the `overlay2` storage driver, the size option is only available if the
+backing fs is `xfs` and mounted with the `pquota` mount option.
+Under these conditions, user can pass any size less then the backing fs size.
 
 ### Mount tmpfs (--tmpfs)
 
@@ -236,11 +260,31 @@ specified volumes for the container.
 
 By bind-mounting the docker unix socket and statically linked docker
 binary (refer to [get the linux binary](
-../../installation/binaries.md#get-the-linux-binary)),
+https://docs.docker.com/engine/installation/binaries/#/get-the-linux-binary)),
 you give the container the full access to create and manipulate the host's
 Docker daemon.
 
-For in-depth information about volumes, refer to [manage data in containers](../../tutorials/dockervolumes.md)
+On Windows, the paths must be specified using Windows-style semantics. 
+
+    PS C:\> docker run -v c:\foo:c:\dest microsoft/nanoserver cmd /s /c type c:\dest\somefile.txt
+    Contents of file
+	
+    PS C:\> docker run -v c:\foo:d: microsoft/nanoserver cmd /s /c type d:\somefile.txt
+    Contents of file
+
+The following examples will fail when using Windows-based containers, as the 
+destination of a volume or bind-mount inside the container must be one of: 
+a non-existing or empty directory; or a drive other than C:. Further, the source
+of a bind mount must be a local directory, not a file.
+
+    net use z: \\remotemachine\share
+    docker run -v z:\foo:c:\dest ...
+    docker run -v \\uncpath\to\directory:c:\dest ...
+    docker run -v c:\foo\somefile.txt:c:\dest ...
+    docker run -v c:\foo:c: ...
+    docker run -v c:\foo:c:\existing-directory-with-contents ...
+
+For in-depth information about volumes, refer to [manage data in containers](https://docs.docker.com/engine/tutorials/dockervolumes/)
 
 ### Publish or expose port (-p, --expose)
 
@@ -248,7 +292,7 @@ For in-depth information about volumes, refer to [manage data in containers](../
 
 This binds port `8080` of the container to port `80` on `127.0.0.1` of the host
 machine. The [Docker User
-Guide](../../userguide/networking/default_network/dockerlinks.md)
+Guide](https://docs.docker.com/engine/userguide/networking/default_network/dockerlinks/)
 explains in detail how to manipulate ports in Docker.
 
     $ docker run --expose 80 ubuntu bash
@@ -360,7 +404,7 @@ format:
 You can load multiple label-files by supplying multiple  `--label-file` flags.
 
 For additional information on working with labels, see [*Labels - custom
-metadata in Docker*](../../userguide/labels-custom-metadata.md) in the Docker User
+metadata in Docker*](https://docs.docker.com/engine/userguide/labels-custom-metadata/) in the Docker User
 Guide.
 
 ### Connect a container to a network (--network)
@@ -616,44 +660,56 @@ or a signal name in the format SIGNAME, for instance SIGKILL.
 
 ### Optional security options (--security-opt)
 
-On Windows, this flag can be used to specify the `credentialspec` option. 
-The `credentialspec` must be in the format `file://spec.txt` or `registry://keyname`. 
+On Windows, this flag can be used to specify the `credentialspec` option.
+The `credentialspec` must be in the format `file://spec.txt` or `registry://keyname`.
+
+### Stop container with timeout (--stop-timeout)
+
+The `--stop-timeout` flag sets the timeout (in seconds) that a pre-defined (see `--stop-signal`) system call
+signal that will be sent to the container to exit. After timeout elapses the container will be killed with SIGKILL.
 
 ### Specify isolation technology for container (--isolation)
 
 This option is useful in situations where you are running Docker containers on
-Microsoft Windows. The `--isolation <value>` option sets a container's isolation
-technology. On Linux, the only supported is the `default` option which uses
+Windows. The `--isolation <value>` option sets a container's isolation technology.
+On Linux, the only supported is the `default` option which uses
 Linux namespaces. These two commands are equivalent on Linux:
 
-```
+```bash
 $ docker run -d busybox top
 $ docker run -d --isolation default busybox top
 ```
 
-On Microsoft Windows, can take any of these values:
+On Windows, `--isolation` can take one of these values:
 
 
-| Value     | Description                                                                                                                                                   |
-|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `default` | Use the value specified by the Docker daemon's `--exec-opt` . If the `daemon` does not specify an isolation technology, Microsoft Windows uses `process` as its default value.  |
-| `process` | Namespace isolation only.                                                                                                                                     |
-| `hyperv`   | Hyper-V hypervisor partition-based isolation.                                                                                                                  |
+| Value     | Description                                                                                |
+|-----------|--------------------------------------------------------------------------------------------|
+| `default` | Use the value specified by the Docker daemon's `--exec-opt` or system default (see below). |
+| `process` | Shared-kernel namespace isolation (not supported on Windows client operating systems).     |
+| `hyperv`  | Hyper-V hypervisor partition-based isolation.                                              |
 
-On Windows, the default isolation for client is `hyperv`, and for server is
-`process`. Therefore when running on Windows server without a `daemon` option
-set, these two commands are equivalent:
+The default isolation on Windows server operating systems is `process`. The default (and only supported)
+isolation on Windows client operating systems is `hyperv`. An attempt to start a container on a client
+operating system with `--isolation process` will fail.
+
+On Windows server, assuming the default configuration, these commands are equivalent
+and result in `process` isolation:
+
+```PowerShell
+PS C:\> docker run -d microsoft/nanoserver powershell echo process
+PS C:\> docker run -d --isolation default microsoft/nanoserver powershell echo process
+PS C:\> docker run -d --isolation process microsoft/nanoserver powershell echo process
 ```
-$ docker run -d --isolation default busybox top
-$ docker run -d --isolation process busybox top
-```
 
-If you have set the `--exec-opt isolation=hyperv` option on the Docker `daemon`,
-if running on Windows server, any of these commands also result in `hyperv` isolation:
+If you have set the `--exec-opt isolation=hyperv` option on the Docker `daemon`, or
+are running against a Windows client-based daemon, these commands are equivalent and
+result in `hyperv` isolation:
 
-```
-$ docker run -d --isolation default busybox top
-$ docker run -d --isolation hyperv busybox top
+```PowerShell
+PS C:\> docker run -d microsoft/nanoserver powershell echo hyperv
+PS C:\> docker run -d --isolation default microsoft/nanoserver powershell echo hyperv
+PS C:\> docker run -d --isolation hyperv microsoft/nanoserver powershell echo hyperv
 ```
 
 ### Configure namespaced kernel parameters (sysctls) at runtime
@@ -666,7 +722,7 @@ network namespace, run this command:
 
 
 > **Note**: Not all sysctls are namespaced. Docker does not support changing sysctls
-> inside of a container that also modify the host system. As the kernel 
+> inside of a container that also modify the host system. As the kernel
 > evolves we expect to see more sysctls become namespaced.
 
 #### Currently supported sysctls

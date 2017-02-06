@@ -1,12 +1,17 @@
-<!--[metadata]>
-+++
-title = "events"
-description = "The events command description and usage"
-keywords = ["events, container, report"]
-[menu.main]
-parent = "smn_cli"
-+++
-<![end-metadata]-->
+---
+title: "events"
+description: "The events command description and usage"
+keywords: "events, container, report"
+---
+
+<!-- This file is maintained within the docker/docker Github
+     repository at https://github.com/docker/docker/. Make all
+     pull requests against that repo. If you see this file in
+     another repository, consider it read-only there, as it will
+     periodically be overwritten by the definitive file. Pull
+     requests which include edits to this file in other repositories
+     will be rejected.
+-->
 
 # events
 
@@ -17,7 +22,7 @@ Get real time events from the server
 
 Options:
   -f, --filter value   Filter output based on conditions provided (default [])
-      --format string  Format the output using the given go template
+      --format string  Format the output using the given Go template
       --help           Print usage
       --since string   Show all events created since timestamp
       --until string   Stream events until this timestamp
@@ -31,7 +36,7 @@ Docker images report the following events:
 
     delete, import, load, pull, push, save, tag, untag
 
-Docker plugins(experimental) report the following events:
+Docker plugins report the following events:
 
     install, enable, disable, remove
 
@@ -189,8 +194,8 @@ relative to the current time on the client machine:
     2015-12-23T21:38:25.119625123Z network connect 8b111217944ba0ba844a65b13efcd57dc494932ee2527577758f939315ba2c5b (name=test-event-network-local, container=b4be644031a3d90b400f88ab3d4bdf4dc23adb250e696b6328b85441abe2c54e, type=bridge)
 
     $ docker events --filter 'type=plugin' (experimental)
-    2016-07-25T17:30:14.825557616Z plugin pull ec7b87f2ce84330fe076e666f17dfc049d2d7ae0b8190763de94e1f2d105993f (name=tiborvass/no-remove:latest)
-    2016-07-25T17:30:14.888127370Z plugin enable ec7b87f2ce84330fe076e666f17dfc049d2d7ae0b8190763de94e1f2d105993f (name=tiborvass/no-remove:latest)
+    2016-07-25T17:30:14.825557616Z plugin pull ec7b87f2ce84330fe076e666f17dfc049d2d7ae0b8190763de94e1f2d105993f (name=tiborvass/sample-volume-plugin:latest)
+    2016-07-25T17:30:14.888127370Z plugin enable ec7b87f2ce84330fe076e666f17dfc049d2d7ae0b8190763de94e1f2d105993f (name=tiborvass/sample-volume-plugin:latest)
 
 **Format:**
 

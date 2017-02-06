@@ -1,12 +1,17 @@
-<!--[metadata]>
-+++
-title = "network connect"
-description = "The network connect command description and usage"
-keywords = ["network, connect, user-defined"]
-[menu.main]
-parent = "smn_cli"
-+++
-<![end-metadata]-->
+---
+title: "network connect"
+description: "The network connect command description and usage"
+keywords: "network, connect, user-defined"
+---
+
+<!-- This file is maintained within the docker/docker Github
+     repository at https://github.com/docker/docker/. Make all
+     pull requests against that repo. If you see this file in
+     another repository, consider it read-only there, as it will
+     periodically be overwritten by the definitive file. Pull
+     requests which include edits to this file in other repositories
+     will be rejected.
+-->
 
 # network connect
 
@@ -18,8 +23,8 @@ Connect a container to a network
 Options:
       --alias value           Add network-scoped alias for the container (default [])
       --help                  Print usage
-      --ip string             IP Address
-      --ip6 string            IPv6 Address
+      --ip string             IPv4 address (e.g., 172.30.100.104)
+      --ip6 string            IPv6 address (e.g., 2001:db8::33)
       --link value            Add link to another container (default [])
       --link-local-ip value   Add a link-local address for the container (default [])
 ```
@@ -56,11 +61,8 @@ being connected to.
 ```bash
 $ docker network connect --alias db --alias mysql multi-host-network container2
 ```
-
 You can pause, restart, and stop containers that are connected to a network.
-Paused containers remain connected and can be revealed by a `network inspect`.
-When the container is stopped, it does not appear on the network until you restart
-it.
+A container connects to its configured networks when it runs.
 
 If specified, the container's IP address(es) is reapplied when a stopped
 container is restarted. If the IP address is no longer available, the container
@@ -93,5 +95,6 @@ You can connect a container to one or more networks. The networks need not be th
 * [network disconnect](network_disconnect.md)
 * [network ls](network_ls.md)
 * [network rm](network_rm.md)
-* [Understand Docker container networks](../../userguide/networking/index.md)
-* [Work with networks](../../userguide/networking/work-with-networks.md)
+* [network prune](network_prune.md)
+* [Understand Docker container networks](https://docs.docker.com/engine/userguide/networking/)
+* [Work with networks](https://docs.docker.com/engine/userguide/networking/work-with-networks/)

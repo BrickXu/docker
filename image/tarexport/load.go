@@ -11,7 +11,6 @@ import (
 
 	"github.com/Sirupsen/logrus"
 	"github.com/docker/distribution"
-	"github.com/docker/distribution/digest"
 	"github.com/docker/docker/image"
 	"github.com/docker/docker/image/v1"
 	"github.com/docker/docker/layer"
@@ -21,7 +20,9 @@ import (
 	"github.com/docker/docker/pkg/streamformatter"
 	"github.com/docker/docker/pkg/stringid"
 	"github.com/docker/docker/pkg/symlink"
+	"github.com/docker/docker/pkg/system"
 	"github.com/docker/docker/reference"
+	"github.com/opencontainers/go-digest"
 )
 
 func (l *tarexporter) Load(inTar io.ReadCloser, outStream io.Writer, quiet bool) error {
@@ -84,7 +85,7 @@ func (l *tarexporter) Load(inTar io.ReadCloser, outStream io.Writer, quiet bool)
 		rootFS.DiffIDs = nil
 
 		if expected, actual := len(m.Layers), len(img.RootFS.DiffIDs); expected != actual {
-			return fmt.Errorf("invalid manifest, layers length mismatch: expected %q, got %q", expected, actual)
+			return fmt.Errorf("invalid manifest, layers length mismatch: expected %d, got %d", expected, actual)
 		}
 
 		for i, diffID := range img.RootFS.DiffIDs {
@@ -164,7 +165,9 @@ func (l *tarexporter) setParentID(id, parentID image.ID) error {
 }
 
 func (l *tarexporter) loadLayer(filename string, rootFS image.RootFS, id string, foreignSrc distribution.Descriptor, progressOutput progress.Output) (layer.Layer, error) {
-	rawTar, err := os.Open(filename)
+	// We use system.OpenSequential to use sequential file access on Windows, avoiding
+	// depleting the standby list. On Linux, this equates to a regular os.Open.
+	rawTar, err := system.OpenSequential(filename)
 	if err != nil {
 		logrus.Debugf("Error reading embedded tar: %v", err)
 		return nil, err

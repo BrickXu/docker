@@ -19,10 +19,11 @@ func NewDiskUsageCommand(dockerCli *command.DockerCli) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "df [OPTIONS]",
 		Short: "Show docker disk usage",
-		Args:  cli.RequiresMaxArgs(1),
+		Args:  cli.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDiskUsage(dockerCli, opts)
 		},
+		Tags: map[string]string{"version": "1.25"},
 	}
 
 	flags := cmd.Flags()

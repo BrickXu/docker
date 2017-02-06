@@ -14,12 +14,12 @@ type leaveOptions struct {
 	force bool
 }
 
-func newLeaveCommand(dockerCli *command.DockerCli) *cobra.Command {
+func newLeaveCommand(dockerCli command.Cli) *cobra.Command {
 	opts := leaveOptions{}
 
 	cmd := &cobra.Command{
 		Use:   "leave [OPTIONS]",
-		Short: "Leave the swarm (workers only)",
+		Short: "Leave the swarm",
 		Args:  cli.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLeave(dockerCli, opts)
@@ -27,11 +27,11 @@ func newLeaveCommand(dockerCli *command.DockerCli) *cobra.Command {
 	}
 
 	flags := cmd.Flags()
-	flags.BoolVar(&opts.force, "force", false, "Force this node to leave the swarm, ignoring warnings")
+	flags.BoolVarP(&opts.force, "force", "f", false, "Force this node to leave the swarm, ignoring warnings")
 	return cmd
 }
 
-func runLeave(dockerCli *command.DockerCli, opts leaveOptions) error {
+func runLeave(dockerCli command.Cli, opts leaveOptions) error {
 	client := dockerCli.Client()
 	ctx := context.Background()
 

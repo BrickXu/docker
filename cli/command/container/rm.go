@@ -1,15 +1,15 @@
 package container
 
 import (
+	"errors"
 	"fmt"
 	"strings"
-
-	"golang.org/x/net/context"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/cli"
 	"github.com/docker/docker/cli/command"
 	"github.com/spf13/cobra"
+	"golang.org/x/net/context"
 )
 
 type rmOptions struct {
@@ -45,32 +45,29 @@ func runRm(dockerCli *command.DockerCli, opts *rmOptions) error {
 	ctx := context.Background()
 
 	var errs []string
-	for _, name := range opts.containers {
-		if name == "" {
-			return fmt.Errorf("Container name cannot be empty")
-		}
-		name = strings.Trim(name, "/")
+	options := types.ContainerRemoveOptions{
+		RemoveVolumes: opts.rmVolumes,
+		RemoveLinks:   opts.rmLink,
+		Force:         opts.force,
+	}
 
-		if err := removeContainer(dockerCli, ctx, name, opts.rmVolumes, opts.rmLink, opts.force); err != nil {
-			errs = append(errs, err.Error())
-		} else {
-			fmt.Fprintf(dockerCli.Out(), "%s\n", name)
+	errChan := parallelOperation(ctx, opts.containers, func(ctx context.Context, container string) error {
+		container = strings.Trim(container, "/")
+		if container == "" {
+			return errors.New("Container name cannot be empty")
 		}
+		return dockerCli.Client().ContainerRemove(ctx, container, options)
+	})
+
+	for _, name := range opts.containers {
+		if err := <-errChan; err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		fmt.Fprintln(dockerCli.Out(), name)
 	}
 	if len(errs) > 0 {
-		return fmt.Errorf("%s", strings.Join(errs, "\n"))
-	}
-	return nil
-}
-
-func removeContainer(dockerCli *command.DockerCli, ctx context.Context, container string, removeVolumes, removeLinks, force bool) error {
-	options := types.ContainerRemoveOptions{
-		RemoveVolumes: removeVolumes,
-		RemoveLinks:   removeLinks,
-		Force:         force,
-	}
-	if err := dockerCli.Client().ContainerRemove(ctx, container, options); err != nil {
-		return err
+		return errors.New(strings.Join(errs, "\n"))
 	}
 	return nil
 }

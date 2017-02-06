@@ -9,6 +9,7 @@ import (
 	"github.com/docker/docker/container"
 	"github.com/docker/docker/layer"
 	"github.com/docker/docker/libcontainerd"
+	"github.com/docker/docker/pkg/system"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -28,6 +29,14 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 	} else {
 		// Container is requesting an isolation mode. Honour it.
 		hvOpts.IsHyperV = container.HostConfig.Isolation.IsHyperV()
+	}
+
+	dnsSearch := daemon.getDNSSearchSettings(container)
+	if dnsSearch != nil {
+		osv := system.GetOSVersion()
+		if osv.Build < 14997 {
+			return nil, fmt.Errorf("dns-search option is not supported on the current platform")
+		}
 	}
 
 	// Generate the layer folder of the layer options
@@ -62,6 +71,7 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 	// Get endpoints for the libnetwork allocated networks to the container
 	var epList []string
 	AllowUnqualifiedDNSQuery := false
+	gwHNSID := ""
 	if container.NetworkSettings != nil {
 		for n := range container.NetworkSettings.Networks {
 			sn, err := daemon.FindNetwork(n)
@@ -78,6 +88,14 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 			if err != nil {
 				continue
 			}
+
+			if data["GW_INFO"] != nil {
+				gwInfo := data["GW_INFO"].(map[string]interface{})
+				if gwInfo["hnsid"] != nil {
+					gwHNSID = gwInfo["hnsid"].(string)
+				}
+			}
+
 			if data["hnsid"] != nil {
 				epList = append(epList, data["hnsid"].(string))
 			}
@@ -86,6 +104,10 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 				AllowUnqualifiedDNSQuery = true
 			}
 		}
+	}
+
+	if gwHNSID != "" {
+		epList = append(epList, gwHNSID)
 	}
 
 	// Read and add credentials from the security options if a credential spec has been provided.
@@ -136,7 +158,11 @@ func (daemon *Daemon) getLibcontainerdCreateOptions(container *container.Contain
 	createOptions = append(createOptions, hvOpts)
 	createOptions = append(createOptions, layerOpts)
 	if epList != nil {
-		createOptions = append(createOptions, &libcontainerd.NetworkEndpointsOption{Endpoints: epList, AllowUnqualifiedDNSQuery: AllowUnqualifiedDNSQuery})
+		createOptions = append(createOptions, &libcontainerd.NetworkEndpointsOption{
+			Endpoints:                epList,
+			AllowUnqualifiedDNSQuery: AllowUnqualifiedDNSQuery,
+			DNSSearchList:            dnsSearch,
+		})
 	}
 
 	return createOptions, nil

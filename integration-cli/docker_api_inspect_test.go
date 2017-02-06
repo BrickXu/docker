@@ -7,7 +7,8 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/versions/v1p20"
-	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/docker/docker/integration-cli/checker"
+	"github.com/docker/docker/integration-cli/request"
 	"github.com/docker/docker/pkg/stringutils"
 	"github.com/go-check/check"
 )
@@ -26,9 +27,9 @@ func (s *DockerSuite) TestInspectAPIContainerResponse(c *check.C) {
 
 	var cases []acase
 
-	if daemonPlatform == "windows" {
+	if testEnv.DaemonPlatform() == "windows" {
 		cases = []acase{
-			{"v1.20", append(keysBase, "Mounts")},
+			{"v1.25", append(keysBase, "Mounts")},
 		}
 
 	} else {
@@ -84,30 +85,30 @@ func (s *DockerSuite) TestInspectAPIContainerVolumeDriver(c *check.C) {
 
 	cleanedContainerID := strings.TrimSpace(out)
 
-	body := getInspectBody(c, "v1.21", cleanedContainerID)
+	body := getInspectBody(c, "v1.25", cleanedContainerID)
 
 	var inspectJSON map[string]interface{}
 	err := json.Unmarshal(body, &inspectJSON)
-	c.Assert(err, checker.IsNil, check.Commentf("Unable to unmarshal body for version 1.21"))
+	c.Assert(err, checker.IsNil, check.Commentf("Unable to unmarshal body for version 1.25"))
 
 	config, ok := inspectJSON["Config"]
 	c.Assert(ok, checker.True, check.Commentf("Unable to find 'Config'"))
 	cfg := config.(map[string]interface{})
 	_, ok = cfg["VolumeDriver"]
-	c.Assert(ok, checker.False, check.Commentf("API version 1.21 expected to not include VolumeDriver in 'Config'"))
+	c.Assert(ok, checker.False, check.Commentf("API version 1.25 expected to not include VolumeDriver in 'Config'"))
 
 	config, ok = inspectJSON["HostConfig"]
 	c.Assert(ok, checker.True, check.Commentf("Unable to find 'HostConfig'"))
 	cfg = config.(map[string]interface{})
 	_, ok = cfg["VolumeDriver"]
-	c.Assert(ok, checker.True, check.Commentf("API version 1.21 expected to include VolumeDriver in 'HostConfig'"))
+	c.Assert(ok, checker.True, check.Commentf("API version 1.25 expected to include VolumeDriver in 'HostConfig'"))
 }
 
 func (s *DockerSuite) TestInspectAPIImageResponse(c *check.C) {
 	dockerCmd(c, "tag", "busybox:latest", "busybox:mytag")
 
 	endpoint := "/images/busybox/json"
-	status, body, err := sockRequest("GET", endpoint, nil)
+	status, body, err := request.SockRequest("GET", endpoint, nil, daemonHost())
 
 	c.Assert(err, checker.IsNil)
 	c.Assert(status, checker.Equals, http.StatusOK)

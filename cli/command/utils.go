@@ -3,15 +3,19 @@ package command
 import (
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+
+	"github.com/docker/docker/pkg/system"
 )
 
 // CopyToFile writes the content of the reader to the specified file
 func CopyToFile(outfile string, r io.Reader) error {
-	tmpFile, err := ioutil.TempFile(filepath.Dir(outfile), ".docker_temp_")
+	// We use sequential file access here to avoid depleting the standby list
+	// on Windows. On Linux, this is a call directly to ioutil.TempFile
+	tmpFile, err := system.TempFileSequential(filepath.Dir(outfile), ".docker_temp_")
 	if err != nil {
 		return err
 	}
@@ -58,18 +62,23 @@ func PrettyPrint(i interface{}) string {
 	}
 }
 
-// PromptForConfirmation request and check confirmation from user.
+// PromptForConfirmation requests and checks confirmation from user.
 // This will display the provided message followed by ' [y/N] '. If
 // the user input 'y' or 'Y' it returns true other false.  If no
-// message is provided "Are you sure you want to proceeed? [y/N] "
+// message is provided "Are you sure you want to proceed? [y/N] "
 // will be used instead.
 func PromptForConfirmation(ins *InStream, outs *OutStream, message string) bool {
 	if message == "" {
-		message = "Are you sure you want to proceeed?"
+		message = "Are you sure you want to proceed?"
 	}
 	message += " [y/N] "
 
 	fmt.Fprintf(outs, message)
+
+	// On Windows, force the use of the regular OS stdin stream.
+	if runtime.GOOS == "windows" {
+		ins = NewInStream(os.Stdin)
+	}
 
 	answer := ""
 	n, _ := fmt.Fscan(ins, &answer)

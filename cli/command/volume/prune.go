@@ -5,7 +5,7 @@ import (
 
 	"golang.org/x/net/context"
 
-	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/cli"
 	"github.com/docker/docker/cli/command"
 	units "github.com/docker/go-units"
@@ -21,7 +21,7 @@ func NewPruneCommand(dockerCli *command.DockerCli) *cobra.Command {
 	var opts pruneOptions
 
 	cmd := &cobra.Command{
-		Use:   "prune",
+		Use:   "prune [OPTIONS]",
 		Short: "Remove all unused volumes",
 		Args:  cli.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -35,6 +35,7 @@ func NewPruneCommand(dockerCli *command.DockerCli) *cobra.Command {
 			fmt.Fprintln(dockerCli.Out(), "Total reclaimed space:", units.HumanSize(float64(spaceReclaimed)))
 			return nil
 		},
+		Tags: map[string]string{"version": "1.25"},
 	}
 
 	flags := cmd.Flags()
@@ -51,7 +52,7 @@ func runPrune(dockerCli *command.DockerCli, opts pruneOptions) (spaceReclaimed u
 		return
 	}
 
-	report, err := dockerCli.Client().VolumesPrune(context.Background(), types.VolumesPruneConfig{})
+	report, err := dockerCli.Client().VolumesPrune(context.Background(), filters.Args{})
 	if err != nil {
 		return
 	}
@@ -67,7 +68,7 @@ func runPrune(dockerCli *command.DockerCli, opts pruneOptions) (spaceReclaimed u
 	return
 }
 
-// RunPrune call the Volume Prune API
+// RunPrune calls the Volume Prune API
 // This returns the amount of space reclaimed and a detailed output string
 func RunPrune(dockerCli *command.DockerCli) (uint64, string, error) {
 	return runPrune(dockerCli, pruneOptions{force: true})
