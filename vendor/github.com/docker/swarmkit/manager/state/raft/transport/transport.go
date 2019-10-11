@@ -3,11 +3,13 @@
 package transport
 
 import (
+	"context"
+	"math"
+	"net"
 	"sync"
 	"time"
 
-	"golang.org/x/net/context"
-
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 
@@ -234,10 +236,7 @@ func (t *Transport) UpdatePeerAddr(id uint64, addr string) error {
 	if !ok {
 		return ErrIsNotFound
 	}
-	if err := p.updateAddr(addr); err != nil {
-		return err
-	}
-	return nil
+	return p.updateAddr(addr)
 }
 
 // PeerConn returns raw grpc connection to peer.
@@ -295,6 +294,19 @@ func (t *Transport) Active(id uint64) bool {
 	return active
 }
 
+// LongestActive returns the ID of the peer that has been active for the longest
+// length of time.
+func (t *Transport) LongestActive() (uint64, error) {
+	p, err := t.longestActive()
+	if err != nil {
+		return 0, err
+	}
+
+	return p.id, nil
+}
+
+// longestActive returns the peer that has been active for the longest length of
+// time.
 func (t *Transport) longestActive() (*peer, error) {
 	var longest *peer
 	var longestTime time.Time
@@ -322,6 +334,8 @@ func (t *Transport) longestActive() (*peer, error) {
 
 func (t *Transport) dial(addr string) (*grpc.ClientConn, error) {
 	grpcOptions := []grpc.DialOption{
+		grpc.WithUnaryInterceptor(grpc_prometheus.UnaryClientInterceptor),
+		grpc.WithStreamInterceptor(grpc_prometheus.StreamClientInterceptor),
 		grpc.WithBackoffMaxDelay(8 * time.Second),
 	}
 	if t.config.Credentials != nil {
@@ -333,6 +347,22 @@ func (t *Transport) dial(addr string) (*grpc.ClientConn, error) {
 	if t.config.SendTimeout > 0 {
 		grpcOptions = append(grpcOptions, grpc.WithTimeout(t.config.SendTimeout))
 	}
+
+	// gRPC dialer connects to proxy first. Provide a custom dialer here avoid that.
+	// TODO(anshul) Add an option to configure this.
+	grpcOptions = append(grpcOptions,
+		grpc.WithDialer(func(addr string, timeout time.Duration) (net.Conn, error) {
+			return net.DialTimeout("tcp", addr, timeout)
+		}))
+
+	// TODO(dperny): this changes the max received message size for outgoing
+	// client connections. this means if the server sends a message larger than
+	// this, we will still accept and unmarshal it. i'm unsure what the
+	// potential consequences are of setting this to be effectively unbounded,
+	// so after docker/swarmkit#2774 is fixed, we should remove this option
+	grpcOptions = append(grpcOptions, grpc.WithDefaultCallOptions(
+		grpc.MaxCallRecvMsgSize(math.MaxInt32),
+	))
 
 	cc, err := grpc.Dial(addr, grpcOptions...)
 	if err != nil {

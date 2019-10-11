@@ -1,16 +1,16 @@
 // +build !linux
 
-package plugin
+package plugin // import "github.com/docker/docker/plugin"
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 
+	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/reference"
-	"golang.org/x/net/context"
 )
 
 var errNotSupported = errors.New("plugins are not supported on this platform")
@@ -36,7 +36,7 @@ func (pm *Manager) Privileges(ctx context.Context, ref reference.Named, metaHead
 }
 
 // Pull pulls a plugin, check if the correct privileges are provided and install the plugin.
-func (pm *Manager) Pull(ctx context.Context, ref reference.Named, name string, metaHeader http.Header, authConfig *types.AuthConfig, privileges types.PluginPrivileges, out io.Writer) error {
+func (pm *Manager) Pull(ctx context.Context, ref reference.Named, name string, metaHeader http.Header, authConfig *types.AuthConfig, privileges types.PluginPrivileges, out io.Writer, opts ...CreateOpt) error {
 	return errNotSupported
 }
 

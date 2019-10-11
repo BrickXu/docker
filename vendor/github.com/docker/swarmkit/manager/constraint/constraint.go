@@ -13,8 +13,10 @@ const (
 	eq = iota
 	noteq
 
-	nodeLabelPrefix   = "node.labels."
-	engineLabelPrefix = "engine.labels."
+	// NodeLabelPrefix is the constraint key prefix for node labels.
+	NodeLabelPrefix = "node.labels."
+	// EngineLabelPrefix is the constraint key prefix for engine labels.
+	EngineLabelPrefix = "engine.labels."
 )
 
 var (
@@ -54,7 +56,7 @@ func Parse(env []string) ([]Constraint, error) {
 			part0 := strings.TrimSpace(parts[0])
 			// validate key
 			matched := alphaNumeric.MatchString(part0)
-			if matched == false {
+			if !matched {
 				return nil, fmt.Errorf("key '%s' is invalid", part0)
 			}
 
@@ -62,7 +64,7 @@ func Parse(env []string) ([]Constraint, error) {
 
 			// validate Value
 			matched = valuePattern.MatchString(part1)
-			if matched == false {
+			if !matched {
 				return nil, fmt.Errorf("value '%s' is invalid", part1)
 			}
 			// TODO(dongluochen): revisit requirements to see if globing or regex are useful
@@ -168,14 +170,14 @@ func NodeMatches(constraints []Constraint, n *api.Node) bool {
 			}
 
 		// node labels constraint in form like 'node.labels.key==value'
-		case len(constraint.key) > len(nodeLabelPrefix) && strings.EqualFold(constraint.key[:len(nodeLabelPrefix)], nodeLabelPrefix):
+		case len(constraint.key) > len(NodeLabelPrefix) && strings.EqualFold(constraint.key[:len(NodeLabelPrefix)], NodeLabelPrefix):
 			if n.Spec.Annotations.Labels == nil {
 				if !constraint.Match("") {
 					return false
 				}
 				continue
 			}
-			label := constraint.key[len(nodeLabelPrefix):]
+			label := constraint.key[len(NodeLabelPrefix):]
 			// label itself is case sensitive
 			val := n.Spec.Annotations.Labels[label]
 			if !constraint.Match(val) {
@@ -183,14 +185,14 @@ func NodeMatches(constraints []Constraint, n *api.Node) bool {
 			}
 
 		// engine labels constraint in form like 'engine.labels.key!=value'
-		case len(constraint.key) > len(engineLabelPrefix) && strings.EqualFold(constraint.key[:len(engineLabelPrefix)], engineLabelPrefix):
+		case len(constraint.key) > len(EngineLabelPrefix) && strings.EqualFold(constraint.key[:len(EngineLabelPrefix)], EngineLabelPrefix):
 			if n.Description == nil || n.Description.Engine == nil || n.Description.Engine.Labels == nil {
 				if !constraint.Match("") {
 					return false
 				}
 				continue
 			}
-			label := constraint.key[len(engineLabelPrefix):]
+			label := constraint.key[len(EngineLabelPrefix):]
 			val := n.Description.Engine.Labels[label]
 			if !constraint.Match(val) {
 				return false

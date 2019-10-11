@@ -1,8 +1,7 @@
-package cli
+package cli // import "github.com/docker/docker/cli"
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/docker/docker/pkg/term"
 	"github.com/spf13/cobra"
@@ -20,7 +19,7 @@ func SetupRootCommand(rootCmd *cobra.Command) {
 	rootCmd.SetUsageTemplate(usageTemplate)
 	rootCmd.SetHelpTemplate(helpTemplate)
 	rootCmd.SetFlagErrorFunc(FlagErrorFunc)
-	rootCmd.SetHelpCommand(helpCommand)
+	rootCmd.SetVersionTemplate("Docker version {{.Version}}\n")
 
 	rootCmd.PersistentFlags().BoolP("help", "h", false, "Print usage")
 	rootCmd.PersistentFlags().MarkShorthandDeprecated("help", "please use --help")
@@ -30,7 +29,7 @@ func SetupRootCommand(rootCmd *cobra.Command) {
 // docker/docker/cli error messages
 func FlagErrorFunc(cmd *cobra.Command, err error) error {
 	if err == nil {
-		return err
+		return nil
 	}
 
 	usage := ""
@@ -43,23 +42,6 @@ func FlagErrorFunc(cmd *cobra.Command, err error) error {
 	}
 }
 
-var helpCommand = &cobra.Command{
-	Use:               "help [command]",
-	Short:             "Help about the command",
-	PersistentPreRun:  func(cmd *cobra.Command, args []string) {},
-	PersistentPostRun: func(cmd *cobra.Command, args []string) {},
-	RunE: func(c *cobra.Command, args []string) error {
-		cmd, args, e := c.Root().Find(args)
-		if cmd == nil || e != nil || len(args) > 0 {
-			return fmt.Errorf("unknown help topic: %v", strings.Join(args, " "))
-		}
-
-		helpFunc := cmd.HelpFunc()
-		helpFunc(cmd, args)
-		return nil
-	},
-}
-
 func hasSubCommands(cmd *cobra.Command) bool {
 	return len(operationSubCommands(cmd)) > 0
 }
@@ -69,7 +51,7 @@ func hasManagementSubCommands(cmd *cobra.Command) bool {
 }
 
 func operationSubCommands(cmd *cobra.Command) []*cobra.Command {
-	cmds := []*cobra.Command{}
+	var cmds []*cobra.Command
 	for _, sub := range cmd.Commands() {
 		if sub.IsAvailableCommand() && !sub.HasSubCommands() {
 			cmds = append(cmds, sub)
@@ -87,7 +69,7 @@ func wrappedFlagUsages(cmd *cobra.Command) string {
 }
 
 func managementSubCommands(cmd *cobra.Command) []*cobra.Command {
-	cmds := []*cobra.Command{}
+	var cmds []*cobra.Command
 	for _, sub := range cmd.Commands() {
 		if sub.IsAvailableCommand() && sub.HasSubCommands() {
 			cmds = append(cmds, sub)
@@ -115,7 +97,7 @@ Examples:
 {{ .Example }}
 
 {{- end}}
-{{- if .HasFlags}}
+{{- if .HasAvailableFlags}}
 
 Options:
 {{ wrappedFlagUsages . | trimRightSpace}}

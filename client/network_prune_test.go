@@ -1,7 +1,8 @@
-package client
+package client // import "github.com/docker/docker/client"
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -11,8 +12,9 @@ import (
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/pkg/testutil/assert"
-	"golang.org/x/net/context"
+	"github.com/docker/docker/errdefs"
+	"gotest.tools/assert"
+	is "gotest.tools/assert/cmp"
 )
 
 func TestNetworksPruneError(t *testing.T) {
@@ -27,6 +29,9 @@ func TestNetworksPruneError(t *testing.T) {
 	if err == nil || err.Error() != "Error response from daemon: Server error" {
 		t.Fatalf("expected a Server Error, got %v", err)
 	}
+	if !errdefs.IsSystem(err) {
+		t.Fatalf("expected a Server Error, got %T", err)
+	}
 }
 
 func TestNetworksPrune(t *testing.T) {
@@ -37,6 +42,11 @@ func TestNetworksPrune(t *testing.T) {
 
 	noDanglingFilters := filters.NewArgs()
 	noDanglingFilters.Add("dangling", "false")
+
+	labelFilters := filters.NewArgs()
+	labelFilters.Add("dangling", "true")
+	labelFilters.Add("label", "label1=foo")
+	labelFilters.Add("label", "label2!=bar")
 
 	listCases := []struct {
 		filters             filters.Args
@@ -66,6 +76,14 @@ func TestNetworksPrune(t *testing.T) {
 				"filters": `{"dangling":{"false":true}}`,
 			},
 		},
+		{
+			filters: labelFilters,
+			expectedQueryParams: map[string]string{
+				"until":   "",
+				"filter":  "",
+				"filters": `{"dangling":{"true":true},"label":{"label1=foo":true,"label2!=bar":true}}`,
+			},
+		},
 	}
 	for _, listCase := range listCases {
 		client := &Client{
@@ -76,7 +94,7 @@ func TestNetworksPrune(t *testing.T) {
 				query := req.URL.Query()
 				for key, expected := range listCase.expectedQueryParams {
 					actual := query.Get(key)
-					assert.Equal(t, actual, expected)
+					assert.Check(t, is.Equal(expected, actual))
 				}
 				content, err := json.Marshal(types.NetworksPruneReport{
 					NetworksDeleted: []string{"network_id1", "network_id2"},
@@ -93,7 +111,7 @@ func TestNetworksPrune(t *testing.T) {
 		}
 
 		report, err := client.NetworksPrune(context.Background(), listCase.filters)
-		assert.NilError(t, err)
-		assert.Equal(t, len(report.NetworksDeleted), 2)
+		assert.Check(t, err)
+		assert.Check(t, is.Len(report.NetworksDeleted, 2))
 	}
 }

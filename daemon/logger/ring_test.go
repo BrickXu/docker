@@ -1,4 +1,4 @@
-package logger
+package logger // import "github.com/docker/docker/daemon/logger"
 
 import (
 	"context"
@@ -58,7 +58,7 @@ func TestRingCap(t *testing.T) {
 		}
 	}
 
-	// should have messages in the queue for "5" to "10"
+	// should have messages in the queue for "0" to "4"
 	for i := 0; i < 5; i++ {
 		m, err := r.Dequeue()
 		if err != nil {
@@ -104,7 +104,7 @@ func TestRingClose(t *testing.T) {
 		t.Fatal("expected empty queue")
 	}
 	if m, err := r.Dequeue(); err == nil || m != nil {
-		t.Fatal("exepcted err on Dequeue after close")
+		t.Fatal("expected err on Dequeue after close")
 	}
 
 	ls := r.Drain()

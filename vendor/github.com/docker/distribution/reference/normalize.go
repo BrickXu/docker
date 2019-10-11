@@ -12,16 +12,16 @@ import (
 var (
 	legacyDefaultDomain = "index.docker.io"
 	defaultDomain       = "docker.io"
-	defaultRepoPrefix   = "library/"
+	officialRepoName    = "library"
 	defaultTag          = "latest"
 )
 
-// NormalizedNamed represents a name which has been
+// normalizedNamed represents a name which has been
 // normalized and has a familiar form. A familiar name
 // is what is used in Docker UI. An example normalized
 // name is "docker.io/library/ubuntu" and corresponding
 // familiar name of "ubuntu".
-type NormalizedNamed interface {
+type normalizedNamed interface {
 	Named
 	Familiar() Named
 }
@@ -30,7 +30,7 @@ type NormalizedNamed interface {
 // transforming a familiar name from Docker UI to a fully
 // qualified reference. If the value may be an identifier
 // use ParseAnyReference.
-func ParseNormalizedNamed(s string) (NormalizedNamed, error) {
+func ParseNormalizedNamed(s string) (Named, error) {
 	if ok := anchoredIdentifierRegexp.MatchString(s); ok {
 		return nil, fmt.Errorf("invalid repository name (%s), cannot specify 64-byte hexadecimal strings", s)
 	}
@@ -49,11 +49,40 @@ func ParseNormalizedNamed(s string) (NormalizedNamed, error) {
 	if err != nil {
 		return nil, err
 	}
-	named, isNamed := ref.(NormalizedNamed)
+	named, isNamed := ref.(Named)
 	if !isNamed {
 		return nil, fmt.Errorf("reference %s has no name", ref.String())
 	}
 	return named, nil
+}
+
+// ParseDockerRef normalizes the image reference following the docker convention. This is added
+// mainly for backward compatibility.
+// The reference returned can only be either tagged or digested. For reference contains both tag
+// and digest, the function returns digested reference, e.g. docker.io/library/busybox:latest@
+// sha256:7cc4b5aefd1d0cadf8d97d4350462ba51c694ebca145b08d7d41b41acc8db5aa will be returned as
+// docker.io/library/busybox@sha256:7cc4b5aefd1d0cadf8d97d4350462ba51c694ebca145b08d7d41b41acc8db5aa.
+func ParseDockerRef(ref string) (Named, error) {
+	named, err := ParseNormalizedNamed(ref)
+	if err != nil {
+		return nil, err
+	}
+	if _, ok := named.(NamedTagged); ok {
+		if canonical, ok := named.(Canonical); ok {
+			// The reference is both tagged and digested, only
+			// return digested.
+			newNamed, err := WithName(canonical.Name())
+			if err != nil {
+				return nil, err
+			}
+			newCanonical, err := WithDigest(newNamed, canonical.Digest())
+			if err != nil {
+				return nil, err
+			}
+			return newCanonical, nil
+		}
+	}
+	return TagNameOnly(named), nil
 }
 
 // splitDockerDomain splits a repository name to domain and remotename string.
@@ -70,7 +99,7 @@ func splitDockerDomain(name string) (domain, remainder string) {
 		domain = defaultDomain
 	}
 	if domain == defaultDomain && !strings.ContainsRune(remainder, '/') {
-		remainder = defaultRepoPrefix + remainder
+		remainder = officialRepoName + "/" + remainder
 	}
 	return
 }
@@ -89,7 +118,10 @@ func familiarizeName(named namedRepository) repository {
 
 	if repo.domain == defaultDomain {
 		repo.domain = ""
-		repo.path = strings.TrimPrefix(repo.path, defaultRepoPrefix)
+		// Handle official repositories which have the pattern "library/<official repo name>"
+		if split := strings.Split(repo.path, "/"); len(split) == 2 && split[0] == officialRepoName {
+			repo.path = split[1]
+		}
 	}
 	return repo
 }
@@ -120,11 +152,10 @@ func (c canonicalReference) Familiar() Named {
 	}
 }
 
-// EnsureTagged adds the default tag "latest" to a reference if it only has
+// TagNameOnly adds the default tag "latest" to a reference if it only has
 // a repo name.
-func EnsureTagged(ref Named) NamedTagged {
-	namedTagged, ok := ref.(NamedTagged)
-	if !ok {
+func TagNameOnly(ref Named) Named {
+	if IsNameOnly(ref) {
 		namedTagged, err := WithTag(ref, defaultTag)
 		if err != nil {
 			// Default tag must be valid, to create a NamedTagged
@@ -134,7 +165,7 @@ func EnsureTagged(ref Named) NamedTagged {
 		}
 		return namedTagged
 	}
-	return namedTagged
+	return ref
 }
 
 // ParseAnyReference parses a reference string as a possible identifier,

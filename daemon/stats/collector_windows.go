@@ -1,6 +1,4 @@
-// +build windows
-
-package stats
+package stats // import "github.com/docker/docker/daemon/stats"
 
 // platformNewStatsCollector performs platform specific initialisation of the
 // Collector structure. This is a no-op on Windows.
@@ -11,5 +9,9 @@ func platformNewStatsCollector(s *Collector) {
 // nanoseconds. An error is returned if the format of the underlying
 // file does not match. This is a no-op on Windows.
 func (s *Collector) getSystemCPUUsage() (uint64, error) {
+	return 0, nil
+}
+
+func (s *Collector) getNumberOnlineCPUs() (uint32, error) {
 	return 0, nil
 }

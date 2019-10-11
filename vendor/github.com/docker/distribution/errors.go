@@ -20,6 +20,10 @@ var ErrManifestNotModified = errors.New("manifest not modified")
 // performed
 var ErrUnsupported = errors.New("operation unsupported")
 
+// ErrSchemaV1Unsupported is returned when a client tries to upload a schema v1
+// manifest but the registry is configured to reject it
+var ErrSchemaV1Unsupported = errors.New("manifest schema v1 unsupported")
+
 // ErrTagUnknown is returned if the given tag is not known by the tag service
 type ErrTagUnknown struct {
 	Tag string
@@ -77,7 +81,7 @@ func (err ErrManifestUnknownRevision) Error() string {
 type ErrManifestUnverified struct{}
 
 func (ErrManifestUnverified) Error() string {
-	return fmt.Sprintf("unverified manifest")
+	return "unverified manifest"
 }
 
 // ErrManifestVerification provides a type to collect errors encountered
